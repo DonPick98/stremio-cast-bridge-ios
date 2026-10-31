@@ -63,3 +63,15 @@ Il progetto Sites esistente appgprj_6ae4994e5e088191a83a4d06571ea4e9 restituisce
 3. Sul dispositivo: verificare avvio diretto 1080p, sottotitolo reale attivato e disattivato senza salto/ripartenza, cambio in compatibilita' al minuto corrente, riconnessione, pausa e +/-30 secondi dalla Live Activity a schermo bloccato. La compilazione e i test del resolver non verificano questi comportamenti.
 
 Non dichiarare il prodotto completo finche' questi punti non sono risolti o l'utente accetta esplicitamente i limiti.
+
+## Checkpoint 0.4 - estrazione sul telefono
+
+Implementati Sources/MkvSubtitles.swift, CastRemote/SubtitleHosting.swift e integrazione nella UI. L'estrattore usa Range HTTP validati e un indice Matroska con CueRelativePosition e BlockDuration; limiti: 1800 cue, 32 MB di letture, 6000 richieste, 180 secondi. Legge UTF8 e ASS/SSA semplificato; non scarica o ricodifica il film. Completa solo le cue presenti: la completezza rispetto a tutti i sottotitoli del file non e' dimostrata dall'indice. Rifiuta tracce compresse/cifrate, lacing, indici assenti e durate assenti.
+
+Da Audio e sottotitoli > Estrai sottotitoli dal file, prepara la lingua EN o IT secondo l'handoff. Esporta il VTT con ShareLink. Se l'utente ha configurato un servizio sottotitoli, invia solo il VTT tramite HTTPS con chiave nel portachiavi, valida l'URL restituito e lo associa come traccia Cast 2. Non spedisce il link RD. I redirect dell'upload sono bloccati. Il POST del testo al servizio avviene premendo Estrai con il servizio configurato.
+
+SubtitleService contiene Worker con D1, API autenticata di upload, URL casuale 256 bit, scadenza 24 ore, limite 100 file da 1 MB e test Node. Il componente non e' pubblicato e richiede l'account del provider per la distribuzione. Non e' una modifica del Site originale. Il testo e' memorizzato nel database del servizio e puo' essere letto da chi possiede l'URL temporaneo; non descriverlo come cifrato end-to-end.
+
+Audio: aggiunto un controllo che impedisce al percorso diretto di ignorare una selezione audio alternativa. Il Default Media Receiver supporta le tracce testo via API, mentre per audio/video Google richiede Custom Receiver (https://developers.google.com/cast/docs/ios_sender/media_tracks). Anche un Custom Receiver deve ricevere un contenitore/flusso con tracce selezionabili: registrare un ID da solo non rende gli MKV multiaudio compatibili. Cambio audio senza conversione e remux autonomo non sono implementati; richiedono una prova sul ricevitore e una decisione sul servizio di remux. Non far dipendere il video da un server HTTP sull'iPhone, che iOS puo' sospendere.
+
+Verifica aggiunta alla workflow: fixture MKV sintetica con UTF8 inglese e ASS italiano, tempi, escaping e input malformati; test del servizio. Restano da provare un MKV reale intero, i tempi di estrazione, iOS -> hosting -> Chromecast a telefono bloccato e la nuova IPA su SideStore. Nessuna di queste prove reali e' sostituita dalla compilazione.

@@ -25,6 +25,8 @@ import CryptoKit
     @Published var userAdjustingVolume = false
     @Published var hasLoaded = false
     @Published private(set) var loading = false
+    @Published var subtitleFile: URL?
+    @Published private(set) var embeddedSubtitleURL: URL?
     private var handoff: BridgeHandoff?
     private var configuration: AddonConfiguration?
     private var originalURL: URL?
@@ -182,12 +184,13 @@ import CryptoKit
             setupMessage = (error as? AddonConfigError)?.localizedDescription ?? "Non riesco a leggere la configurazione."
         }
     }
-    @discardableResult func saveConfigurations(torrentio: String, comet: String) -> Bool {
+    @discardableResult func saveConfigurations(torrentio: String, comet: String, subtitleEndpoint: String = "", subtitleToken: String = "") -> Bool {
         do {
             var values: [AddonConfiguration] = []
             if !torrentio.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty { values.append(try AddonConfigStore.parse(torrentio,provider:"torrentio")) }
             if !comet.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty { values.append(try AddonConfigStore.parse(comet,provider:"comet")) }
-            guard !values.isEmpty else { setupMessage = "Incolla almeno un collegamento personale."; return false }
+            guard !values.isEmpty || !subtitleEndpoint.isEmpty else { setupMessage = "Incolla almeno un collegamento personale."; return false }
+            if !subtitleEndpoint.isEmpty { try SubtitleHosting.save(endpoint:subtitleEndpoint,token:subtitleToken) }
             for value in values { try AddonConfigStore.save(value) }
             showSetup = false; setupMessage = "Configurazione salvata."
             if let data = handoff {
@@ -196,7 +199,7 @@ import CryptoKit
             } else { message = "Configurazione salvata. Apri una sorgente Chromecast da Stremio." }
             return true
         } catch {
-            setupMessage = (error as? AddonConfigError)?.localizedDescription ?? "Non riesco a salvare la configurazione."
+            setupMessage = (error as? AddonConfigError)?.localizedDescription ?? (error as? SubtitleError)?.localizedDescription ?? "Non riesco a salvare la configurazione."
             return false
         }
     }
@@ -207,7 +210,7 @@ import CryptoKit
     }
     func choose(_ source: AddonStream) {
         resetPlayback()
-        work?.cancel(); selectedSource = source; prepared = nil; originalURL = nil; hasLoaded = false; lastGoodPosition = 0
+        work?.cancel(); subtitleFile = nil; embeddedSubtitleURL = nil; selectedSource = source; prepared = nil; originalURL = nil; hasLoaded = false; lastGoodPosition = 0
         guard let handoff else { message = "Riapri la sorgente da Stremio."; return }
         let identity = handoff.provider + "|" + source.identity
         let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -247,14 +250,15 @@ import CryptoKit
         guard !loadPending, subtitleRequest == nil else { return }
         capturePosition()
         do {
-            let chosenSubtitle: String? = ["none", "external"].contains(selectedSubtitle) ? nil : selectedSubtitle
+            let chosenSubtitle: String? = ["none", "external", "embedded"].contains(selectedSubtitle) ? nil : selectedSubtitle
             guard compatibilityMode || chosenSubtitle == nil else { message = "Per i sottotitoli incorporati attiva la modalità compatibilità."; return }
+            guard compatibilityMode || selectedAudio == prepared.defaultAudioKey else { message = "Per cambiare questa traccia audio attiva la modalità compatibilità."; return }
             let url = compatibilityMode ? try prepared.streamURL(audio:selectedAudio, subtitle:chosenSubtitle, quality:selectedQuality) : prepared.directURL
-            let signature = url.absoluteString
+            let signature = url.absoluteString + "|" + (externalSubtitleURL?.absoluteString ?? "") + "|" + (embeddedSubtitleURL?.absoluteString ?? "")
             // Text tracks are attached even when disabled, so selecting one
             // later does not need to reload the movie or recreate its buffer.
             if hasLoaded && ownsCurrentMedia && loadedSignature == signature && loadedSubtitle != selectedSubtitle {
-                let ids: [NSNumber] = selectedSubtitle == "external" ? [1] : []
+                let ids: [NSNumber] = selectedSubtitle == "external" ? [1] : selectedSubtitle == "embedded" ? [2] : []
                 if selectedSubtitle == "external" && externalSubtitleURL == nil { return }
                 let request = client.setActiveTrackIDs(ids)
                 subtitleRequest = request; request.delegate = self
@@ -270,12 +274,16 @@ import CryptoKit
             info.metadata = metadata
             let load = GCKMediaLoadRequestDataBuilder()
             load.autoplay = NSNumber(value: true)
+            var textTracks: [GCKMediaTrack] = []
             if let external = externalSubtitleURL {
                 if let track = GCKMediaTrack(identifier:1, contentIdentifier:external.absoluteString, contentType:"text/vtt", type:.text, textSubtype:.subtitles, name:externalSubtitleLabel, languageCode:(handoff?.subtitleLanguage == "ita" ? "it" : "en"), customData:nil) {
-                    info.mediaTracks = [track]
+                    textTracks.append(track)
                     load.activeTrackIDs = selectedSubtitle == "external" ? [1] : []
                 }
             }
+            if let embedded = embeddedSubtitleURL, let track = GCKMediaTrack(identifier:2, contentIdentifier:embedded.absoluteString, contentType:"text/vtt",type:.text,textSubtype:.subtitles,name:externalSubtitleLabel + " · dal file",languageCode:(handoff?.subtitleLanguage == "ita" ? "it" : "en"),customData:nil) { textTracks.append(track) }
+            info.mediaTracks = textTracks
+            if selectedSubtitle == "embedded" { load.activeTrackIDs = [2] }
             load.mediaInformation = info.build()
             if preservePosition || lastGoodPosition > 0 { load.startTime = max(0, lastGoodPosition) }
             loadPending = true
@@ -300,6 +308,40 @@ import CryptoKit
                 self.updateActivity(status: "Apri l’app per riprovare")
             }
         } catch { message = "Non riesco a preparare il video con queste tracce." }
+    }
+    func extractEmbeddedSubtitles() {
+        guard let prepared, !busy, !loading else { return }
+        busy = true; subtitleFile = nil
+        message = "Estraggo i sottotitoli dal file: mantieni l’app aperta…"
+        work?.cancel()
+        work = Task {
+            var reader: SubtitleRangeReader?
+            do {
+                let ranges = try SubtitleRangeReader(url:prepared.directURL); reader = ranges
+                let language = handoff?.subtitleLanguage == "ita" ? "it" : "en"
+                let vtt = try await MkvSubtitleExtractor.extract(read:{ try await ranges.read($0,$1) },language:language)
+                await ranges.close(); reader = nil
+                try Task.checkCancellation()
+                let file = FileManager.default.temporaryDirectory.appendingPathComponent("subtitles-\(UUID().uuidString).vtt")
+                try Data(vtt.utf8).write(to:file,options:.atomic)
+                subtitleFile = file
+                if let hosting = try SubtitleHosting.load() {
+                    message = "Rendo disponibili i sottotitoli alla TV…"
+                    let url = try await hosting.upload(vtt)
+                    try Task.checkCancellation()
+                    embeddedSubtitleURL = url; selectedSubtitle = "embedded"
+                    message = "Sottotitoli dal file pronti. Premi Applica le tracce; verifica testo e sincronizzazione."
+                } else {
+                    message = "WebVTT estratto. Puoi esportarlo; per usarlo sulla TV configura un servizio sottotitoli."
+                }
+                busy = false
+            } catch {
+                if let reader { await reader.close() }
+                guard !Task.isCancelled else { return }
+                busy = false
+                message = (error as? SubtitleError)?.localizedDescription ?? "Preparazione sottotitoli non riuscita. Il WebVTT estratto, se presente, resta esportabile."
+            }
+        }
     }
     var externalSubtitleLabel: String { handoff?.subtitleLanguage == "ita" ? "Italiano" : "English" }
     var externalSubtitleURL: URL? {

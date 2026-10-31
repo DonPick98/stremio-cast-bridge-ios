@@ -93,7 +93,7 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
                             Toggle("Modalità compatibilità", isOn:$cast.compatibilityMode)
                                 .disabled(prepared.availableQualities.isEmpty || cast.loading)
                                 .onChange(of: cast.compatibilityMode) { enabled in
-                                    if !enabled { cast.selectedAudio = prepared.defaultAudioKey; if cast.selectedSubtitle != "external" { cast.selectedSubtitle = "none" } }
+                                    if !enabled { cast.selectedAudio = prepared.defaultAudioKey; if !["external","embedded"].contains(cast.selectedSubtitle) { cast.selectedSubtitle = "none" } }
                                 }
                             Text(cast.compatibilityMode ? "Conversione Real-Debrid: permette di scegliere audio e sottotitoli incorporati; può richiedere più tempo." : "File originale: qualità della sorgente, senza conversione.").font(.caption).foregroundStyle(.secondary)
                             if prepared.availableQualities.isEmpty { Text("Conversione non disponibile per questo file.").font(.caption).foregroundStyle(.secondary) }
@@ -118,8 +118,13 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
                                         if cast.compatibilityMode { ForEach(prepared.subtitles) { track in Text(trackName(track) + " · impressi nel video").tag(track.key) } }
 
                                         if cast.externalSubtitleURL != nil { Text("\(cast.externalSubtitleLabel) · esterni").tag("external") }
+                                        if cast.embeddedSubtitleURL != nil { Text("\(cast.externalSubtitleLabel) · estratti dal file").tag("embedded") }
 
                                     }
+                                    Button("Estrai sottotitoli dal file") { cast.extractEmbeddedSubtitles() }
+                                        .disabled(cast.busy || cast.loading)
+                                    if let file = cast.subtitleFile { ShareLink("Esporta WebVTT",item:file) }
+                                    Text("Estrazione per MKV con indice e sottotitoli testuali. Gli effetti ASS complessi non vengono conservati; verifica che il testo sia completo.").font(.caption).foregroundStyle(.secondary)
 
                                     if cast.compatibilityMode { Picker("Qualità conversione", selection:$cast.selectedQuality) {
 
@@ -245,6 +250,7 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
         if cast.selectedSubtitle == "none" { return "Sottotitoli: disattivati" }
 
         if cast.selectedSubtitle == "external" { return "Sottotitoli: \(cast.externalSubtitleLabel)" }
+        if cast.selectedSubtitle == "embedded" { return "Sottotitoli dal file: \(cast.externalSubtitleLabel)" }
 
         guard let track = prepared.subtitles.first(where: { $0.key == cast.selectedSubtitle }) else { return "Sottotitoli: disattivati" }
 
@@ -277,6 +283,8 @@ private struct AddonSetupView: View {
     @State private var torrentio = ""
 
     @State private var comet = ""
+    @State private var subtitleEndpoint = ""
+    @State private var subtitleToken = ""
 
     var body: some View {
 
@@ -310,9 +318,14 @@ private struct AddonSetupView: View {
 
                 }
 
+                Section("Sottotitoli estratti · servizio facoltativo") {
+                    TextField("Indirizzo HTTPS del servizio",text:$subtitleEndpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    SecureField("Chiave del servizio",text:$subtitleToken).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Text("Serve per rendere il testo estratto disponibile al Chromecast a telefono bloccato. Il servizio riceve solo il WebVTT; il link del film resta sull’iPhone. Lascia vuoto per mantenere la configurazione salvata.").font(.footnote).foregroundStyle(.secondary)
+                }
                 Button("Salva") {
 
-                    if cast.saveConfigurations(torrentio:torrentio,comet:comet) {
+                    if cast.saveConfigurations(torrentio:torrentio,comet:comet,subtitleEndpoint:subtitleEndpoint,subtitleToken:subtitleToken) {
 
                         torrentio = ""; comet = ""; dismiss()
 

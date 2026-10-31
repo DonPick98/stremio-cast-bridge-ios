@@ -26,6 +26,13 @@ jobs:
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
 
+      - name: Test embedded subtitles and hosting service
+        run: |
+          node Tests/make-subtitle-fixture.mjs "$RUNNER_TEMP/subtitle-fixture.mkv"
+          swiftc -parse-as-library Sources/MkvSubtitles.swift Tests/SubtitleTests.swift -o "$RUNNER_TEMP/subtitle-tests"
+          "$RUNNER_TEMP/subtitle-tests" "$RUNNER_TEMP/subtitle-fixture.mkv"
+          node --test SubtitleService/worker.test.mjs
+
       - name: Build for iPhone without signing
         run: |
           xcodebuild \

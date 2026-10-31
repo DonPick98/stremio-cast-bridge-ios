@@ -1,4 +1,6 @@
-# Cast Bridge per iPhone 0.3
+# Cast Bridge per iPhone 0.4
+
+La versione 0.4 aggiunge estrazione sul telefono di sottotitoli MKV testuali indicizzati (UTF8, ASS/SSA semplificato), esportazione WebVTT e invio facoltativo del solo testo a un servizio HTTPS configurabile. Il componente server e' in SubtitleService e non e' stato distribuito: senza un servizio configurato il file e' esportabile, ma non viene automaticamente reso disponibile al Chromecast. Gli indici MKV possono essere parziali: confrontare il risultato con l'episodio completo. PGS, MKV senza indice adeguato e fedelta' degli effetti ASS restano esclusi. Il cambio audio continua a usare la conversione esplicita; non e' stata implementata una soluzione audio universale senza conversione.
 
 Telecomando Stremio / Real-Debrid per Chromecast classico. Installazione con SideStore su iPhone; compilazione senza firma su runner standard macOS di GitHub Actions in repository pubblico, senza credenziali Apple o token personali.
 
