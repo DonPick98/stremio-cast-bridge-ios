@@ -154,7 +154,7 @@ enum EmbeddedMediaError: LocalizedError {
             if player.state == .error || audioRepair?.failed == true { stop(); throw EmbeddedMediaError.encoder }
             var request = URLRequest(url:upstream); request.httpMethod = "HEAD"
             if let (_,response) = try? await session.data(for:request), (response as? HTTPURLResponse)?.statusCode == 200 {
-                do { try await bridge.prepare() }
+                do { try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()}) }
                 catch { stop(); throw EmbeddedMediaError.encoder }
                 if player.state == .playing { player.pause() }
                 bridge.onNextConsumer { [weak self] in
