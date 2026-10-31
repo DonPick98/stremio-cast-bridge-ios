@@ -19,8 +19,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         WindowGroup {
             ContentView().environmentObject(controller)
                 .onOpenURL { controller.open($0) }
+                .onAppear { controller.refreshConnection() }
                 .onChange(of: scenePhase) { phase in
-                    if phase != .active { controller.savePlaybackPosition() }
+                    if phase == .active { controller.refreshConnection() }
+                    else { controller.savePlaybackPosition() }
                 }
         }
     }
@@ -34,3 +36,4 @@ struct CastButton: UIViewRepresentable {
     }
     func updateUIView(_ uiView: GCKUICastButton, context: Context) {}
 }
+

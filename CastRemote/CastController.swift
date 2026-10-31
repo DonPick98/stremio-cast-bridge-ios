@@ -4,7 +4,7 @@ import SwiftUI
 import ActivityKit
 import CryptoKit
 
-@MainActor final class CastController: NSObject, ObservableObject, GCKRequestDelegate {
+@MainActor final class CastController: NSObject, ObservableObject, GCKRequestDelegate, GCKSessionManagerListener, GCKRemoteMediaClientListener {
     @Published var showSetup = false
     @Published var setupMessage = "Inserisci i tuoi collegamenti personali una sola volta."
     @Published var sources: [AddonStream] = []
@@ -48,6 +48,8 @@ import CryptoKit
     private var loadedSubtitle: String?
     private var subtitleRequest: GCKRequest?
     private var pendingSubtitle: String?
+    private weak var observedClient: GCKRemoteMediaClient?
+    private var listenersAttached = false
     private var commandRequest: GCKRequest?
     private var commandContinuation: CheckedContinuation<Bool, Never>?
     private var commandTimeout: Task<Void, Never>?
@@ -71,9 +73,11 @@ import CryptoKit
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
     private var ownsCurrentMedia: Bool {
-        guard let id = client?.mediaStatus?.mediaInformation?.contentID else { return false }
-        if let expectedContentID { return id == expectedContentID }
-        return UserDefaults.standard.string(forKey: "cast.session.content") == contentDigest(id)
+        guard let info = client?.mediaStatus?.mediaInformation else { return false }
+        let candidates = [info.contentURL?.absoluteString, info.contentID].compactMap { $0 }.filter { !$0.isEmpty }
+        if let expectedContentID { return CastContentIdentity.matches(expected:expectedContentID,contentURL:info.contentURL?.absoluteString,contentID:info.contentID) }
+        guard let saved = UserDefaults.standard.string(forKey: "cast.session.content") else { return false }
+        return candidates.contains { contentDigest($0) == saved }
     }
     private func capturePosition() {
         guard ownsCurrentMedia, !loadPending, let client,
@@ -84,8 +88,21 @@ import CryptoKit
         if let positionKey { UserDefaults.standard.set(value, forKey: positionKey) }
     }
     func savePlaybackPosition() { capturePosition() }
+    func refreshConnection() {
+        let manager = GCKCastContext.sharedInstance().sessionManager
+        if !listenersAttached { manager.add(self); listenersAttached = true }
+        if observedClient !== client {
+            observedClient?.remove(self); observedClient = client; client?.add(self)
+        }
+        client?.requestStatus()
+        updateStatus()
+    }
+    func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) { refreshConnection() }
+    func sessionManager(_ manager: GCKSessionManager, didResumeSession session: GCKSession) { refreshConnection() }
+    func sessionManager(_ manager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) { connected = false; playing = false; finishCommand(false) }
+    func remoteMediaClient(_ client: GCKRemoteMediaClient, didUpdate mediaStatus: GCKMediaStatus) { updateStatus() }
     private func updateStatus() {
-        connected = client != nil
+        connected = GCKCastContext.sharedInstance().sessionManager.hasConnectedCastSession()
         guard let session = castSession, let client = session.remoteMediaClient else { playing = false; updateActivity(status: "Apri l’app per riconnettere Chromecast"); return }
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         if let status = client.mediaStatus {
@@ -103,7 +120,9 @@ import CryptoKit
                 }
                 if !userSeeking { position = observed }
             }
-            let d = status.mediaInformation?.streamDuration ?? 0
+            let reported = status.mediaInformation?.streamDuration ?? 0
+            let known = prepared?.duration ?? UserDefaults.standard.double(forKey:"cast.session.duration")
+            let d = reported.isFinite && reported > 0 ? reported : known
             duration = d.isFinite && d > 0 ? d : 0
             let currentLoad = !loadPending || loadAccepted
             if (status.playerState == .playing || status.playerState == .paused) && currentLoad {
@@ -267,6 +286,8 @@ import CryptoKit
                 return
             }
             let info = GCKMediaInformationBuilder(contentURL:url)
+            info.contentID = url.absoluteString
+            if prepared.duration > 0 { info.streamDuration = prepared.duration }
             info.streamType = .buffered
             info.contentType = compatibilityMode ? "application/vnd.apple.mpegurl" : prepared.directContentType
             let metadata = GCKMediaMetadata(metadataType:.movie)
@@ -294,6 +315,7 @@ import CryptoKit
             loadedSignature = signature
             loadedSubtitle = selectedSubtitle
             UserDefaults.standard.set(contentDigest(url.absoluteString), forKey: "cast.session.content")
+            UserDefaults.standard.set(prepared.duration, forKey:"cast.session.duration")
             if let positionKey { UserDefaults.standard.set(positionKey, forKey: "cast.session.positionKey") }
             let request = client.loadMedia(with:load.build())
             loadRequest = request; request.delegate = self
@@ -454,3 +476,4 @@ import CryptoKit
         }
     }
 }
+

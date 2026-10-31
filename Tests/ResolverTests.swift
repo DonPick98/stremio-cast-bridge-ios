@@ -18,6 +18,9 @@ final class StubProtocol: URLProtocol {
 
 @main struct ResolverTests {
     static func main() async throws {
+        precondition(CastContentIdentity.matches(expected:"https://example.test/movie",contentURL:"https://example.test/movie",contentID:"receiver-generated-id"))
+        precondition(CastContentIdentity.matches(expected:"https://example.test/movie",contentURL:nil,contentID:"https://example.test/movie"))
+        precondition(!CastContentIdentity.matches(expected:"https://example.test/movie",contentURL:"https://example.test/other",contentID:"unrelated"))
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubProtocol.self]
         let resolver = RDNativeResolver(apiKey: String(repeating: "a", count: 30), session: URLSession(configuration: config))
@@ -57,3 +60,4 @@ final class StubProtocol: URLProtocol {
         print("Resolver tests passed: direct 1080p, tracks, exact quality, conversion outage and URL validation")
     }
 }
+

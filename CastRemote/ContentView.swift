@@ -105,22 +105,34 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
 
                                 VStack(alignment:.leading,spacing:10) {
 
-                                    if cast.compatibilityMode { Picker("Audio", selection:$cast.selectedAudio) {
+                                    Picker("Audio nel file", selection:$cast.selectedAudio) {
 
                                         ForEach(prepared.audio) { track in Text(trackName(track)).tag(track.key) }
 
-                                    } }
+                                    }.onChange(of:cast.selectedAudio) { value in
+                                        if !cast.compatibilityMode && value != prepared.defaultAudioKey {
+                                            if !prepared.availableQualities.isEmpty { cast.compatibilityMode = true }
+                                            else { cast.selectedAudio = prepared.defaultAudioKey; cast.message = "Questa traccia richiede una conversione, non disponibile per il file." }
+                                        }
+                                    }
+                                    if !cast.compatibilityMode && prepared.audio.count > 1 { Text("Scegliere un altro audio attiva la conversione Real-Debrid.").font(.caption).foregroundStyle(.secondary) }
 
                                     Picker("Sottotitoli", selection:$cast.selectedSubtitle) {
 
                                         Text("Disattivati").tag("none")
 
-                                        if cast.compatibilityMode { ForEach(prepared.subtitles) { track in Text(trackName(track) + " · impressi nel video").tag(track.key) } }
+                                        ForEach(prepared.subtitles) { track in Text(trackName(track) + " · conversione").tag(track.key) }
 
                                         if cast.externalSubtitleURL != nil { Text("\(cast.externalSubtitleLabel) · esterni").tag("external") }
                                         if cast.embeddedSubtitleURL != nil { Text("\(cast.externalSubtitleLabel) · estratti dal file").tag("embedded") }
 
+                                    }.onChange(of:cast.selectedSubtitle) { value in
+                                        if !["none","external","embedded"].contains(value) && !cast.compatibilityMode {
+                                            if !prepared.availableQualities.isEmpty { cast.compatibilityMode = true }
+                                            else { cast.selectedSubtitle = "none"; cast.message = "Per questa traccia usa l’estrazione; la conversione non è disponibile." }
+                                        }
                                     }
+                                    if prepared.subtitles.isEmpty { Text("Real-Debrid non segnala sottotitoli incorporati per questa sorgente. Puoi comunque provare l’estrazione.").font(.caption).foregroundStyle(.secondary) }
                                     Button("Estrai sottotitoli dal file") { cast.extractEmbeddedSubtitles() }
                                         .disabled(cast.busy || cast.loading)
                                     if let file = cast.subtitleFile { ShareLink("Esporta WebVTT",item:file) }
@@ -342,4 +354,5 @@ private struct AddonSetupView: View {
     }
 
 }
+
 

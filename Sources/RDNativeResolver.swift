@@ -3,6 +3,12 @@ import Foundation
 import FoundationNetworking
 #endif
 
+enum CastContentIdentity {
+    static func matches(expected: String, contentURL: String?, contentID: String?) -> Bool {
+        !expected.isEmpty && (contentURL == expected || contentID == expected)
+    }
+}
+
 /// A track reported by Real-Debrid for this particular file.
 struct RDTrack: Identifiable, Hashable {
     let key: String
@@ -47,6 +53,7 @@ struct RDPreparedMedia {
     let directContentType: String
     let directCompatible: Bool
     let videoDescription: String
+    let duration: Double
     fileprivate let variants: [String: String]
 
     var availableQualities: [RDQuality] { RDQuality.allCases.filter { variants[$0.rawValue] != nil } }
@@ -193,7 +200,8 @@ struct RDNativeResolver {
         let compatible = ["h264", "avc", "avc1"].contains(codec) && audio.count == 1 && audioCodec.contains("aac") && ["mkv", "mp4", "m4v"].contains(ext) && dimensionsOK && fpsOK
         let resolution = width.flatMap { w in height.map { h in "\(Int(w))×\(Int(h))" } }
         let description = (["Originale", codec.isEmpty ? nil : codec.uppercased(), resolution].compactMap { $0 }).joined(separator: " · ")
-        return RDPreparedMedia(audio: audio, subtitles: tracks(details["subtitles"]), defaultAudioKey: defaultAudioKey, directURL: download, directContentType: type, directCompatible: compatible, videoDescription: description, variants: apple)
+        let duration = number(media["duration"] ?? details["duration"] ?? video["duration"]) ?? 0
+        return RDPreparedMedia(audio: audio, subtitles: tracks(details["subtitles"]), defaultAudioKey: defaultAudioKey, directURL: download, directContentType: type, directCompatible: compatible, videoDescription: description, duration: duration, variants: apple)
     }
 
     private func api(_ path: String, form: [String: String]? = nil) async throws -> [String: Any] {
@@ -252,3 +260,4 @@ struct RDNativeResolver {
                (host == "real-debrid.com" && url.path.hasPrefix("/d/"))
     }
 }
+
