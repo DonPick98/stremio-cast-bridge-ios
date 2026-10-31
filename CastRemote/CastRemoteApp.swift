@@ -19,7 +19,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         WindowGroup {
             ContentView().environmentObject(controller)
                 .onOpenURL { controller.open($0) }
-                .onAppear { controller.refreshConnection() }
+                .onAppear {
+                    controller.refreshConnection()
+                    if ProcessInfo.processInfo.environment["CAST_ENGINE_SELFTEST"] == "1" { Task { await NativeEngineValidation.run() } }
+                }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active { controller.refreshConnection() }
                     else { controller.savePlaybackPosition() }
@@ -36,4 +39,3 @@ struct CastButton: UIViewRepresentable {
     }
     func updateUIView(_ uiView: GCKUICastButton, context: Context) {}
 }
-
