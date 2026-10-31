@@ -16,9 +16,13 @@ final class LocalStreamProxy: @unchecked Sendable {
     private var opening: CheckedContinuation<URL,Error>?
     private var pairs: [UUID:Pair] = [:]
     private var stopped = false
+    private var producerEnded = false
     private final class Pair {
         let client: NWConnection
         var producer: NWConnection?
+        var waiting = false
+        var sending = false
+        var lastData = Date()
         init(_ client: NWConnection) { self.client = client }
     }
     init(localIP:String, peer:String, producerPort:UInt16, contentType:String = "video/mp4") {
@@ -51,6 +55,15 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
     func stop() { queue.async { self.finish() } }
+    func producerDidEnd() { queue.async { self.producerEnded = true; self.finishDrainedStreams() } }
+    private func finishDrainedStreams() {
+        guard producerEnded, !stopped else { return }
+        for (id,pair) in pairs where pair.producer != nil && pair.waiting && !pair.sending && Date().timeIntervalSince(pair.lastData) > 1 {
+            pair.waiting = false
+            pair.client.send(content:nil,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.close(id) })
+        }
+        queue.asyncAfter(deadline:.now()+0.5) { [weak self] in self?.finishDrainedStreams() }
+    }
     private func finish() {
         stopped = true
         listener?.cancel(); listener = nil
@@ -156,10 +169,13 @@ final class LocalStreamProxy: @unchecked Sendable {
     }
     private func pipe(_ id: UUID) {
         guard let pair = pairs[id], let upstream = pair.producer else { return }
+        pair.waiting = true
         upstream.receive(minimumIncompleteLength:1,maximumLength:65_536) { [weak self] data,_,complete,error in
             guard let self, let pair = self.pairs[id] else { return }
+            pair.waiting = false; pair.lastData = Date(); pair.sending = true
             if error != nil { self.close(id); return }
             pair.client.send(content:data,isComplete:complete,completion:.contentProcessed { error in
+                pair.sending = false
                 if error != nil || complete { self.close(id) } else { self.pipe(id) }
             })
         }

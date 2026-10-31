@@ -138,6 +138,7 @@ import UIKit
             if checkingStream && status.playerState == .idle { return }
             if loadPending && !loadAccepted { return }
             playing = status.playerState == .playing
+            if status.playerState == .paused || status.playerState == .playing { nativeEngine?.setReceiverPaused(status.playerState == .paused) }
             if status.playerState != .buffering { bufferingSince = nil }
             let observed = client.approximateStreamPosition() + streamOffset
             if !loadPending && observed.isFinite && observed >= 0 && (status.playerState == .playing || status.playerState == .paused) {
@@ -160,6 +161,7 @@ import UIKit
             } else if status.playerState == .buffering {
                 if bufferingSince == nil { bufferingSince = Date() }
                 let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
+                if stalled && recoverPlayback() { return }
                 message = stalled ? "Buffering prolungato. Riprova dal punto conservato o cambia sorgente." : "Caricamento sulla TV…"
                 updateActivity(status: stalled ? "Buffering: apri l’app per riprovare" : "Caricamento")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .error {
@@ -368,14 +370,14 @@ import UIKit
             do {
                 guard let self else { return }
                 let convertVideo = prepared.requiresVideoConversion || burnedSubtitle != "none"
-                let modes: [EmbeddedMediaEngine.VideoMode] = self.localFallbackLevel >= 2 ? [.softwareVP8] : (convertVideo || self.localFallbackLevel == 1) ? [.hardwareH264,.softwareVP8] : [.copy,.hardwareH264,.softwareVP8]
+                let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel)
                 var lastError: Error = EmbeddedMediaError.encoder
                 for mode in modes {
                     try Task.checkCancellation()
                     self.message = mode == .copy ? "Adatto l’audio sull’iPhone, mantenendo il video originale…" : "Adatto il video sull’iPhone per il Chromecast…"
                     let engine = EmbeddedMediaEngine()
                     do {
-                        let audioID = audio.hasPrefix("vlc_") ? Int(audio.dropFirst(4)) : nil
+                        let audioID = prepared.audio.count > 1 && audio.hasPrefix("vlc_") ? Int(audio.dropFirst(4)) : nil
                         let audioTrack = prepared.audio.first(where:{$0.key == audio})
                         let copyAudio = ["aac","mp3"].contains(audioTrack?.codec.lowercased() ?? "") && (audioTrack?.channels ?? 0) > 0 && (audioTrack?.channels ?? 0) <= 2
                         let subtitleID = burnedSubtitle.hasPrefix("vlc_") ? Int(burnedSubtitle.dropFirst(4)) : nil
@@ -539,7 +541,7 @@ import UIKit
     }
     func seek(to value: Double) {
         guard let client, ownsCurrentMedia, !loadPending, !loading, value.isFinite else { return }
-        let target = min(duration > 0 ? duration : value,max(0,value))
+        let target = min(duration > 0 ? max(0,duration-(localProcessing ? 1 : 0)) : value,max(0,value))
         if localProcessing { startPlayback(requestedPosition:target,autoplay:playing); return }
         let opts = GCKMediaSeekOptions(); opts.interval = target; client.seek(with:opts)
     }
@@ -600,8 +602,9 @@ import UIKit
         case let value where value == "back" || value == "forward" || value.hasPrefix("seek:"):
             let current = client.approximateStreamPosition() + streamOffset
             guard current.isFinite, current >= 0 else { return false }
-            guard let target = CastWire.seekTarget(command,current:current,duration:duration) else { return false }
+            guard var target = CastWire.seekTarget(command,current:current,duration:duration) else { return false }
             if localProcessing {
+                if duration > 0 { target = min(target,max(0,duration-1)) }
                 startPlayback(requestedPosition:target,autoplay:client.mediaStatus?.playerState == .playing)
                 await streamCheckTask?.value
                 return loadPending || (ownsCurrentMedia && abs(position-target) < 2)

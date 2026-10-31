@@ -44,14 +44,15 @@ import MobileVLCKit
             for mode in [EmbeddedMediaEngine.VideoMode.copy,.hardwareH264,.softwareVP8] {
                 let engine = EmbeddedMediaEngine()
                 do {
+                    let began = Date()
                     let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:mode,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
                     let capture = NativeStreamCapture()
-                    let (body,cors) = try await capture.read(url)
+                    let (body,cors,eof) = try await capture.read(url)
                     let suffix = mode == .softwareVP8 ? "webm" : "mp4"
                     let file = documents.appendingPathComponent("gateway-\(gatewayResults.count).\(suffix)")
                     try body.write(to:file)
                     let checked = try await EmbeddedMediaEngine.inspect(file)
-                    gatewayResults.append(["mode":String(describing:mode),"bytes":body.count,"cors":cors,"description":checked.videoDescription,"audio":checked.audioCodecsDescription,"passed":cors && !checked.audio.isEmpty])
+                    gatewayResults.append(["mode":String(describing:mode),"bytes":body.count,"cors":cors,"eof":eof,"seconds":Date().timeIntervalSince(began),"description":checked.videoDescription,"audio":checked.audioCodecsDescription,"passed":cors && eof && !checked.audio.isEmpty])
                 } catch {
                     gatewayResults.append(["mode":String(describing:mode),"passed":false,"error":error.localizedDescription])
                 }
@@ -70,15 +71,15 @@ import MobileVLCKit
 }
 
 private final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private var continuation: CheckedContinuation<(Data,Bool),Error>?
+    private var continuation: CheckedContinuation<(Data,Bool,Bool),Error>?
     private var body = Data()
     private var cors = false
     private var session: URLSession?
-    func read(_ url: URL) async throws -> (Data,Bool) {
+    func read(_ url: URL) async throws -> (Data,Bool,Bool) {
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             let config = URLSessionConfiguration.ephemeral
-            config.timeoutIntervalForResource = 8; config.timeoutIntervalForRequest = 8
+            config.timeoutIntervalForResource = 12; config.timeoutIntervalForRequest = 12
             let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
             let session = URLSession(configuration:config,delegate:self,delegateQueue:queue)
             self.session = session
@@ -91,12 +92,12 @@ private final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unch
         completionHandler(cors ? .allow : .cancel)
     }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        body.append(data.prefix(max(0,262_144-body.count)))
-        if body.count >= 262_144 { dataTask.cancel() }
+        body.append(data.prefix(max(0,1_048_576-body.count)))
+        if body.count >= 1_048_576 { dataTask.cancel() }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let c = continuation; continuation = nil
-        if body.count > 4096 { c?.resume(returning:(body,cors)) }
+        if body.count > 4096 { c?.resume(returning:(body,cors,error == nil)) }
         else { c?.resume(throwing:EmbeddedMediaError.encoder) }
         session.finishTasksAndInvalidate(); self.session = nil
     }

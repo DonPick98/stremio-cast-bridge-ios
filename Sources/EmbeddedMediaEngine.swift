@@ -18,6 +18,9 @@ enum EmbeddedMediaError: LocalizedError {
 
 @MainActor final class EmbeddedMediaEngine: NSObject, VLCMediaPlayerDelegate {
     enum VideoMode: Equatable { case copy, hardwareH264, softwareVP8 }
+    static func modes(requiresVideo:Bool,fallbackLevel:Int = 0) -> [VideoMode] {
+        fallbackLevel >= 2 ? [.softwareVP8] : (requiresVideo || fallbackLevel == 1) ? [.hardwareH264,.softwareVP8] : [.copy,.hardwareH264,.softwareVP8]
+    }
     private var player: VLCMediaPlayer?
     private var proxy: LocalStreamProxy?
     private var backgroundPlayer: VLCMediaPlayer?
@@ -26,6 +29,7 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var contentType = "video/mp4"
     private(set) var offset: Double = 0
     private(set) var running = false
+    private var startedStream = false
     var onFailure: (() -> Void)?
 
     static func inspect(_ url: URL) async throws -> RDPreparedMedia {
@@ -71,7 +75,7 @@ enum EmbeddedMediaError: LocalizedError {
         let aliases = lang == "it" ? ["it","ita"] : lang == "en" ? ["en","eng"] : [lang]
         let selected = audio.first(where:{aliases.contains($0.language.lowercased())}) ?? audio[0]
         let type = ["mp4","m4v","mov"].contains(url.pathExtension.lowercased()) ? "video/mp4" : "video/x-matroska"
-        let direct = type == "video/mp4" && videoSafe && audioSafe
+        let direct = type == "video/mp4" && videoSafe && profile > 0 && audioSafe
         let duration = Double(media.length.intValue)/1000
         return RDPreparedMedia.native(audio:audio,subtitles:readTracks(VLCMediaTracksInformationTypeText),defaultAudio:selected.key,url:url,contentType:type,direct:direct,videoConversion:!videoSafe,description:"\(codec(video).uppercased()) · \(w)×\(h)",duration:duration)
     }
@@ -105,6 +109,7 @@ enum EmbeddedMediaError: LocalizedError {
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
         media.addOption(":sout-keep")
+        media.addOption(":sout-mux-caching=4000")
         media.addOption(":start-time=\(offset)")
         media.addOption(":network-caching=1500")
         if let audioID { media.addOption(":audio-track-id=\(audioID)") }
@@ -120,6 +125,8 @@ enum EmbeddedMediaError: LocalizedError {
         } else { media.addOption(":no-spu"); media.addOption(":no-sout-spu") }
         let player = VLCMediaPlayer(options:["--quiet","--no-video-title-show"])
         self.player = player
+        running = true
+        if !selfTest { observeLifecycle(); updateBackground() }
         player.delegate = self; player.media = media; player.play()
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 1; config.timeoutIntervalForResource = 1
@@ -131,8 +138,9 @@ enum EmbeddedMediaError: LocalizedError {
             if player.state == .error { stop(); throw EmbeddedMediaError.encoder }
             var request = URLRequest(url:upstream); request.httpMethod = "HEAD"
             if let (_,response) = try? await session.data(for:request), (response as? HTTPURLResponse)?.statusCode == 200 {
-                streamURL = url; running = true
-                if !selfTest { observeLifecycle(); updateBackground() }
+                do { try await PlayableStreamHeader.validateProducer(upstream,contentType:contentType) }
+                catch { stop(); throw EmbeddedMediaError.encoder }
+                streamURL = url; startedStream = true
                 return url
             }
             try await Task.sleep(nanoseconds:200_000_000)
@@ -140,7 +148,7 @@ enum EmbeddedMediaError: LocalizedError {
         stop(); throw EmbeddedMediaError.timeout
     }
     func stop() {
-        running = false; onFailure = nil
+        running = false; startedStream = false; onFailure = nil
         backgroundPlayer?.stop(); backgroundPlayer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
@@ -149,9 +157,15 @@ enum EmbeddedMediaError: LocalizedError {
     }
     nonisolated func mediaPlayerStateChanged(_ aNotification: Notification) {
         Task { @MainActor [weak self] in
-            guard let self, self.running, self.player?.state == .error else { return }
-            self.onFailure?()
+            guard let self, let player = self.player else { return }
+            if player.state == .ended || (self.startedStream && player.state == .stopped) { self.proxy?.producerDidEnd() }
+            else if self.running && player.state == .error { self.onFailure?() }
         }
+    }
+    func setReceiverPaused(_ paused: Bool) {
+        guard running, let player else { return }
+        if paused && (player.state == .playing || player.state == .buffering) { player.pause() }
+        else if !paused && player.state == .paused { player.play() }
     }
     private func observeLifecycle() {
         for name in [UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
