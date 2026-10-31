@@ -4,6 +4,9 @@ import {spawnSync} from 'node:child_process';
 const root=path.resolve(process.argv[2]||'codec-matrix');
 fs.mkdirSync(root,{recursive:true});
 const binary=process.env.CAST_FIXTURE_FFMPEG||'ffmpeg';
+const encoders=spawnSync(binary,['-hide_banner','-encoders'],{encoding:'utf8'}).stdout||'';
+const vorbis=encoders.includes('libvorbis')?'libvorbis':'vorbis';
+const av1=encoders.includes('libaom-av1')?'libaom-av1':'libsvtav1';
 function run(args){const r=spawnSync(binary,['-hide_banner','-loglevel','error','-y',...args],{encoding:'utf8',maxBuffer:2e6});if(r.status!==0)throw new Error(r.stderr?.slice(-1000)||'Fixture encoder failed');}
 const base=path.join(root,'base.mp4');
 run(['-f','lavfi','-i','testsrc2=size=320x180:rate=24','-t','2','-an','-c:v','libx264','-pix_fmt','yuv420p','-preset','ultrafast','-g','24','-threads','2',base]);
@@ -14,7 +17,7 @@ for(const [name,codec,channels,ext] of [
  ['eac3_51','eac3',6,'mkv'],['dts','dca',2,'mkv'],['truehd','truehd',2,'mkv'],['flac','flac',2,'mkv'],
  ['pcm','pcm_s16le',2,'mkv'],['mp3','libmp3lame',2,'mp4'],['vorbis','libvorbis',2,'mkv'],['opus','libopus',2,'mkv']]){
  const filename=`${name}.${ext}`;
- run(['-i',base,...tone,'-t','2','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a',codec,'-ac',String(channels),'-strict','-2','-metadata:s:a:0','language=eng',path.join(root,filename)]);
+ run(['-i',base,...tone,'-t','2','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a',codec==='libvorbis'?vorbis:codec,'-ac',String(channels),'-strict','-2','-metadata:s:a:0','language=eng',path.join(root,filename)]);
  cases.push({name,filename,burn:false,selectAlternate:false});
 }
 for(const [name,codec,ext,extra,audio] of [
@@ -23,12 +26,12 @@ for(const [name,codec,ext,extra,audio] of [
  ['h264_high10','libx264','mkv',['-pix_fmt','yuv420p10le','-profile:v','high10','-preset','ultrafast'],'aac'],
  ['vp8','libvpx','webm',['-deadline','realtime','-cpu-used','8'],'libvorbis'],
  ['vp9','libvpx-vp9','webm',['-deadline','realtime','-cpu-used','8'],'libvorbis'],
- ['av1','libaom-av1','mkv',['-cpu-used','8','-row-mt','1'],'aac'],
+ ['av1',av1,'mkv',av1==='libaom-av1'?['-cpu-used','8','-row-mt','1']:['-preset','13','-svtav1-params','lp=2'],'aac'],
  ['mpeg2','mpeg2video','ts',[],'mp2'],['mpeg4','mpeg4','avi',['-q:v','5'],'libmp3lame'],
  ['wmv2','wmv2','asf',[],'wmav2'],['h264_ts','libx264','ts',['-preset','ultrafast'],'aac'],
  ['h264_flv','libx264','flv',['-preset','ultrafast'],'aac']]){
  const filename=`${name}.${ext}`;
- run(['-f','lavfi','-i','testsrc2=size=320x180:rate=24',...tone,'-t','2','-c:v',codec,...extra,'-threads','2','-g','24','-c:a',audio,'-ac','2','-strict','-2',path.join(root,filename)]);
+ run(['-f','lavfi','-i','testsrc2=size=320x180:rate=24',...tone,'-t','2','-c:v',codec,...extra,'-threads','2','-g','24','-c:a',audio==='libvorbis'?vorbis:audio,'-ac','2','-strict','-2',path.join(root,filename)]);
  cases.push({name,filename,burn:false,selectAlternate:false});
 }
 const multi='multiple_audio.mkv';

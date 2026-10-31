@@ -135,6 +135,7 @@ import UIKit
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
             guard ownsCurrentMedia else { playing = false; return }
+            if checkingStream && status.playerState == .idle { return }
             if loadPending && !loadAccepted { return }
             playing = status.playerState == .playing
             if status.playerState != .buffering { bufferingSince = nil }
@@ -337,7 +338,7 @@ import UIKit
         }
     }
     func load(preservePosition: Bool = false) {
-        startPlayback(requestedPosition:nil,autoplay:true)
+        startPlayback(requestedPosition:nil,autoplay:hasLoaded ? playing : true)
     }
     private func startPlayback(requestedPosition: Double?, autoplay: Bool) {
         guard let prepared, client != nil else { message = "Collega prima il Chromecast e scegli un file."; return }
@@ -376,7 +377,7 @@ import UIKit
                     do {
                         let audioID = audio.hasPrefix("vlc_") ? Int(audio.dropFirst(4)) : nil
                         let audioTrack = prepared.audio.first(where:{$0.key == audio})
-                        let copyAudio = ["aac","mp3","mpga"].contains(audioTrack?.codec.lowercased() ?? "") && (audioTrack?.channels ?? 0) > 0 && (audioTrack?.channels ?? 0) <= 2
+                        let copyAudio = ["aac","mp3"].contains(audioTrack?.codec.lowercased() ?? "") && (audioTrack?.channels ?? 0) > 0 && (audioTrack?.channels ?? 0) <= 2
                         let subtitleID = burnedSubtitle.hasPrefix("vlc_") ? Int(burnedSubtitle.dropFirst(4)) : nil
                         let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio)
                         try Task.checkCancellation()

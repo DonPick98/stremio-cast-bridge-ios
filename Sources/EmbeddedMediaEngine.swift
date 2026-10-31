@@ -62,10 +62,11 @@ enum EmbeddedMediaError: LocalizedError {
         let fps = base > 0 ? rate/base : 0
         let rawProfile = (video[VLCMediaTracksInformationCodecProfile] as? NSNumber)?.intValue ?? 0
         let profile = rawProfile >= 0 ? rawProfile & 255 : 0
-        let videoSafe = codec(video) == "h264" && profile <= 100 && w > 0 && h > 0 && w <= 1920 && h <= 1080 && fps > 0 && (fps <= 30 || (h <= 720 && fps <= 60))
+        let level = (video[VLCMediaTracksInformationCodecLevel] as? NSNumber)?.intValue ?? 0
+        let videoSafe = codec(video) == "h264" && profile <= 100 && (level == 0 || level <= 42) && w > 0 && h > 0 && w <= 1920 && h <= 1080 && fps > 0 && (fps <= 30 || (h <= 720 && fps <= 60))
         let firstAudio = tracks.first(where:{$0[VLCMediaTracksInformationType] as? String == VLCMediaTracksInformationTypeAudio}) ?? [:]
         let channels = (firstAudio[VLCMediaTracksInformationAudioChannelsNumber] as? NSNumber)?.intValue ?? 0
-        let audioSafe = audio.count == 1 && ["aac","mpga","mp3"].contains(audio[0].codec) && channels > 0 && channels <= 2
+        let audioSafe = audio.count == 1 && ["aac","mp3"].contains(audio[0].codec) && channels > 0 && channels <= 2
         let lang = Locale.preferredLanguages.first?.prefix(2).lowercased() ?? "en"
         let aliases = lang == "it" ? ["it","ita"] : lang == "en" ? ["en","eng"] : [lang]
         let selected = audio.first(where:{aliases.contains($0.language.lowercased())}) ?? audio[0]
@@ -153,7 +154,7 @@ enum EmbeddedMediaError: LocalizedError {
         }
     }
     private func observeLifecycle() {
-        for name in [UIApplication.didEnterBackgroundNotification,UIApplication.willEnterForegroundNotification] {
+        for name in [UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
             observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
                 Task { @MainActor in self?.updateBackground() }
             })

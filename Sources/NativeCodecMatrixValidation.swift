@@ -21,7 +21,7 @@ import MobileVLCKit
                 let mode: EmbeddedMediaEngine.VideoMode = original.requiresVideoConversion || burn ? .hardwareH264 : .copy
                 let output = documents.appendingPathComponent("matrix-\(name).mp4")
                 let media = VLCMedia(url:input)
-                let copyAudio = ["aac","mp3","mpga"].contains(audio.codec.lowercased()) && (audio.channels ?? 0) > 0 && (audio.channels ?? 0) <= 2
+                let copyAudio = ["aac","mp3"].contains(audio.codec.lowercased()) && (audio.channels ?? 0) > 0 && (audio.channels ?? 0) <= 2
                 media.addOption(":sout=\(EmbeddedMediaEngine.outputChain(videoMode:mode,copyAudio:copyAudio,burn:burn,access:"file",target:output.path))")
                 media.addOption(":no-sout-all")
                 if let id = Int(audio.key.dropFirst(4)) { media.addOption(":audio-track-id=\(id)") }
