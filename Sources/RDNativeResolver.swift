@@ -35,25 +35,29 @@ enum RDResolverError: LocalizedError {
     }
 }
 
-/// The resulting HLS URL selects one audio track and optionally burns a subtitle
-/// into the picture. It does not make MKV tracks selectable by the Cast receiver.
+/// A validated original file and, when available, HLS conversion variants.
+/// Conversion selects one audio track and can burn a subtitle into the picture.
 struct RDPreparedMedia {
     // The transcode URL identifies Real-Debrid's default audio track. It is not
     // necessarily the original language, so the user can still change it.
     let audio: [RDTrack]
     let subtitles: [RDTrack]
     let defaultAudioKey: String
+    let directURL: URL
+    let directContentType: String
+    let directCompatible: Bool
+    let videoDescription: String
     fileprivate let variants: [String: String]
 
     var availableQualities: [RDQuality] { RDQuality.allCases.filter { variants[$0.rawValue] != nil } }
 
-    func streamURL(audio: String, subtitle: String? = nil, quality: RDQuality = .medium) throws -> URL {
+    func streamURL(audio: String, subtitle: String? = nil, quality: RDQuality = .high) throws -> URL {
         guard self.audio.contains(where: { $0.key == audio }),
               subtitle == nil || subtitles.contains(where: { $0.key == subtitle }) else {
             throw RDResolverError.invalidTrack
         }
         let sub = subtitle ?? "none"
-        guard let raw = variants[quality.rawValue] ?? variants["medium"] ?? variants["high"],
+        guard let raw = variants[quality.rawValue],
               var components = URLComponents(string: raw),
               components.scheme?.lowercased() == "https",
               let host = components.host?.lowercased(),
@@ -132,11 +136,18 @@ struct RDNativeResolver {
         guard isRealDebridLink(directLink) else { throw RDResolverError.invalidStream }
         let unrestricted = try await api("unrestrict/link", form: ["link": directLink.absoluteString])
         guard let id = unrestricted["id"] as? String, validID(id) else { throw RDResolverError.invalidResponse }
+        guard let rawDownload = unrestricted["download"] as? String,
+              let download = URL(string: rawDownload), download.scheme?.lowercased() == "https",
+              let downloadHost = download.host?.lowercased(),
+              downloadHost.range(of: #"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+download\.real-debrid\.com$"#, options: .regularExpression) != nil,
+              download.user == nil, download.password == nil, download.port == nil else {
+            throw RDResolverError.invalidStream
+        }
         async let info = api("streaming/mediaInfos/\(id)")
-        async let transcodes = api("streaming/transcode/\(id)")
+        async let transcodes = try? api("streaming/transcode/\(id)")
         let (media, converted) = try await (info, transcodes)
-        guard let details = media["details"] as? [String: Any],
-              let appleValues = converted["apple"] as? [String: Any] else { throw RDResolverError.invalidResponse }
+        guard let details = media["details"] as? [String: Any] else { throw RDResolverError.invalidResponse }
+        let appleValues = converted?["apple"] as? [String: Any] ?? [:]
         let apple = appleValues.compactMapValues { $0 as? String }
         let audio = tracks(details["audio"])
         guard !audio.isEmpty else { throw RDResolverError.invalidResponse }
@@ -147,7 +158,42 @@ struct RDNativeResolver {
             return pieces.count > 2 ? String(pieces[2]) : nil
         }
         let defaultAudioKey = audio.first(where: { $0.key == preferredKey })?.key ?? audio[0].key
-        return RDPreparedMedia(audio: audio, subtitles: tracks(details["subtitles"]), defaultAudioKey: defaultAudioKey, variants: apple)
+        let videoContainer = details["video"] as? [String: Any] ?? [:]
+        let video: [String: Any]
+        if videoContainer["codec"] is String {
+            video = videoContainer
+        } else {
+            let key = videoContainer.keys.sorted().first {
+                $0.range(of: #"^[a-zA-Z]{2,3}[0-9]{1,3}$"#, options: .regularExpression) != nil &&
+                (videoContainer[$0] as? [String: Any])?["codec"] is String
+            }
+            video = key.flatMap { videoContainer[$0] as? [String: Any] } ?? [:]
+        }
+        let codec = (video["codec"] as? String ?? "").lowercased()
+        let audioCodec = audio.first(where: { $0.key == defaultAudioKey })?.codec.lowercased() ?? ""
+        func number(_ value: Any?) -> Double? {
+            let parsed: Double?
+            if let n = value as? NSNumber { parsed = n.doubleValue }
+            else if let s = value as? String {
+                let parts = s.split(separator: "/")
+                if parts.count == 2, let a = Double(parts[0]), let b = Double(parts[1]), b != 0 { parsed = a / b }
+                else { parsed = Double(s) }
+            } else { parsed = nil }
+            guard let parsed, parsed.isFinite, parsed > 0, parsed < 100_000 else { return nil }
+            return parsed
+        }
+        let width = number(video["width"])
+        let height = number(video["height"])
+        let fpsValue = video["fps"] ?? video["frame_rate"]
+        let fps = number(fpsValue)
+        let ext = ((unrestricted["filename"] as? String ?? download.lastPathComponent) as NSString).pathExtension.lowercased()
+        let type = ext == "mkv" ? "video/x-matroska" : "video/mp4"
+        let dimensionsOK = width.map { $0 > 0 && $0 <= 1920 } == true && height.map { $0 > 0 && $0 <= 1080 } == true
+        let fpsOK = fps.map { $0 <= 60 } ?? (fpsValue == nil)
+        let compatible = ["h264", "avc", "avc1"].contains(codec) && audio.count == 1 && audioCodec.contains("aac") && ["mkv", "mp4", "m4v"].contains(ext) && dimensionsOK && fpsOK
+        let resolution = width.flatMap { w in height.map { h in "\(Int(w))×\(Int(h))" } }
+        let description = (["Originale", codec.isEmpty ? nil : codec.uppercased(), resolution].compactMap { $0 }).joined(separator: " · ")
+        return RDPreparedMedia(audio: audio, subtitles: tracks(details["subtitles"]), defaultAudioKey: defaultAudioKey, directURL: download, directContentType: type, directCompatible: compatible, videoDescription: description, variants: apple)
     }
 
     private func api(_ path: String, form: [String: String]? = nil) async throws -> [String: Any] {
