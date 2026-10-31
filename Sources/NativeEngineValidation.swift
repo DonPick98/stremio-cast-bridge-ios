@@ -1,3 +1,4 @@
+#if CAST_ENGINE_TESTING
 import Foundation
 import MobileVLCKit
 
@@ -102,3 +103,4 @@ private final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unch
         session.finishTasksAndInvalidate(); self.session = nil
     }
 }
+#endif

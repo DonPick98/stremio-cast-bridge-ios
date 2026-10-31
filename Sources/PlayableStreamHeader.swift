@@ -138,7 +138,7 @@ private final class ProducerHeaderRequest: NSObject, URLSessionDataDelegate, @un
     private var failure: Error?
     init(contentType:String) { self.contentType = contentType }
     func read(_ url:URL) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation:CheckedContinuation<Void,Error>) in
             lock.lock(); defer { lock.unlock() }
             if cancelled { continuation.resume(throwing:CancellationError()); return }
             self.continuation = continuation

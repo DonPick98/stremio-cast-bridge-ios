@@ -123,7 +123,10 @@ import UIKit
     }
     func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager: GCKSessionManager, didResumeSession session: GCKSession) { refreshConnection() }
-    func sessionManager(_ manager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) { capturePosition(); stopLocalProcessing(); connected = false; playing = false; finishCommand(false) }
+    func sessionManager(_ manager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) {
+        streamCheckTask?.cancel(); checkingStream = false; loading = false
+        capturePosition(); stopLocalProcessing(); connected = false; playing = false; finishCommand(false)
+    }
     func remoteMediaClient(_ client: GCKRemoteMediaClient, didUpdate mediaStatus: GCKMediaStatus?) { updateStatus() }
     private func updateStatus() {
         guard UIApplication.shared.applicationState == .active || localProcessing else { return }
@@ -135,7 +138,10 @@ import UIKit
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
             guard ownsCurrentMedia else { playing = false; return }
-            if checkingStream && status.playerState == .idle { return }
+            if checkingStream && status.playerState == .idle {
+                if status.idleReason == .cancelled { streamCheckTask?.cancel(); checkingStream = false; loading = false; stopLocalProcessing(); hasLoaded = false }
+                return
+            }
             if loadPending && !loadAccepted { return }
             playing = status.playerState == .playing
             if status.playerState == .paused || status.playerState == .playing { nativeEngine?.setReceiverPaused(status.playerState == .paused) }
@@ -176,6 +182,10 @@ import UIKit
                 lastGoodPosition = 0
                 stopLocalProcessing()
                 updateActivity(status: "Riproduzione terminata")
+            } else if status.playerState == .idle && currentLoad && status.idleReason == .cancelled {
+                loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = false
+                stopLocalProcessing(); message = "Riproduzione interrotta."
+                updateActivity(status:"Riproduzione interrotta")
             }
         }
     }

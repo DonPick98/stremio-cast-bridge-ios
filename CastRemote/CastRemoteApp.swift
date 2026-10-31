@@ -22,7 +22,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 .onOpenURL { controller.open($0) }
                 .onAppear {
                     controller.refreshConnection()
+#if CAST_ENGINE_TESTING
                     if ProcessInfo.processInfo.environment["CAST_ENGINE_SELFTEST"] == "1" { Task { await NativeEngineValidation.run() } }
+#endif
                 }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active { controller.refreshConnection() }

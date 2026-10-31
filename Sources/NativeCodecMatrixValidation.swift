@@ -1,3 +1,4 @@
+#if CAST_ENGINE_TESTING
 import Foundation
 import MobileVLCKit
 
@@ -61,3 +62,4 @@ import MobileVLCKit
         return results
     }
 }
+#endif
