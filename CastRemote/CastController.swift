@@ -100,7 +100,7 @@ import CryptoKit
     func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager: GCKSessionManager, didResumeSession session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) { connected = false; playing = false; finishCommand(false) }
-    func remoteMediaClient(_ client: GCKRemoteMediaClient, didUpdate mediaStatus: GCKMediaStatus) { updateStatus() }
+    func remoteMediaClient(_ client: GCKRemoteMediaClient, didUpdate mediaStatus: GCKMediaStatus?) { updateStatus() }
     private func updateStatus() {
         connected = GCKCastContext.sharedInstance().sessionManager.hasConnectedCastSession()
         guard let session = castSession, let client = session.remoteMediaClient else { playing = false; updateActivity(status: "Apri l’app per riconnettere Chromecast"); return }
