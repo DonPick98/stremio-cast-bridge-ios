@@ -112,3 +112,11 @@ SourceFileSize preferisce behaviorHints.videoSize; ripiega sulla dimensione test
 
 Incluse anche le distinzioni handoff HTTP locali preparate nel turno precedente: solo 410 e' scadenza, altri HTTP e risposte non JSON distinti. Test sintetici HandoffTests, CastWire (envelope, LAN, limiti seek), preferenze persistenti e dimensioni; nessun test sintetico sostituisce il collaudo iPhone bloccato -> Chromecast. Verificare pin iniziale, pausa/riprendi, salti, riconnessione a SDK sospeso, font/stile reali e SideStore. Estrattore/hosting e audio senza conversione mantengono i limiti gia' documentati.
 
+## UI minimale - revisione senza compilazione
+
+L'utente ha fermato le compilazioni e chiesto di migliorare prima la UI. Non avviare nuove build/IPA finche' non lo richiede. La build 0.5 gia' partita era conclusa al momento dello stop; non equivale alla verifica di questa revisione UI.
+
+ContentView ridisegnata: intestazione compatta Cast Bridge con stato e menu; scheda sorgente con dimensione a destra; player con timeline a larghezza piena, pausa centrale e +/-30 secondi; pannello Audio e sottotitoli separato; accesso diretto all'anteprima; opzioni avanzate e configurazione servizio in sezioni richiudibili. Dettagli completi sorgente conservati nel pannello. Nessun codice traccia interno nei titoli; tracce omonime distinte da numero. Impostazioni sottotitoli con campioni colore, preview neutra e indicazione del salvataggio automatico.
+
+Verifica di questa UI: controllo diff e revisione visiva di uno studio del layout con dati d'esempio. Non e' una schermata di SwiftUI compilata; nessun test su simulatore/iPhone o compilazione eseguiti dopo lo stop. Conservate le logiche di selezione, compatibilita', applicazione tracce, volume, seek, estrazione ed esportazione. Da controllare alla successiva compilazione autorizzata: tutte le viste e sheet, Dynamic Type, schermi piccoli e corrispondenza del layout nativo.
+

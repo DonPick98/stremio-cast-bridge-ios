@@ -31,6 +31,15 @@ struct CastLiveActivity: Widget {
                     VStack(spacing:6) {
                         Text(isStale(context) ? "Ultima posizione nota" : context.state.status).font(.caption)
                         timeline(context)
+                        if #available(iOS 17.0, *) {
+                            HStack {
+                                Button(intent:CastBackIntent()) { Image(systemName:"gobackward.30") }
+                                Spacer()
+                                Button(intent:CastToggleIntent()) { Image(systemName:context.state.playing ? "pause.fill" : "play.fill") }
+                                Spacer()
+                                Button(intent:CastForwardIntent()) { Image(systemName:"goforward.30") }
+                            }.buttonStyle(.plain)
+                        }
                     }
                 }
             } compactLeading: { Image(systemName: "tv") }
