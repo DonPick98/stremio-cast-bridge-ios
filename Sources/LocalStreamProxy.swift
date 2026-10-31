@@ -72,7 +72,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     /// connection that the receiver will consume, rather than probing and
     /// discarding the beginning of a short video.
     func prepare() async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation:CheckedContinuation<Void,Error>) in
             queue.async {
                 guard !self.stopped, self.warm == nil, let port = NWEndpoint.Port(rawValue:self.producerPort) else { continuation.resume(throwing:LocalStreamError.upstream); return }
                 self.preparing = continuation

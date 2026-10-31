@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Typecheck stream header validator
-        run: swiftc -typecheck Sources/PlayableStreamHeader.swift
+        run: swiftc -typecheck Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift
       - name: Install media engines
         env:
           LANG: en_US.UTF-8

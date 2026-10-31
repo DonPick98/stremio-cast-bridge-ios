@@ -8,6 +8,7 @@ Cast Bridge apre sulla TV le sorgenti Stremio del proprio account Real-Debrid. L
 - H.264 in altri contenitori: adattamento del contenitore, conservando il video originale; audio incompatibile convertito in AAC stereo.
 - Video incompatibile o sottotitoli incorporati: conversione H.264 tramite encoder Apple, con ripiego automatico VP8/Vorbis. Conversione fino a 1920x1080 a 30 fps.
 - Audio alternativo: selezione della traccia originale prima dell'adattamento. Il Chromecast riceve la traccia scelta.
+- TrueHD/MLP: componente FFmpeg integrato per i decoder assenti nel pacchetto iOS VLC; passa al motore video tramite una FIFO privata, senza scrivere l'intero film.
 - Sottotitoli incorporati: rendering nel video sull'iPhone, senza hosting. Preferenze di carattere, dimensione, colore, contorno e sfondo per le tracce testuali; le immagini PGS non possono cambiare carattere.
 - WebVTT esterno: traccia testo Cast, conservata in memoria e riallineata al punto scelto dopo i salti.
 
