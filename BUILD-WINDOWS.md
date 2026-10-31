@@ -24,3 +24,7 @@ pubblici sono gratuiti. Controllare la quota prima di eseguire il flusso.
 Riferimenti: [runner GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
 [costi Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
 [AltStore Classic](https://faq.altstore.io/altstore-classic/your-altstore).
+
+
+## Prova Live Activity
+Installa l’IPA con SideStore e apri Cast Bridge su iPhone con iOS 16.1 o successivo. Premi **Avvia test**, poi blocca l’iPhone: dovrebbe apparire “Test Live Activity attivo”. Su iPhone compatibili verifica anche Dynamic Island. Riapri l’app e premi **Termina test**. Se il test non parte, verifica che le attività in tempo reale siano abilitate nelle impostazioni dell’app e annota il messaggio mostrato. Questa è una prova statica: non controlla la riproduzione. La firma e il funzionamento dell’estensione tramite SideStore vanno verificati sul dispositivo.

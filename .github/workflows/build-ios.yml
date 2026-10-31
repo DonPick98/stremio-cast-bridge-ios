@@ -1,6 +1,8 @@
 name: Build unsigned iOS app
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +38,7 @@ jobs:
           set -euo pipefail
           app="$RUNNER_TEMP/castremote-build/Build/Products/Release-iphoneos/CastRemote.app"
           test -d "$app"
+          test -d "$app/PlugIns/CastLiveActivity.appex"
           mkdir -p "$RUNNER_TEMP/castremote-package/Payload"
           ditto "$app" "$RUNNER_TEMP/castremote-package/Payload/CastRemote.app"
           cd "$RUNNER_TEMP/castremote-package"

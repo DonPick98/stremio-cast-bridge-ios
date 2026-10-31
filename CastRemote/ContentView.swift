@@ -1,8 +1,10 @@
 import SwiftUI
+import ActivityKit
 
 struct ContentView: View {
     @EnvironmentObject private var cast: CastController
     @State private var showTrackOptions = false
+    @State private var activityMessage = "Prova la visualizzazione sulla schermata di blocco."
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -17,6 +19,11 @@ struct ContentView: View {
                             .accessibilityLabel("Configura add-on")
                         CastButton().frame(width:44,height:44).accessibilityLabel("Connetti Chromecast")
                     }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Test Live Activity").font(.headline)
+                        Text(activityMessage).font(.caption).foregroundStyle(.secondary)
+                        HStack { Button("Avvia test") { startActivity() }; Button("Termina test") { endActivities() } }.buttonStyle(.bordered)
+                    }.card()
                     Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
                     if cast.busy { ProgressView().tint(.mint) }
                     if !cast.sources.isEmpty {
@@ -96,6 +103,26 @@ struct ContentView: View {
                 .navigationBarHidden(true)
         }.preferredColorScheme(.dark)
             .sheet(isPresented:$cast.showSetup) { AddonSetupView().environmentObject(cast) }
+    }
+    private func startActivity() {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { activityMessage = "Le Attività in tempo reale sono disattivate nelle impostazioni."; return }
+        guard Activity<CastActivityAttributes>.activities.isEmpty else { activityMessage = "Test già avviato: blocca l’iPhone per visualizzarlo."; return }
+        do {
+            let attributes = CastActivityAttributes(title: "Cast Bridge")
+            let state = CastActivityAttributes.ContentState(status: "Test Live Activity attivo")
+            if #available(iOS 16.2, *) { _ = try Activity.request(attributes: attributes, content: ActivityContent(state: state, staleDate: nil), pushType: nil) }
+            else { _ = try Activity.request(attributes: attributes, contentState: state, pushType: nil) }
+            activityMessage = "Test avviato: blocca l’iPhone per visualizzarlo."
+        } catch { activityMessage = "Impossibile avviare il test: \(error.localizedDescription)" }
+    }
+    private func endActivities() {
+        Task {
+            for activity in Activity<CastActivityAttributes>.activities {
+                if #available(iOS 16.2, *) { await activity.end(nil, dismissalPolicy: .immediate) }
+                else { await activity.end(dismissalPolicy: .immediate) }
+            }
+            await MainActor.run { activityMessage = "Test terminato." }
+        }
     }
     private func trackName(_ track: RDTrack) -> String {
         let language = Locale(identifier:"it").localizedString(forLanguageCode:track.language) ?? track.label
