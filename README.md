@@ -1,4 +1,4 @@
-# Cast Bridge per iPhone 0.2
+# Cast Bridge per iPhone 0.3
 
 Telecomando Stremio / Real-Debrid per Chromecast classico. Installazione con SideStore su iPhone; compilazione senza firma su runner standard macOS di GitHub Actions in repository pubblico, senza credenziali Apple o token personali.
 

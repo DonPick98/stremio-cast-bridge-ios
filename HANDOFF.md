@@ -40,3 +40,26 @@ Al prossimo account OpenAI: clonare questo repo, leggere questo file e README, p
 ## Checkpoint implementazione 0.2
 
 Percorso diretto, modalita' compatibilita', stato/timeout, posizione persistita e AppIntents implementati nei cinque file Swift. In attesa di compilazione e collaudo. Estrazione/hosting sottotitoli incorporati ancora aperti; fallback esterno disponibile. Il codice e' una versione da collaudare, non dichiarata completa su tutti i formati.
+
+## Checkpoint 0.3 - ripresa del 31 ottobre
+
+La build 0.2 di main ec1ba022 ha concluso con successo (Actions 41213783243). La versione 0.3 aggiunge:
+
+- Associazione dello stato Cast al contenuto caricato, invece di attendere obbligatoriamente un nuovo mediaSessionID: alcuni receiver possono riusarlo.
+- Salvataggio del minutaggio immediatamente prima di ricaricare/cambiare sorgente e quando l'app passa in background; ripristino della chiave di posizione dopo riavvio del processo. Nessun URL persistito: solo hash e chiave hash della posizione.
+- Traccia VTT esterna associata anche se disattivata: attivazione/disattivazione via setActiveTrackIDs senza ricaricare il video. Audio alternativo e sottotitoli incorporati continuano a richiedere conversione esplicita.
+- Comandi dalla Live Activity consentiti solo per il contenuto della sessione dell'app; recupero dell'attivita' esistente al riavvio.
+- Pulsante di avvio disabilitato durante LOAD, codice Cast negli errori di caricamento e segnalazione dopo 45 secondi di buffering continuo. Nessuna riduzione automatica della qualita'.
+- Test Swift eseguibili in Actions con URLProtocol e dati sintetici: file diretto 1080p, selezione tracce, nessun downgrade implicito, conversione indisponibile e rifiuto di URL estranei.
+
+### Blocco esterno accertato
+
+Il progetto Sites esistente appgprj_6ae4994e5e088191a83a4d06571ea4e9 restituisce NOT_FOUND nell'account/workspace collegato alla nuova chat; anche la lista completa dei Sites non lo include. L'URL pubblico e' quello corretto, ma non concede accesso di modifica. Il backend non e' stato modificato o pubblicato da questa chat. Occorre collegare il proprietario/workspace del Site o renderlo modificabile dal nuovo account tramite i normali controlli Sites.
+
+### Lavoro residuo reale (obiettivo completo non ancora raggiunto)
+
+1. Implementare e validare estrazione completa dei sottotitoli incorporati testuali e hosting temporaneo indipendente da PC/iPhone. Il parser Matroska sperimentale nel precedente checkout non e' una funzione dell'app 0.3. Non inviare al server link RD legati all'IP presumendo che siano scaricabili da li': l'estrazione sul telefono prima del Cast e l'upload del solo VTT sono una possibilita' da verificare. Stabilire autenticazione, limiti, scadenza e CORS nel servizio prima dell'integrazione. PGS e fedelta' degli effetti ASS non sono coperti.
+2. Per il cambio audio senza la conversione RD resta necessario validare un percorso Custom Receiver/remux compatibile. Il Default Media Receiver offre la selezione delle tracce testo, non una soluzione universale per gli audio incorporati. Il selettore audio attuale usa ancora la modalita' compatibilita', con i rischi HLS gia' documentati.
+3. Sul dispositivo: verificare avvio diretto 1080p, sottotitolo reale attivato e disattivato senza salto/ripartenza, cambio in compatibilita' al minuto corrente, riconnessione, pausa e +/-30 secondi dalla Live Activity a schermo bloccato. La compilazione e i test del resolver non verificano questi comportamenti.
+
+Non dichiarare il prodotto completo finche' questi punti non sono risolti o l'utente accetta esplicitamente i limiti.

@@ -40,8 +40,7 @@ import CryptoKit
     private var lastActivityUpdate = Date.distantPast
     private var lastPositionSave = Date.distantPast
     private var positionKey: String?
-    private var previousMediaSessionID = 0
-    private var ignorePriorSession = false
+    private var bufferingSince: Date?
     private var expectedContentID: String?
     private var loadedSignature: String?
     private var loadedSubtitle: String?
@@ -54,6 +53,8 @@ import CryptoKit
     override init() {
         super.init()
         activity = Activity<CastActivityAttributes>.activities.first
+        positionKey = UserDefaults.standard.string(forKey: "cast.session.positionKey")
+        if let positionKey { lastGoodPosition = UserDefaults.standard.double(forKey: positionKey) }
         CastActivityCommands.handler = { [weak self] command in
             guard let self else { return false }
             return await self.performActivityCommand(command)
@@ -91,6 +92,7 @@ import CryptoKit
             guard ownsCurrentMedia else { playing = false; return }
             if loadPending && !loadAccepted { return }
             playing = status.playerState == .playing
+            if status.playerState != .buffering { bufferingSince = nil }
             let observed = client.approximateStreamPosition()
             if !loadPending && observed.isFinite && observed >= 0 && (status.playerState == .playing || status.playerState == .paused) {
                 lastGoodPosition = observed
@@ -107,8 +109,10 @@ import CryptoKit
                 message = playing ? "In riproduzione sulla TV." : "In pausa sulla TV."
                 updateActivity(status: playing ? "In riproduzione" : "In pausa")
             } else if status.playerState == .buffering {
-                message = "Caricamento sulla TV…"
-                updateActivity(status: "Caricamento")
+                if bufferingSince == nil { bufferingSince = Date() }
+                let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
+                message = stalled ? "Buffering prolungato. Riprova dal punto conservato o cambia sorgente." : "Caricamento sulla TV…"
+                updateActivity(status: stalled ? "Buffering: apri l’app per riprovare" : "Caricamento")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .error {
                 loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil
                 message = "La riproduzione si è interrotta. Riprova: la posizione è conservata."
@@ -240,7 +244,7 @@ import CryptoKit
     }
     func load(preservePosition: Bool = false) {
         guard let prepared, let client else { message = "Collega prima il Chromecast e scegli un file."; return }
-        guard !loadPending else { return }
+        guard !loadPending, subtitleRequest == nil else { return }
         capturePosition()
         do {
             let chosenSubtitle: String? = ["none", "external"].contains(selectedSubtitle) ? nil : selectedSubtitle
@@ -274,8 +278,6 @@ import CryptoKit
             }
             load.mediaInformation = info.build()
             if preservePosition || lastGoodPosition > 0 { load.startTime = max(0, lastGoodPosition) }
-            previousMediaSessionID = client.mediaStatus?.mediaSessionID ?? 0
-            ignorePriorSession = previousMediaSessionID != 0
             loadPending = true
             loading = true
             hasLoaded = false
@@ -284,6 +286,7 @@ import CryptoKit
             loadedSignature = signature
             loadedSubtitle = selectedSubtitle
             UserDefaults.standard.set(contentDigest(url.absoluteString), forKey: "cast.session.content")
+            if let positionKey { UserDefaults.standard.set(positionKey, forKey: "cast.session.positionKey") }
             let request = client.loadMedia(with:load.build())
             loadRequest = request; request.delegate = self
             message = "Invio il video al Chromecast…"
@@ -376,10 +379,11 @@ import CryptoKit
         if let positionKey, lastGoodPosition > 0 { UserDefaults.standard.set(lastGoodPosition, forKey: positionKey) }
         positionKey = nil
         finishCommand(false)
-        loadTimeout?.cancel(); loadPending = false; loading = false; loadAccepted = false; loadRequest = nil; ignorePriorSession = false
+        loadTimeout?.cancel(); loadPending = false; loading = false; loadAccepted = false; loadRequest = nil; bufferingSince = nil
         expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil
         subtitleRequest = nil; pendingSubtitle = nil
         UserDefaults.standard.removeObject(forKey: "cast.session.content")
+        UserDefaults.standard.removeObject(forKey: "cast.session.positionKey")
         lastGoodPosition = 0; position = 0; duration = 0
         if let old = activity {
             activity = nil; lastActivityState = ""
