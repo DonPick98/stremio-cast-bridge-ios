@@ -1,4 +1,4 @@
-platform :ios, '16.0'
+platform :ios, '16.1'
 target 'CastRemote' do
   use_frameworks!
   pod 'google-cast-sdk', '4.8.6'

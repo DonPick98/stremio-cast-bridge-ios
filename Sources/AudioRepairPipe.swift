@@ -7,7 +7,7 @@ import Darwin
     private static let initialized: Void = {
         ffmpeg_kit_initialize()
         ffmpeg_kit_config_set_log_level(-8)
-        ffmpeg_kit_set_session_history_size(0)
+        ffmpeg_kit_set_session_history_size(1)
         Darwin.signal(SIGPIPE,SIG_IGN)
     }()
     static func required(_ codec:String) -> Bool { ["trhd","truehd","mlp"].contains(codec.lowercased()) }
