@@ -120,3 +120,6 @@ ContentView ridisegnata: intestazione compatta Cast Bridge con stato e menu; sch
 
 Verifica di questa UI: controllo diff e revisione visiva di uno studio del layout con dati d'esempio. Non e' una schermata di SwiftUI compilata; nessun test su simulatore/iPhone o compilazione eseguiti dopo lo stop. Conservate le logiche di selezione, compatibilita', applicazione tracce, volume, seek, estrazione ed esportazione. Da controllare alla successiva compilazione autorizzata: tutte le viste e sheet, Dynamic Type, schermi piccoli e corrispondenza del layout nativo.
 
+## 0.5.1 build 8 - compilazione autorizzata e icona
+
+L'utente ha approvato la UI minimale e richiesto esplicitamente la nuova IPA, revocando lo stop precedente. Aggiunta icona opaca 1024 px nel catalogo AppIcon, collegato alle risorse del target app; versione app/estensione allineata a 0.5.1 (8). La verifica reale dei controlli in background resta da svolgere su iPhone. Nessuna modifica al backend Sites o nuova promessa su audio multitraccia/hosting sottotitoli.
