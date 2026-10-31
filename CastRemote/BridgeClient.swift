@@ -42,6 +42,7 @@ struct AddonStream: Decodable, Identifiable {
     }
     struct ProxyHeaders: Decodable { let request: [String:String]? }
     var descriptionText: String { description ?? title ?? "" }
+    var fileSizeLabel: String { SourceFileSize.label(bytes:behaviorHints?.videoSize,description:descriptionText) ?? "Dimensione non disponibile" }
     var displayName: String { [name, descriptionText].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n") }
     var filename: String? {
         if let s = behaviorHints?.filename, !s.isEmpty { return s }
@@ -69,27 +70,35 @@ struct AddonStream: Decodable, Identifiable {
 enum BridgeError: LocalizedError {
     case invalidLink, expired, network, noSources, cannotResolve
     case sourceHTTP(Int)
+    case handoffHTTP(Int), invalidHandoffResponse
     var errorDescription: String? {
         switch self {
         case .invalidLink: return "Collegamento non valido. Riapri la sorgente da Stremio."
-        case .expired: return "Collegamento scaduto o non valido. Riapri la sorgente da Stremio."
+        case .expired: return "L’elenco delle sorgenti in Stremio contiene un collegamento scaduto (HTTP 410). Aggiorna l’elenco dell’episodio; ricliccare una sorgente dello stesso elenco non rinnova il collegamento."
         case .network: return "Non riesco a contattare il servizio. Controlla la connessione e riprova."
         case .noSources: return "Nessuna sorgente disponibile. Riprova da Stremio."
         case .cannotResolve: return "Non riesco a preparare questo file. Prova un’altra sorgente."
         case .sourceHTTP(let status): return "L’add-on non ha risolto la sorgente (HTTP \(status)). Attendi prima di riprovare se segnala un limite di richieste."
+        case .handoffHTTP(let status):
+            if status == 400 { return "Il servizio non riconosce il collegamento Stremio (HTTP 400). Potrebbe appartenere a una configurazione precedente; non è un errore Real-Debrid." }
+            if status == 429 { return "Il servizio che apre le sorgenti limita le richieste (HTTP 429). Attendi prima di riprovare." }
+            return "Il servizio che apre le sorgenti non ha risposto correttamente (HTTP \(status)). Non è ancora iniziata la richiesta a Real-Debrid."
+        case .invalidHandoffResponse: return "Il servizio che apre le sorgenti ha restituito una risposta inattesa (BRIDGE_RESPONSE)."
         }
     }
 }
 
 final class BridgeClient {
     static let shared = BridgeClient()
-    private let session: URLSession = {
+    private let session: URLSession
+    init(session: URLSession? = nil) {
+        if let session { self.session = session; return }
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 25
         config.urlCache = nil
         config.httpCookieStorage = nil
-        return URLSession(configuration: config)
-    }()
+        self.session = URLSession(configuration: config)
+    }
     private let endpoint = URL(string: "https://stremio-chromecast-bridge.donotpeek.chatgpt.site/api/bridge/native")!
 
     func ticket(from url: URL) throws -> String {
@@ -108,8 +117,10 @@ final class BridgeClient {
         req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         req.httpBody = try JSONEncoder().encode(["ticket": ticket])
         let (data, response) = try await session.data(for: req)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200, data.count <= 100_000 else { throw BridgeError.expired }
-        let result = try JSONDecoder().decode(BridgeHandoff.self, from: data)
+        guard let http = response as? HTTPURLResponse else { throw BridgeError.network }
+        if http.statusCode == 410 { throw BridgeError.expired }
+        guard http.statusCode == 200 else { throw BridgeError.handoffHTTP(http.statusCode) }
+        guard data.count <= 100_000, let result = try? JSONDecoder().decode(BridgeHandoff.self, from: data) else { throw BridgeError.invalidHandoffResponse }
         guard result.version == 1, result.status == "ready", ["movie", "series"].contains(result.type),
               ["torrentio", "comet"].contains(result.provider), !result.id.isEmpty, result.id.count <= 300 else { throw BridgeError.invalidLink }
         return result

@@ -3,6 +3,7 @@ import GoogleCast
 import SwiftUI
 import ActivityKit
 import CryptoKit
+import UIKit
 
 @MainActor final class CastController: NSObject, ObservableObject, GCKRequestDelegate, GCKSessionManagerListener, GCKRemoteMediaClientListener {
     @Published var showSetup = false
@@ -51,6 +52,11 @@ import CryptoKit
     private var pendingSubtitle: String?
     private weak var observedClient: GCKRemoteMediaClient?
     private var listenersAttached = false
+    private var directCaptureTask: Task<Void,Never>?
+    private var directCaptureKey: String?
+    private var directCaptureAttempt = Date.distantPast
+    private var directCaptureAttemptKey: String?
+    private var subtitleStyleWork: Task<Void,Never>?
     private var commandRequest: GCKRequest?
     private var commandContinuation: CheckedContinuation<Bool, Never>?
     private var commandTimeout: Task<Void, Never>?
@@ -103,6 +109,7 @@ import CryptoKit
     func sessionManager(_ manager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) { connected = false; playing = false; finishCommand(false) }
     func remoteMediaClient(_ client: GCKRemoteMediaClient, didUpdate mediaStatus: GCKMediaStatus?) { updateStatus() }
     private func updateStatus() {
+        guard UIApplication.shared.applicationState == .active else { return }
         connected = GCKCastContext.sharedInstance().sessionManager.hasConnectedCastSession()
         guard let session = castSession, let client = session.remoteMediaClient else { playing = false; updateActivity(status: "Apri l’app per riconnettere Chromecast"); return }
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
@@ -130,6 +137,7 @@ import CryptoKit
                 if loadPending { loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = true }
                 message = playing ? "In riproduzione sulla TV." : "In pausa sulla TV."
                 updateActivity(status: playing ? "In riproduzione" : "In pausa")
+                prepareDirectControls()
             } else if status.playerState == .buffering {
                 if bufferingSince == nil { bufferingSince = Date() }
                 let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
@@ -146,6 +154,21 @@ import CryptoKit
                 lastGoodPosition = 0
                 updateActivity(status: "Riproduzione terminata")
             }
+        }
+    }
+    private func prepareDirectControls() {
+        guard connected, ownsCurrentMedia, let session = castSession,
+              let digest = UserDefaults.standard.string(forKey:"cast.session.content") else { return }
+        let host = session.device.ipAddress
+        let key = host + "|" + digest
+        guard directCaptureKey != key, directCaptureAttemptKey != key || Date().timeIntervalSince(directCaptureAttempt) > 30 else { return }
+        directCaptureAttempt = Date()
+        directCaptureAttemptKey = key
+        directCaptureKey = key
+        directCaptureTask?.cancel()
+        directCaptureTask = Task {
+            do { try await CastDirectControl.capture(host:host,contentDigest:digest) }
+            catch { if !Task.isCancelled { directCaptureKey = nil } }
         }
     }
     func open(_ url: URL) {
@@ -318,6 +341,7 @@ import CryptoKit
             let metadata = GCKMediaMetadata(metadataType:.movie)
             metadata.setString(selectedSource?.filename ?? "Stremio", forKey:kGCKMetadataKeyTitle)
             info.metadata = metadata
+            info.textTrackStyle = SubtitleAppearance.load().castStyle
             let load = GCKMediaLoadRequestDataBuilder()
             load.autoplay = NSNumber(value: true)
             var textTracks: [GCKMediaTrack] = []
@@ -404,6 +428,14 @@ import CryptoKit
         return nil
     }
     func togglePlayback() { guard let client, ownsCurrentMedia, !loadPending else { return }; if playing { client.pause() } else { client.play() } }
+    func applySubtitleAppearance() {
+        subtitleStyleWork?.cancel()
+        subtitleStyleWork = Task {
+            try? await Task.sleep(nanoseconds:400_000_000)
+            guard !Task.isCancelled, ownsCurrentMedia, let client else { return }
+            client.setTextTrackStyle(SubtitleAppearance.load().castStyle)
+        }
+    }
     func seek(to value: Double) { guard let client, ownsCurrentMedia, !loadPending, value.isFinite else { return }; let opts = GCKMediaSeekOptions(); opts.interval = min(duration > 0 ? duration : value,max(0,value)); client.seek(with:opts) }
     func setVolume(_ value: Double) { castSession?.setDeviceVolume(Float(min(1,max(0,value)))) }
     func openControls() { if connected { GCKCastContext.sharedInstance().presentDefaultExpandedMediaControls() } }
@@ -438,10 +470,10 @@ import CryptoKit
         let request: GCKRequest
         switch command {
         case "toggle": request = client.mediaStatus?.playerState == .playing ? client.pause() : client.play()
-        case "back", "forward":
+        case let value where value == "back" || value == "forward" || value.hasPrefix("seek:"):
             let current = client.approximateStreamPosition()
             guard current.isFinite, current >= 0 else { return false }
-            let target = current + (command == "back" ? -30 : 30)
+            guard let target = CastWire.seekTarget(command,current:current,duration:duration) else { return false }
             let opts = GCKMediaSeekOptions()
             opts.interval = max(0, duration > 0 ? min(target, duration) : target)
             request = client.seek(with: opts)
@@ -464,6 +496,8 @@ import CryptoKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        subtitleStyleWork?.cancel()
+        directCaptureTask?.cancel(); directCaptureKey = nil; CastDirectControl.clear()
         capturePosition()
         if let positionKey, lastGoodPosition > 0 { UserDefaults.standard.set(lastGoodPosition, forKey: positionKey) }
         positionKey = nil

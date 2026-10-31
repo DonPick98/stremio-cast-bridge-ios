@@ -1,4 +1,8 @@
-# Cast Bridge per iPhone 0.4.1
+# Cast Bridge per iPhone 0.5
+
+La 0.5 aggiunge controlli Live Activity tramite una connessione Cast breve al dispositivo gia' selezionato, indipendente dalla connessione persistente sospesa dall'SDK. Il primo collegamento acquisisce il certificato mentre l'app e' connessa con l'SDK; i comandi successivi verificano quel certificato e l'identita' del video attivo. La barra Live Activity offre punti di salto toccabili e +/-30 secondi, non un cursore trascinabile. Funzionamento reale in background/schermo bloccato da verificare su iPhone; non e' garantita una connessione persistente durante la sospensione.
+
+Aspetto sottotitoli: anteprima, dimensione, colore, carattere, contorno e opacita' sfondo, salvati sul telefono e applicati ai successivi LOAD e al video corrente. Vale per le tracce testo esterne; i sottotitoli impressi dalla conversione RD non possono essere ristilizzati. Dimensione del file a destra nella scheda sorgente e nell'elenco in-app, da metadati o descrizione del provider; mai stimata con nuove richieste RD. Non cambia la disposizione dell'interfaccia Stremio.
 
 La 0.4.1 prova prima il collegamento fornito dall'add-on, anche quando la sorgente contiene un hash torrent. La preparazione tramite aggiunta torrent e' un ripiego per collegamenti non risolvibili, non la prima scelta. Se il file deve essere preparato, l'app mostra coda/download e percentuale, attende automaticamente e presenta le tracce quando il file e' pronto. L'attesa e' annullabile con Cambia sorgente e ha un limite di circa tre minuti, oltre i quali viene mostrato lo stato non pronto senza invitare a ripetere alla cieca. Cache in memoria dei risultati per due minuti e dell'identificativo torrent per cinque minuti; distanziamento delle richieste API e pausa su 429/codici RD 5 o 34. Gli errori mostrano HTTP, codice RD e fase, senza URL o credenziali.
 

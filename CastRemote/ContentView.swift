@@ -7,6 +7,7 @@ struct ContentView: View {
     @EnvironmentObject private var cast: CastController
 
     @State private var showTrackOptions = false
+    @State private var showSubtitleAppearance = false
 
     var body: some View {
 
@@ -46,7 +47,11 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
 
                             VStack(alignment:.leading,spacing:8) {
 
-                                Text("Sorgente").font(.headline)
+                                HStack(alignment:.firstTextBaseline) {
+                                    Text("Sorgente").font(.headline)
+                                    Spacer()
+                                    Text(source.fileSizeLabel).font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+                                }
 
                                 Text(source.displayName).font(.caption).lineLimit(5).textSelection(.disabled)
 
@@ -64,7 +69,12 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
 
                                     Button { cast.choose(entry.element) } label: {
 
-                                        HStack { Text(entry.element.displayName).font(.caption).multilineTextAlignment(.leading).lineLimit(4); Spacer(); Image(systemName:"chevron.right") }
+                                        HStack(alignment:.center,spacing:12) {
+                                            Text(entry.element.displayName).font(.caption).multilineTextAlignment(.leading).lineLimit(4)
+                                            Spacer(minLength:4)
+                                            Text(entry.element.fileSizeLabel).font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary).multilineTextAlignment(.trailing).frame(width:94,alignment:.trailing)
+                                            Image(systemName:"chevron.right")
+                                        }
 
                                     }.buttonStyle(.plain).padding(.vertical,8)
 
@@ -134,6 +144,7 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
                                     }
                                     if prepared.subtitles.isEmpty { Text("Real-Debrid non segnala sottotitoli incorporati per questa sorgente. Puoi comunque provare l’estrazione.").font(.caption).foregroundStyle(.secondary) }
                                     Button("Estrai sottotitoli dal file") { cast.extractEmbeddedSubtitles() }
+                                    Button("Aspetto sottotitoli · anteprima") { showSubtitleAppearance = true }
                                         .disabled(cast.busy || cast.loading)
                                     if let file = cast.subtitleFile { ShareLink("Esporta WebVTT",item:file) }
                                     Text("Estrazione per MKV con indice e sottotitoli testuali. Gli effetti ASS complessi non vengono conservati; verifica che il testo sia completo.").font(.caption).foregroundStyle(.secondary)
@@ -223,6 +234,7 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
         }.preferredColorScheme(.dark)
 
             .sheet(isPresented:$cast.showSetup) { AddonSetupView().environmentObject(cast) }
+            .sheet(isPresented:$showSubtitleAppearance) { SubtitleAppearanceView().environmentObject(cast) }
 
     }
 

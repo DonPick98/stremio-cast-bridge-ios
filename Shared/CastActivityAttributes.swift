@@ -1,6 +1,9 @@
 import ActivityKit
 import Foundation
 import AppIntents
+#if !CAST_WIDGET
+import UIKit
+#endif
 
 struct CastActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
@@ -16,11 +19,27 @@ struct CastActivityAttributes: ActivityAttributes {
 @MainActor enum CastActivityCommands {
     static var handler: ((String) async -> Bool)?
     static func send(_ command: String) async -> Bool {
+#if !CAST_WIDGET
+        if UIApplication.shared.applicationState != .active {
+            return await CastDirectControl.perform(command)
+        }
+#endif
         for _ in 0..<20 {
-            if let handler { return await handler(command) }
+            if let handler {
+                if await handler(command) { return true }
+#if !CAST_WIDGET
+                return await CastDirectControl.perform(command)
+#else
+                return false
+#endif
+            }
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
+#if !CAST_WIDGET
+        return await CastDirectControl.perform(command)
+#else
         return false
+#endif
     }
     static func perform(_ command: String) async {
         guard await send(command) else {
@@ -34,6 +53,20 @@ struct CastActivityAttributes: ActivityAttributes {
             }
             return
         }
+    }
+}
+
+@available(iOS 17.0, *)
+struct CastSeekIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Vai al minutaggio"
+    static var openAppWhenRun: Bool = false
+    @Parameter(title:"Secondi") var seconds: Double
+    init() {}
+    init(seconds: Double) { self.seconds = seconds }
+    func perform() async throws -> some IntentResult {
+        guard seconds.isFinite, seconds >= 0 else { return .result() }
+        await CastActivityCommands.perform("seek:\(seconds)")
+        return .result()
     }
 }
 
@@ -64,3 +97,4 @@ struct CastForwardIntent: LiveActivityIntent {
         return .result()
     }
 }
+
