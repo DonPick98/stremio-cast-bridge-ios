@@ -1,6 +1,6 @@
 # Cast Bridge per iPhone — prototipo
 
-Progetto SwiftUI per un telecomando Google Cast dedicato al bridge Stremio. **Non è una IPA pronta:** il progetto è stato preparato su Windows e non è stato compilato con Xcode né provato su un iPhone o Chromecast. Il collegamento nativo del bridge deve essere distribuito separatamente prima di provarlo.
+Progetto SwiftUI per un telecomando Google Cast dedicato al bridge Stremio. La compilazione Xcode su GitHub Actions è riuscita e ha prodotto una IPA senza firma. La firma, l'installazione e la riproduzione su iPhone e Chromecast devono ancora essere provate sul dispositivo.
 
 ## Cosa fa il prototipo
 
@@ -11,6 +11,10 @@ Progetto SwiftUI per un telecomando Google Cast dedicato al bridge Stremio. **No
 - Consente connessione Cast, avvio, pausa, avanzamento e volume. Se manca un sottotitolo inglese integrato, prova prima un WebVTT fornito dalla sorgente e poi il collegamento WebVTT del bridge ricavato da OpenSubtitles. Il risultato dipende dalla disponibilità e dalla sincronizzazione del sottotitolo per quel file.
 
 Il Chromecast legge lo stream direttamente dalla rete; il telefono funge da telecomando. Continuità con iPhone bloccato, codec, ricerca della posizione e tracce devono essere collaudati realmente.
+
+## Installare da Windows
+
+La compilazione gratuita nel repository pubblico produce `CastRemote-unsigned.ipa`. Il file va firmato con il proprio account Apple e installato tramite uno strumento come AltStore Classic o Sideloadly; questa procedura non è ancora stata verificata con la IPA specifica. Dettagli in [BUILD-WINDOWS.md](BUILD-WINDOWS.md).
 
 ## Aprire e firmare su Mac
 
@@ -28,4 +32,4 @@ Il ticket è un collegamento temporaneo e contiene solo i metadati necessari a c
 
 ## Verifica ancora necessaria
 
-Il progetto Xcode, le firme SDK e tutte le funzioni richiedono una compilazione e una prova reale. Google Cast standard non garantisce la scelta diretta delle tracce incorporate in qualsiasi MKV; qui il meccanismo proposto è la conversione di Real-Debrid, non la selezione nativa delle tracce sul ricevitore.
+Il progetto Xcode e le firme SDK hanno superato la compilazione su GitHub Actions. Firma, installazione e tutte le funzioni richiedono una prova reale. Google Cast standard non garantisce la scelta diretta delle tracce incorporate in qualsiasi MKV; qui il meccanismo proposto è la conversione di Real-Debrid, non la selezione nativa delle tracce sul ricevitore.
