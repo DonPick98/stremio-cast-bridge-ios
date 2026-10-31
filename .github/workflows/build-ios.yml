@@ -1,0 +1,50 @@
+name: Build unsigned iOS app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Install Cast SDK
+        env:
+          LANG: en_US.UTF-8
+        run: pod install --repo-update
+
+      - name: Build for iPhone without signing
+        run: |
+          xcodebuild \
+            -workspace CastRemote.xcworkspace \
+            -scheme CastRemote \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/castremote-build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/castremote-build/Build/Products/Release-iphoneos/CastRemote.app"
+          test -d "$app"
+          mkdir -p "$RUNNER_TEMP/castremote-package/Payload"
+          ditto "$app" "$RUNNER_TEMP/castremote-package/Payload/CastRemote.app"
+          cd "$RUNNER_TEMP/castremote-package"
+          zip -qry "$GITHUB_WORKSPACE/CastRemote-unsigned.ipa" Payload
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: CastRemote-unsigned
+          path: CastRemote-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
