@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Typecheck stream header validator
+        run: swiftc -typecheck Sources/PlayableStreamHeader.swift
       - name: Install media engines
         env:
           LANG: en_US.UTF-8
@@ -21,7 +23,7 @@ jobs:
           node Tests/make-codec-matrix.mjs "$RUNNER_TEMP/codec-matrix"
       - name: Build simulator application
         run: |
-          xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -arch "$(uname -m)" ONLY_ACTIVE_ARCH=YES CAST_ENGINE_VALIDATION=CAST_ENGINE_TESTING -jobs 1 -derivedDataPath "$RUNNER_TEMP/native-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES CAST_ENGINE_VALIDATION=CAST_ENGINE_TESTING -jobs 1 -derivedDataPath "$RUNNER_TEMP/native-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Test stream boundary and resolver regressions
         run: |
           swiftc -parse-as-library Sources/CastWire.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
@@ -41,7 +43,13 @@ jobs:
           cp -R "$RUNNER_TEMP/codec-matrix" "$data/Documents/CodecSamples"
           SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch "$device" app.example.castbridge
           mkdir -p native-engine-report
+          background_tested=0
           for i in $(seq 1 600); do
+            if test "$background_tested" -eq 0 && test -f "$data/Documents/background-ready.json"; then
+              background_tested=1
+              xcrun simctl openurl "$device" 'https://example.com/'
+              node Tests/read-background-probe.mjs "$data/Documents/background-ready.json" "$data/Documents/background-network.json"
+            fi
             if test -f "$data/Documents/engine-validation.json"; then
               cp "$data/Documents/engine-validation.json" native-engine-report/
               test ! -f "$data/Documents/converted.mp4" || cp "$data/Documents/converted.mp4" native-engine-report/

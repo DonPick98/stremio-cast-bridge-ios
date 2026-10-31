@@ -1,6 +1,7 @@
 #if CAST_ENGINE_TESTING
 import Foundation
 import MobileVLCKit
+import UIKit
 
 /// Exercises the actual iOS binary on synthetic fixtures in CI, without accounts or Cast devices.
 @MainActor enum NativeEngineValidation {
@@ -65,9 +66,31 @@ import MobileVLCKit
             if !matrix.isEmpty {
                 result["matrix"] = matrix
                 result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 25 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+                let background = try await backgroundProbe(documents:documents)
+                result["background"] = background
+                result["passed"] = (result["passed"] as? Bool == true) && (background["passed"] as? Bool == true)
             }
         } catch { result["error"] = "Native codec probe failed: \(error.localizedDescription)" }
         if let data = try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report,options:.atomic) }
+    }
+    private static func backgroundProbe(documents:URL) async throws -> [String:Any] {
+        let engine = EmbeddedMediaEngine(); defer { engine.stop() }
+        let input = documents.appendingPathComponent("CodecSamples/background-probe.mkv")
+        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.copy,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
+        let ready = try JSONSerialization.data(withJSONObject:["url":url.absoluteString])
+        try ready.write(to:documents.appendingPathComponent("background-ready.json"),options:.atomic)
+        let network = documents.appendingPathComponent("background-network.json")
+        for _ in 0..<400 {
+            if FileManager.default.fileExists(atPath:network.path) { break }
+            try await Task.sleep(nanoseconds:100_000_000)
+        }
+        let data = try Data(contentsOf:network)
+        let metrics = try JSONSerialization.jsonObject(with:data) as? [String:Any] ?? [:]
+        let offscreen = UIApplication.shared.applicationState == .background
+        let helper = engine.testingBackgroundHelperPlaying
+        let bytes = metrics["bytes"] as? Int ?? 0
+        let seconds = metrics["seconds"] as? Double ?? 0
+        return ["passed":offscreen && helper && bytes > 4096 && seconds >= 10,"offscreen":offscreen,"audioHelperPlaying":helper,"bytesReadExternally":bytes,"seconds":seconds]
     }
 }
 

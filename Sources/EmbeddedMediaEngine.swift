@@ -126,7 +126,7 @@ enum EmbeddedMediaError: LocalizedError {
         let player = VLCMediaPlayer(options:["--quiet","--no-video-title-show"])
         self.player = player
         running = true
-        if !selfTest { observeLifecycle(); updateBackground() }
+        observeLifecycle(); updateBackground()
         player.delegate = self; player.media = media; player.play()
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 1; config.timeoutIntervalForResource = 1
@@ -189,6 +189,9 @@ enum EmbeddedMediaError: LocalizedError {
         } else { backgroundPlayer?.stop() }
     }
     func refreshBackground() { updateBackground() }
+#if CAST_ENGINE_TESTING
+    var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
+#endif
     private static func freeLoopbackPort() throws -> UInt16 {
         let fd = Darwin.socket(AF_INET,SOCK_STREAM,0); guard fd >= 0 else { throw EmbeddedMediaError.address }; defer { Darwin.close(fd) }
         var addr = sockaddr_in(); addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); addr.sin_family = sa_family_t(AF_INET); addr.sin_port = 0
