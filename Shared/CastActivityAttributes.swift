@@ -18,8 +18,10 @@ struct CastActivityAttributes: ActivityAttributes {
 
 @MainActor enum CastActivityCommands {
     static var handler: ((String) async -> Bool)?
+    static var usesLocalStream = false
     static func send(_ command: String) async -> Bool {
 #if !CAST_WIDGET
+        if usesLocalStream { return await handler?(command) ?? false }
         if UIApplication.shared.applicationState != .active {
             return await CastDirectControl.perform(command)
         }
@@ -97,4 +99,3 @@ struct CastForwardIntent: LiveActivityIntent {
         return .result()
     }
 }
-

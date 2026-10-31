@@ -18,6 +18,12 @@ jobs:
       - name: Build simulator application
         run: |
           xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -jobs 1 -derivedDataPath "$RUNNER_TEMP/native-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Test stream boundary and resolver regressions
+        run: |
+          swiftc -parse-as-library Sources/CastWire.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
+          "$RUNNER_TEMP/local-stream-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
+          "$RUNNER_TEMP/resolver-tests"
       - name: Exercise native AC3 to AAC conversion
         run: |
           set -euo pipefail
@@ -30,10 +36,11 @@ jobs:
           cp Tests/CodecSamples/h264-ac3.mkv "$data/Documents/"
           SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch "$device" app.example.castbridge
           mkdir -p native-engine-report
-          for i in $(seq 1 90); do
+          for i in $(seq 1 180); do
             if test -f "$data/Documents/engine-validation.json"; then
               cp "$data/Documents/engine-validation.json" native-engine-report/
               test ! -f "$data/Documents/converted.mp4" || cp "$data/Documents/converted.mp4" native-engine-report/
+              find "$data/Documents" -name 'gateway-*' -exec cp '{}' native-engine-report/ \;
               node -e 'const r=require("./native-engine-report/engine-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
               exit 0
             fi

@@ -37,7 +37,62 @@ import MobileVLCKit
             result["tracks"] = tracks
             result["bytes"] = (try FileManager.default.attributesOfItem(atPath:output.path)[.size] as? NSNumber)?.intValue ?? 0
             result["passed"] = tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
+            let inspected = try await EmbeddedMediaEngine.inspect(input)
+            result["inputAudio"] = inspected.audioCodecsDescription
+            result["inputVideoConversion"] = inspected.requiresVideoConversion
+            var gatewayResults: [[String:Any]] = []
+            for mode in [EmbeddedMediaEngine.VideoMode.copy,.hardwareH264,.softwareVP8] {
+                let engine = EmbeddedMediaEngine()
+                do {
+                    let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:mode,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
+                    let capture = NativeStreamCapture()
+                    let (body,cors) = try await capture.read(url)
+                    let suffix = mode == .softwareVP8 ? "webm" : "mp4"
+                    let file = documents.appendingPathComponent("gateway-\(gatewayResults.count).\(suffix)")
+                    try body.write(to:file)
+                    let checked = try await EmbeddedMediaEngine.inspect(file)
+                    gatewayResults.append(["mode":String(describing:mode),"bytes":body.count,"cors":cors,"description":checked.videoDescription,"audio":checked.audioCodecsDescription,"passed":cors && !checked.audio.isEmpty])
+                } catch {
+                    gatewayResults.append(["mode":String(describing:mode),"passed":false,"error":error.localizedDescription])
+                }
+                engine.stop()
+            }
+            result["gateway"] = gatewayResults
+            result["passed"] = (result["passed"] as? Bool == true) && (gatewayResults[0]["passed"] as? Bool == true) && (gatewayResults[2]["passed"] as? Bool == true)
         } catch { result["error"] = "Native codec probe failed: \(error.localizedDescription)" }
         if let data = try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report,options:.atomic) }
+    }
+}
+
+private final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private var continuation: CheckedContinuation<(Data,Bool),Error>?
+    private var body = Data()
+    private var cors = false
+    private var session: URLSession?
+    func read(_ url: URL) async throws -> (Data,Bool) {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let config = URLSessionConfiguration.ephemeral
+            config.timeoutIntervalForResource = 8; config.timeoutIntervalForRequest = 8
+            let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
+            let session = URLSession(configuration:config,delegate:self,delegateQueue:queue)
+            self.session = session
+            session.dataTask(with:url).resume()
+        }
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        let http = response as? HTTPURLResponse
+        cors = http?.statusCode == 200 && http?.value(forHTTPHeaderField:"Access-Control-Allow-Origin") == "*"
+        completionHandler(cors ? .allow : .cancel)
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        body.append(data.prefix(max(0,262_144-body.count)))
+        if body.count >= 262_144 { dataTask.cancel() }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let c = continuation; continuation = nil
+        if body.count > 4096 { c?.resume(returning:(body,cors)) }
+        else { c?.resume(throwing:EmbeddedMediaError.encoder) }
+        session.finishTasksAndInvalidate(); self.session = nil
     }
 }

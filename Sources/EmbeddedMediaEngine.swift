@@ -1,0 +1,193 @@
+import Foundation
+import MobileVLCKit
+import AVFAudio
+import UIKit
+import Darwin
+
+enum EmbeddedMediaError: LocalizedError {
+    case metadata, address, encoder, timeout
+    var errorDescription: String? {
+        switch self {
+        case .metadata: return "Il motore integrato non riesce a leggere le tracce di questa sorgente."
+        case .address: return "L’iPhone deve essere sulla stessa rete locale del Chromecast."
+        case .encoder: return "Il motore integrato non è riuscito a convertire questo formato."
+        case .timeout: return "Il motore integrato non ha preparato il flusso entro il tempo previsto."
+        }
+    }
+}
+
+@MainActor final class EmbeddedMediaEngine: NSObject, VLCMediaPlayerDelegate {
+    enum VideoMode: Equatable { case copy, hardwareH264, softwareVP8 }
+    private var player: VLCMediaPlayer?
+    private var proxy: LocalStreamProxy?
+    private var backgroundPlayer: VLCMediaPlayer?
+    private var observers: [NSObjectProtocol] = []
+    private(set) var streamURL: URL?
+    private(set) var contentType = "video/mp4"
+    private(set) var offset: Double = 0
+    private(set) var running = false
+    var onFailure: (() -> Void)?
+
+    static func inspect(_ url: URL) async throws -> RDPreparedMedia {
+        let media = VLCMedia(url:url)
+        guard media.parse(options:VLCMediaParsingOptions(rawValue:url.isFileURL ? 0 : 1),timeout:15_000) == 0 else { throw EmbeddedMediaError.metadata }
+        defer { media.parseStop() }
+        for _ in 0..<170 {
+            try Task.checkCancellation()
+            if media.parsedStatus == .done { break }
+            if media.parsedStatus == .failed || media.parsedStatus == .skipped || media.parsedStatus == .timeout { throw EmbeddedMediaError.metadata }
+            try await Task.sleep(nanoseconds:100_000_000)
+        }
+        guard media.parsedStatus == .done else { throw EmbeddedMediaError.metadata }
+        let tracks = media.tracksInformation as? [[String:Any]] ?? []
+        func codec(_ track: [String:Any]) -> String {
+            let code = (track[VLCMediaTracksInformationCodec] as? NSNumber)?.uint32Value ?? 0
+            return String(bytes:(0..<4).map { UInt8((code >> ($0*8)) & 255) },encoding:.ascii)?.trimmingCharacters(in:.whitespaces) ?? ""
+        }
+        func readTracks(_ type: String) -> [RDTrack] {
+            tracks.filter { $0[VLCMediaTracksInformationType] as? String == type }.compactMap { track in
+                guard let id = (track[VLCMediaTracksInformationId] as? NSNumber)?.intValue, id >= 0 else { return nil }
+                let language = track[VLCMediaTracksInformationLanguage] as? String ?? "und"
+                let rawCodec = codec(track)
+                let friendly = ["a52":"ac3","mp4a":"aac","eac3":"eac3","dts":"dts"][rawCodec] ?? rawCodec
+                return RDTrack(key:"vlc_\(id)",language:language,label:track[VLCMediaTracksInformationDescription] as? String ?? language,codec:friendly)
+            }
+        }
+        let audio = readTracks(VLCMediaTracksInformationTypeAudio)
+        guard !audio.isEmpty, let video = tracks.first(where:{$0[VLCMediaTracksInformationType] as? String == VLCMediaTracksInformationTypeVideo}) else { throw EmbeddedMediaError.metadata }
+        let w = (video[VLCMediaTracksInformationVideoWidth] as? NSNumber)?.intValue ?? 0
+        let h = (video[VLCMediaTracksInformationVideoHeight] as? NSNumber)?.intValue ?? 0
+        let rate = (video[VLCMediaTracksInformationFrameRate] as? NSNumber)?.doubleValue ?? 0
+        let base = (video[VLCMediaTracksInformationFrameRateDenominator] as? NSNumber)?.doubleValue ?? 1
+        let fps = base > 0 ? rate/base : 0
+        let rawProfile = (video[VLCMediaTracksInformationCodecProfile] as? NSNumber)?.intValue ?? 0
+        let profile = rawProfile >= 0 ? rawProfile & 255 : 0
+        let videoSafe = codec(video) == "h264" && profile <= 100 && w > 0 && h > 0 && w <= 1920 && h <= 1080 && fps > 0 && (fps <= 30 || (h <= 720 && fps <= 60))
+        let firstAudio = tracks.first(where:{$0[VLCMediaTracksInformationType] as? String == VLCMediaTracksInformationTypeAudio}) ?? [:]
+        let channels = (firstAudio[VLCMediaTracksInformationAudioChannelsNumber] as? NSNumber)?.intValue ?? 0
+        let audioSafe = audio.count == 1 && ["aac","mpga","mp3"].contains(audio[0].codec) && channels > 0 && channels <= 2
+        let lang = Locale.preferredLanguages.first?.prefix(2).lowercased() ?? "en"
+        let aliases = lang == "it" ? ["it","ita"] : lang == "en" ? ["en","eng"] : [lang]
+        let selected = audio.first(where:{aliases.contains($0.language.lowercased())}) ?? audio[0]
+        let type = ["mp4","m4v","mov"].contains(url.pathExtension.lowercased()) ? "video/mp4" : "video/x-matroska"
+        let direct = type == "video/mp4" && videoSafe && audioSafe
+        let duration = Double(media.length.intValue)/1000
+        return RDPreparedMedia.native(audio:audio,subtitles:readTracks(VLCMediaTracksInformationTypeText),defaultAudio:selected.key,url:url,contentType:type,direct:direct,videoConversion:!videoSafe,description:"\(codec(video).uppercased()) · \(w)×\(h)",duration:duration)
+    }
+
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, selfTest:Bool = false) async throws -> URL {
+        guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
+        offset = start.isFinite ? max(0,start) : 0
+        let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
+        let port = try Self.freeLoopbackPort()
+        let webm = videoMode == .softwareVP8
+        contentType = webm ? "video/webm" : "video/mp4"
+        let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType)
+        proxy = bridge
+        let url = try await bridge.start()
+        try Task.checkCancellation()
+        var conversion = webm ? "acodec=vorb,ab=192,channels=2" : "acodec=mp4a,ab=192,channels=2"
+        switch videoMode {
+        case .copy: break
+        case .hardwareH264: conversion += ",vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=6000,maxwidth=1920,maxheight=1080,fps=30"
+        case .softwareVP8: conversion += ",vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=5000,maxwidth=1920,maxheight=1080,fps=30"
+        }
+        if subtitleID != nil { conversion += ",soverlay" }
+        let mux = webm ? "avformat{mux=webm,options={live=1}}" : "avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof}}"
+        let media = VLCMedia(url:input)
+        media.addOption(":sout=#transcode{\(conversion)}:std{access=http,mux=\(mux),dst=127.0.0.1:\(port)\(bridge.path)}")
+        media.addOption(":no-sout-all")
+        media.addOption(":sout-keep")
+        media.addOption(":start-time=\(offset)")
+        media.addOption(":network-caching=1500")
+        if let audioID { media.addOption(":audio-track-id=\(audioID)") }
+        if let subtitleID {
+            media.addOption(":sub-track-id=\(subtitleID)")
+            let font = style.font == "serif" ? "Georgia" : style.font == "mono" ? "Courier New" : "Arial"
+            media.addOption(":freetype-font=\(font)")
+            media.addOption(":freetype-rel-fontsize=\(Int(18/style.scale))")
+            let color = ["white":0xffffff,"yellow":0xffff00,"cyan":0x00ffff,"green":0x00ff00][style.color] ?? 0xffffff
+            media.addOption(":freetype-color=\(color)")
+            media.addOption(":freetype-background-opacity=\(Int(style.background*255))")
+            media.addOption(":freetype-outline-thickness=\(style.outline ? 2 : 0)")
+        } else { media.addOption(":no-spu"); media.addOption(":no-sout-spu") }
+        let player = VLCMediaPlayer(options:["--quiet","--no-video-title-show"])
+        self.player = player
+        player.delegate = self; player.media = media; player.play()
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 1; config.timeoutIntervalForResource = 1
+        let session = URLSession(configuration:config)
+        defer { session.invalidateAndCancel() }
+        guard let upstream = URL(string:"http://127.0.0.1:\(port)\(bridge.path)") else { throw EmbeddedMediaError.address }
+        for _ in 0..<35 {
+            try Task.checkCancellation()
+            if player.state == .error { stop(); throw EmbeddedMediaError.encoder }
+            var request = URLRequest(url:upstream); request.httpMethod = "HEAD"
+            if let (_,response) = try? await session.data(for:request), (response as? HTTPURLResponse)?.statusCode == 200 {
+                streamURL = url; running = true
+                if !selfTest { observeLifecycle(); updateBackground() }
+                return url
+            }
+            try await Task.sleep(nanoseconds:200_000_000)
+        }
+        stop(); throw EmbeddedMediaError.timeout
+    }
+    func stop() {
+        running = false; onFailure = nil
+        backgroundPlayer?.stop(); backgroundPlayer = nil
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
+        proxy?.stop(); proxy = nil; streamURL = nil
+        let old = player; player = nil; old?.delegate = nil
+        if let old { DispatchQueue.global(qos:.utility).async { old.stop() } }
+    }
+    nonisolated func mediaPlayerStateChanged(_ aNotification: Notification) {
+        Task { @MainActor [weak self] in
+            guard let self, self.running, self.player?.state == .error else { return }
+            self.onFailure?()
+        }
+    }
+    private func observeLifecycle() {
+        for name in [UIApplication.didEnterBackgroundNotification,UIApplication.willEnterForegroundNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
+                Task { @MainActor in self?.updateBackground() }
+            })
+        }
+    }
+    private func updateBackground() {
+        guard running else { return }
+        if UIApplication.shared.applicationState == .background {
+            // Same remote-playback mechanism used by the official VLC iOS app.
+            // Its lifetime is restricted to an active local Cast pipeline.
+            try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
+            try? AVAudioSession.sharedInstance().setActive(true)
+            if backgroundPlayer == nil {
+                let helper = VLCMediaPlayer(options:["--quiet","--demux=rawaud","--rawaud-channels=2","--rawaud-samplerate=8000"])
+                helper.media = VLCMedia(path:"/dev/zero"); backgroundPlayer = helper
+            }
+            backgroundPlayer?.play()
+        } else { backgroundPlayer?.stop() }
+    }
+    func refreshBackground() { updateBackground() }
+    private static func freeLoopbackPort() throws -> UInt16 {
+        let fd = Darwin.socket(AF_INET,SOCK_STREAM,0); guard fd >= 0 else { throw EmbeddedMediaError.address }; defer { Darwin.close(fd) }
+        var addr = sockaddr_in(); addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); addr.sin_family = sa_family_t(AF_INET); addr.sin_port = 0
+        inet_pton(AF_INET,"127.0.0.1",&addr.sin_addr)
+        let result = withUnsafePointer(to:&addr) { $0.withMemoryRebound(to:sockaddr.self,capacity:1) { Darwin.bind(fd,$0,socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        guard result == 0 else { throw EmbeddedMediaError.address }
+        var size = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let status = withUnsafeMutablePointer(to:&addr) { $0.withMemoryRebound(to:sockaddr.self,capacity:1) { getsockname(fd,$0,&size) } }
+        guard status == 0 else { throw EmbeddedMediaError.address }; return UInt16(bigEndian:addr.sin_port)
+    }
+    private static func localAddress(to peer:String) throws -> String {
+        let fd = Darwin.socket(AF_INET,SOCK_DGRAM,0); guard fd >= 0 else { throw EmbeddedMediaError.address }; defer { Darwin.close(fd) }
+        var addr = sockaddr_in(); addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); addr.sin_family = sa_family_t(AF_INET); addr.sin_port = UInt16(8009).bigEndian
+        guard inet_pton(AF_INET,peer,&addr.sin_addr) == 1 else { throw EmbeddedMediaError.address }
+        let result = withUnsafePointer(to:&addr) { $0.withMemoryRebound(to:sockaddr.self,capacity:1) { Darwin.connect(fd,$0,socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        guard result == 0 else { throw EmbeddedMediaError.address }
+        var size = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let status = withUnsafeMutablePointer(to:&addr) { $0.withMemoryRebound(to:sockaddr.self,capacity:1) { getsockname(fd,$0,&size) } }
+        var buffer = [CChar](repeating:0,count:Int(INET_ADDRSTRLEN))
+        guard status == 0, inet_ntop(AF_INET,&addr.sin_addr,&buffer,socklen_t(buffer.count)) != nil else { throw EmbeddedMediaError.address }
+        let ip = String(cString:buffer); guard CastWire.localIPv4(ip) else { throw EmbeddedMediaError.address }; return ip
+    }
+}
