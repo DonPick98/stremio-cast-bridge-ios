@@ -15,6 +15,10 @@ jobs:
         env:
           LANG: en_US.UTF-8
         run: pod install --repo-update
+      - name: Prepare synthetic codec matrix
+        run: |
+          command -v ffmpeg || brew install ffmpeg
+          node Tests/make-codec-matrix.mjs "$RUNNER_TEMP/codec-matrix"
       - name: Build simulator application
         run: |
           xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -jobs 1 -derivedDataPath "$RUNNER_TEMP/native-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
@@ -34,13 +38,16 @@ jobs:
           data=$(xcrun simctl get_app_container "$device" app.example.castbridge data)
           mkdir -p "$data/Documents"
           cp Tests/CodecSamples/h264-ac3.mkv "$data/Documents/"
+          cp -R "$RUNNER_TEMP/codec-matrix" "$data/Documents/CodecSamples"
           SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch "$device" app.example.castbridge
           mkdir -p native-engine-report
-          for i in $(seq 1 180); do
+          for i in $(seq 1 600); do
             if test -f "$data/Documents/engine-validation.json"; then
               cp "$data/Documents/engine-validation.json" native-engine-report/
               test ! -f "$data/Documents/converted.mp4" || cp "$data/Documents/converted.mp4" native-engine-report/
               find "$data/Documents" -name 'gateway-*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'matrix-*' -exec cp '{}' native-engine-report/ \;
+              if test -f "$data/Documents/matrix-embedded_text.mp4"; then ffmpeg -hide_banner -loglevel error -ss 0.5 -i "$data/Documents/matrix-embedded_text.mp4" -frames:v 1 native-engine-report/subtitle-frame.png; fi
               node -e 'const r=require("./native-engine-report/engine-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
               exit 0
             fi

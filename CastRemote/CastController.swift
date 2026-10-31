@@ -375,8 +375,10 @@ import UIKit
                     let engine = EmbeddedMediaEngine()
                     do {
                         let audioID = audio.hasPrefix("vlc_") ? Int(audio.dropFirst(4)) : nil
+                        let audioTrack = prepared.audio.first(where:{$0.key == audio})
+                        let copyAudio = ["aac","mp3","mpga"].contains(audioTrack?.codec.lowercased() ?? "") && (audioTrack?.channels ?? 0) > 0 && (audioTrack?.channels ?? 0) <= 2
                         let subtitleID = burnedSubtitle.hasPrefix("vlc_") ? Int(burnedSubtitle.dropFirst(4)) : nil
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance)
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio)
                         try Task.checkCancellation()
                         guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, self.selectedSubtitle == subtitle else { engine.stop(); self.checkingStream = false; self.loading = false; return }
                         self.nativeEngine?.stop()
@@ -384,7 +386,7 @@ import UIKit
                         engine.refreshBackground()
                         self.localProcessing = true; self.compatibilityMode = true; CastActivityCommands.usesLocalStream = true
                         self.localFallbackLevel = mode == .copy ? 0 : mode == .hardwareH264 ? 1 : 2
-                        self.processingDetail = mode == .copy ? "Video originale · audio AAC stereo" : mode == .hardwareH264 ? "Video H.264 · audio AAC stereo" : "Video VP8 · audio Vorbis stereo"
+                        self.processingDetail = mode == .copy ? (copyAudio ? "Contenitore adattato · audio e video originali" : "Video originale · audio AAC stereo") : mode == .hardwareH264 ? "Video H.264 · audio compatibile" : "Video VP8 · audio Vorbis stereo"
                         engine.onFailure = { [weak self, weak engine] in
                             guard let self, self.nativeEngine === engine else { return }
                             if !self.recoverPlayback() { self.playbackIssue = "Il motore integrato ha interrotto la conversione. La posizione è conservata." }

@@ -16,6 +16,7 @@ struct RDTrack: Identifiable, Hashable {
     let language: String
     let label: String
     let codec: String
+    var channels: Int? = nil
     var id: String { key }
 }
 

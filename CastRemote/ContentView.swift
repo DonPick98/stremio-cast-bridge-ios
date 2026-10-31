@@ -51,6 +51,7 @@ struct ContentView: View {
             Menu {
                 Button { showSubtitleAppearance = true } label: { Label("Aspetto sottotitoli",systemImage:"textformat.size") }
                 Button { cast.showSetup = true } label: { Label("Configura sorgenti",systemImage:"link") }
+                Link("Componenti open source",destination:URL(string:"https://github.com/DonPick98/stremio-cast-bridge-ios/blob/main/THIRD_PARTY_NOTICES.md")!)
             } label: {
                 Image(systemName:"slider.horizontal.3").font(.system(size:17)).frame(width:44,height:44).background(.white.opacity(0.045),in:Circle())
             }.foregroundStyle(.white).accessibilityLabel("Impostazioni")

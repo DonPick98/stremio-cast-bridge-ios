@@ -59,6 +59,11 @@ import MobileVLCKit
             }
             result["gateway"] = gatewayResults
             result["passed"] = (result["passed"] as? Bool == true) && (gatewayResults[0]["passed"] as? Bool == true) && (gatewayResults[2]["passed"] as? Bool == true)
+            let matrix = await NativeCodecMatrixValidation.run(documents:documents)
+            if !matrix.isEmpty {
+                result["matrix"] = matrix
+                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 25 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+            }
         } catch { result["error"] = "Native codec probe failed: \(error.localizedDescription)" }
         if let data = try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report,options:.atomic) }
     }

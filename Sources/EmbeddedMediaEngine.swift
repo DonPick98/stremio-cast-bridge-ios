@@ -50,7 +50,7 @@ enum EmbeddedMediaError: LocalizedError {
                 let language = track[VLCMediaTracksInformationLanguage] as? String ?? "und"
                 let rawCodec = codec(track)
                 let friendly = ["a52":"ac3","mp4a":"aac","eac3":"eac3","dts":"dts"][rawCodec] ?? rawCodec
-                return RDTrack(key:"vlc_\(id)",language:language,label:track[VLCMediaTracksInformationDescription] as? String ?? language,codec:friendly)
+                return RDTrack(key:"vlc_\(id)",language:language,label:track[VLCMediaTracksInformationDescription] as? String ?? language,codec:friendly,channels:(track[VLCMediaTracksInformationAudioChannelsNumber] as? NSNumber)?.intValue)
             }
         }
         let audio = readTracks(VLCMediaTracksInformationTypeAudio)
@@ -75,27 +75,33 @@ enum EmbeddedMediaError: LocalizedError {
         return RDPreparedMedia.native(audio:audio,subtitles:readTracks(VLCMediaTracksInformationTypeText),defaultAudio:selected.key,url:url,contentType:type,direct:direct,videoConversion:!videoSafe,description:"\(codec(video).uppercased()) · \(w)×\(h)",duration:duration)
     }
 
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, selfTest:Bool = false) async throws -> URL {
+    static func outputChain(videoMode:VideoMode,copyAudio:Bool = false,burn:Bool = false,access:String,target:String) -> String {
+        let webm = videoMode == .softwareVP8
+        var conversion = webm ? "acodec=vorb,ab=192,channels=2" : copyAudio ? "" : "acodec=mp4a,ab=192,channels=2"
+        func append(_ value: String) { conversion += (conversion.isEmpty ? "" : ",") + value }
+        switch videoMode {
+        case .copy: break
+        case .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=6000,maxwidth=1920,maxheight=1080,fps=30")
+        case .softwareVP8: append("vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=5000,maxwidth=1920,maxheight=1080,fps=30")
+        }
+        if burn { append("soverlay") }
+        let mux = webm ? "avformat{mux=webm,options={live=1},reset-ts}" : "avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof},reset-ts}"
+        let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
+        return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
+    }
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, selfTest:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         offset = start.isFinite ? max(0,start) : 0
         let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
         let port = try Self.freeLoopbackPort()
-        let webm = videoMode == .softwareVP8
-        contentType = webm ? "video/webm" : "video/mp4"
+        contentType = videoMode == .softwareVP8 ? "video/webm" : "video/mp4"
         let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType)
         proxy = bridge
         let url = try await bridge.start()
         try Task.checkCancellation()
-        var conversion = webm ? "acodec=vorb,ab=192,channels=2" : "acodec=mp4a,ab=192,channels=2"
-        switch videoMode {
-        case .copy: break
-        case .hardwareH264: conversion += ",vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=6000,maxwidth=1920,maxheight=1080,fps=30"
-        case .softwareVP8: conversion += ",vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=5000,maxwidth=1920,maxheight=1080,fps=30"
-        }
-        if subtitleID != nil { conversion += ",soverlay" }
-        let mux = webm ? "avformat{mux=webm,options={live=1}}" : "avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof}}"
         let media = VLCMedia(url:input)
-        media.addOption(":sout=#transcode{\(conversion)}:std{access=http,mux=\(mux),dst=127.0.0.1:\(port)\(bridge.path)}")
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio,burn:subtitleID != nil,access:"http",target:"127.0.0.1:\(port)\(bridge.path)")
+        media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
         media.addOption(":sout-keep")
         media.addOption(":start-time=\(offset)")
