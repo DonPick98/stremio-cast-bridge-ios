@@ -49,12 +49,13 @@ import UIKit
             result["inputAudio"] = inspected.audioCodecsDescription
             result["inputVideoConversion"] = inspected.requiresVideoConversion
             var gatewayResults: [[String:Any]] = []
-            let scenarios: [(EmbeddedMediaEngine.VideoMode,Bool)] = [(.copy,false),(.hardwareH264,false),(.softwareVP8,false),(.copy,true)]
-            for (mode,repairAudio) in scenarios {
+            let scenarios: [(EmbeddedMediaEngine.VideoMode,Bool,Bool)] = [(.copy,false,false),(.hardwareH264,false,false),(.softwareVP8,false,false),(.copy,true,false),(.copy,true,true)]
+            for (mode,repairAudio,httpsInput) in scenarios {
                 let engine = EmbeddedMediaEngine()
                 do {
                     let began = Date()
-                    let source = repairAudio ? documents.appendingPathComponent("CodecSamples/truehd.mkv") : input
+                    let fixture = URL(string:"https://raw.githubusercontent.com/DonPick98/stremio-cast-bridge-ios/f14b900daaeae97a4970eea66b804ded21d9a82a/Tests/CodecSamples/h264-ac3.mkv")!
+                    let source = httpsInput ? fixture : repairAudio ? documents.appendingPathComponent("CodecSamples/truehd.mkv") : input
                     let url = try await engine.start(input:source,deviceIP:"127.0.0.1",start:0,videoMode:mode,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),repairAudio:repairAudio,selfTest:true)
                     let capture = NativeStreamCapture()
                     let (body,cors,eof) = try await capture.read(url)
@@ -62,7 +63,7 @@ import UIKit
                     let file = documents.appendingPathComponent("gateway-\(gatewayResults.count).\(suffix)")
                     try body.write(to:file)
                     let checked = try await EmbeddedMediaEngine.inspect(file)
-                    gatewayResults.append(["mode":String(describing:mode),"audioRepair":repairAudio,"bytes":body.count,"cors":cors,"eof":eof,"seconds":Date().timeIntervalSince(began),"description":checked.videoDescription,"audio":checked.audioCodecsDescription,"passed":cors && eof && !checked.audio.isEmpty])
+                    gatewayResults.append(["mode":String(describing:mode),"audioRepair":repairAudio,"httpsInput":httpsInput,"bytes":body.count,"cors":cors,"eof":eof,"seconds":Date().timeIntervalSince(began),"description":checked.videoDescription,"audio":checked.audioCodecsDescription,"passed":cors && eof && !checked.audio.isEmpty])
                 } catch {
                     gatewayResults.append(["mode":String(describing:mode),"passed":false,"error":error.localizedDescription])
                 }
