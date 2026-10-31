@@ -9,7 +9,7 @@ struct CastLiveActivity: Widget {
         ActivityConfiguration(for: CastActivityAttributes.self) { context in
             VStack(alignment: .leading, spacing: 8) {
                 Text(context.attributes.title).font(.headline).lineLimit(1)
-                Text(context.isStale ? "Stato non aggiornato · apri Cast Bridge" : context.state.status).font(.subheadline)
+                Text(isStale(context) ? "Stato non aggiornato · apri Cast Bridge" : context.state.status).font(.subheadline)
                 Text("Aggiornato \(context.state.updatedAt, style: .relative) fa").font(.caption2)
                 if context.state.duration > 0 {
                     ProgressView(value: min(max(0, context.state.position), context.state.duration), total: context.state.duration)
@@ -30,10 +30,15 @@ struct CastLiveActivity: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) { Image(systemName: "tv") }
                 DynamicIslandExpandedRegion(.center) { Text(context.attributes.title).lineLimit(1) }
-                DynamicIslandExpandedRegion(.bottom) { Text(context.isStale ? "Stato non aggiornato" : context.state.status) }
+                DynamicIslandExpandedRegion(.bottom) { Text(isStale(context) ? "Stato non aggiornato" : context.state.status) }
             } compactLeading: { Image(systemName: "tv") }
-              compactTrailing: { Image(systemName: context.isStale ? "questionmark" : (context.state.playing ? "play.fill" : "pause.fill")) }
+              compactTrailing: { Image(systemName: isStale(context) ? "questionmark" : (context.state.playing ? "play.fill" : "pause.fill")) }
               minimal: { Image(systemName: "tv") }
         }
+    }
+
+    private func isStale(_ context: ActivityViewContext<CastActivityAttributes>) -> Bool {
+        if #available(iOS 16.2, *) { return context.isStale }
+        return Date().timeIntervalSince(context.state.updatedAt) >= 60
     }
 }
