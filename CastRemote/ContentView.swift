@@ -19,6 +19,9 @@ struct ContentView: View {
                         if cast.busy || cast.loading { ProgressView().controlSize(.small).padding(.top,2) }
                         Text(cast.message).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }.frame(maxWidth:.infinity,alignment:.leading)
+                    if let issue = cast.playbackIssue {
+                        Label(issue,systemImage:"exclamationmark.circle").font(.subheadline).foregroundStyle(.orange).fixedSize(horizontal:false,vertical:true).castCard()
+                    }
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
                     else { emptyState }
@@ -110,6 +113,9 @@ struct ContentView: View {
                 }).tint(.white.opacity(0.55))
                 Image(systemName:"speaker.wave.3.fill").font(.caption2).foregroundStyle(.secondary)
             }
+            if cast.deviceMuted {
+                Button { cast.unmuteDevice() } label: { Label("Riattiva audio Chromecast",systemImage:"speaker.slash") }.font(.subheadline)
+            }
             Button("Controlli TV") { cast.openControls() }.font(.caption.weight(.medium)).foregroundStyle(.secondary)
         }.castCard()
     }
@@ -118,6 +124,10 @@ struct ContentView: View {
             Button { showTrackOptions = true } label: { optionRow(icon:"waveform",title:"Audio e sottotitoli",detail:audioSummary(media) + " · " + subtitleSummary(media)) }.buttonStyle(.plain)
             Divider().padding(.leading,38)
             Button { showSubtitleAppearance = true } label: { optionRow(icon:"textformat.size",title:"Aspetto sottotitoli",detail:"Anteprima e preferenze") }.buttonStyle(.plain)
+            if !cast.compatibilityMode, let notice = media.directAudioNotice {
+                Divider()
+                Label(notice,systemImage:"speaker.badge.exclamationmark").font(.footnote).foregroundStyle(.orange).fixedSize(horizontal:false,vertical:true).padding(.vertical,16)
+            }
         }.padding(.horizontal,20).background(CastPalette.surface,in:RoundedRectangle(cornerRadius:24))
     }
     private var playButton: some View {
@@ -149,7 +159,9 @@ struct ContentView: View {
     }
     private func sectionLabel(_ title: String) -> some View { Text(title.uppercased()).font(.system(size:10,weight:.semibold)).tracking(1.3).foregroundStyle(.secondary) }
     private func audioSummary(_ media: RDPreparedMedia) -> String {
-        guard cast.compatibilityMode, let track = media.audio.first(where:{$0.key == cast.selectedAudio}) else { return "Audio predefinito" }
+        guard cast.compatibilityMode, let track = media.audio.first(where:{$0.key == cast.selectedAudio}) else {
+            return media.audioCodecsDescription.isEmpty ? "Audio del file" : "Audio del file · " + media.audioCodecsDescription
+        }
         return trackLanguage(track)
     }
     private func subtitleSummary(_ media: RDPreparedMedia) -> String {
@@ -167,6 +179,9 @@ private struct TrackOptionsView: View {
         NavigationStack {
             Form {
                 if let media = cast.prepared {
+                    if !cast.compatibilityMode, let notice = media.directAudioNotice {
+                        Section { Label(notice,systemImage:"speaker.badge.exclamationmark").font(.subheadline).foregroundStyle(.orange) }
+                    }
                     Section {
                         Picker("Audio",selection:$cast.selectedAudio) { ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) } }
                             .onChange(of:cast.selectedAudio) { value in
@@ -216,7 +231,7 @@ private struct TrackOptionsView: View {
             }.navigationTitle("Audio e sottotitoli").navigationBarTitleDisplayMode(.inline)
                 .safeAreaInset(edge:.bottom) {
                     Button { cast.load(preservePosition:cast.hasLoaded); dismiss() } label: {
-                        Text(cast.hasLoaded ? "Applica modifiche" : "Riproduci sulla TV").font(.subheadline.weight(.semibold)).frame(maxWidth:.infinity).padding(.vertical,15)
+                        Text(cast.loading ? "Verifica e caricamento…" : cast.hasLoaded ? "Applica modifiche" : "Riproduci sulla TV").font(.subheadline.weight(.semibold)).frame(maxWidth:.infinity).padding(.vertical,15)
                     }.buttonStyle(.plain).foregroundStyle(.black).background(.white,in:RoundedRectangle(cornerRadius:16))
                         .opacity(!cast.connected || cast.busy || cast.loading ? 0.45 : 1)
                         .disabled(!cast.connected || cast.busy || cast.loading || cast.selectedAudio.isEmpty)
@@ -282,4 +297,3 @@ private func playbackTime(_ seconds: Double) -> String {
     let n = Int(seconds)
     return n >= 3600 ? String(format:"%d:%02d:%02d",n/3600,(n/60)%60,n%60) : String(format:"%d:%02d",n/60,n%60)
 }
-

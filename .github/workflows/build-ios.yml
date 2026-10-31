@@ -29,6 +29,8 @@ jobs:
           "$RUNNER_TEMP/handoff-tests"
           swiftc -parse-as-library Sources/CastWire.swift Sources/SubtitleAppearance.swift Tests/ControlPreferencesTests.swift -o "$RUNNER_TEMP/control-tests"
           "$RUNNER_TEMP/control-tests"
+          swiftc -parse-as-library Sources/RDStreamProbe.swift Tests/StreamProbeTests.swift -o "$RUNNER_TEMP/stream-probe-tests"
+          "$RUNNER_TEMP/stream-probe-tests"
 
       - name: Test embedded subtitles and hosting service
         run: |
@@ -69,4 +71,3 @@ jobs:
           path: CastRemote-unsigned.ipa
           if-no-files-found: error
           retention-days: 7
-

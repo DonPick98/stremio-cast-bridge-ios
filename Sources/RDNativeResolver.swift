@@ -98,6 +98,22 @@ struct RDPreparedMedia {
 
     var availableQualities: [RDQuality] { RDQuality.allCases.filter { variants[$0.rawValue] != nil } }
 
+    var audioCodecsDescription: String {
+        Array(Set(audio.map { $0.codec.trimmingCharacters(in:.whitespacesAndNewlines).uppercased() }.filter { !$0.isEmpty })).sorted().joined(separator:" / ")
+    }
+    var directAudioNotice: String? {
+        let codecs = audio.map { $0.codec.lowercased().replacingOccurrences(of:"-",with:"").replacingOccurrences(of:"_",with:"") }
+        if codecs.contains(where:{ ["ac3","eac3","ec3"].contains($0) }) {
+            return "Audio Dolby (\(audioCodecsDescription)): nel file originale la riproduzione dipende anche dal supporto della TV. Il video può partire senza audio."
+        }
+        if codecs.contains(where:{ $0.contains("dts") || $0.contains("truehd") }) {
+            return "Audio \(audioCodecsDescription): il Chromecast classico può riprodurre il video senza decodificare questa traccia."
+        }
+        if audio.count > 1 { return "Nel percorso diretto il Chromecast sceglie l’audio del file: la traccia può essere diversa da quella selezionata per la conversione." }
+        if codecs.isEmpty || codecs.contains("") { return "Il formato audio non è indicato: l’avvio del video non conferma che l’audio sia riproducibile." }
+        return nil
+    }
+
     func streamURL(audio: String, subtitle: String? = nil, quality: RDQuality = .high) throws -> URL {
         guard self.audio.contains(where: { $0.key == audio }),
               subtitle == nil || subtitles.contains(where: { $0.key == subtitle }) else {
@@ -336,4 +352,3 @@ struct RDNativeResolver {
                (host == "real-debrid.com" && url.path.hasPrefix("/d/"))
     }
 }
-

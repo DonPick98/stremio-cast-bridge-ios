@@ -31,6 +31,7 @@ actor ProgressLog {
         let subtitleCodec = "ass"
         var unavailable = false
         var responseHost = "1.download.real-debrid.com"
+        var audioDetails = ["jpn1":["lang_iso":"jpn","codec":"aac"]]
         StubProtocol.handler = { request in
             precondition(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + String(repeating: "a", count: 30))
             switch request.url!.lastPathComponent {
@@ -38,7 +39,7 @@ actor ProgressLog {
                 return (200, ["id": "test", "download": "https://\(responseHost)/file/test.mkv", "filename": "test.mkv"])
             case "test":
                 if request.url!.path.contains("mediaInfos") {
-                    return (200, ["details": ["video": ["codec": "h264", "width": 1920, "height": 1080, "fps": "24000/1001"], "audio": ["jpn1": ["lang_iso": "jpn", "codec": "aac"]], "subtitles": ["eng1": ["lang_iso": "eng", "codec": subtitleCodec]]]])
+                    return (200, ["details": ["video": ["codec": "h264", "width": 1920, "height": 1080, "fps": "24000/1001"], "audio": audioDetails, "subtitles": ["eng1": ["lang_iso": "eng", "codec": subtitleCodec]]]])
                 }
                 if unavailable { return (503, [:]) }
                 return (200, ["apple": ["high": "https://stream.real-debrid.com/t/test/jpn1/none/aac/high.m3u8", "medium": "https://stream.real-debrid.com/t/test/jpn1/none/aac/medium.m3u8"]])
@@ -48,6 +49,7 @@ actor ProgressLog {
         let link = URL(string: "https://real-debrid.com/d/test")!
         let media = try await resolver.prepare(directLink: link)
         precondition(media.directCompatible)
+        precondition(media.directAudioNotice == nil && media.audioCodecsDescription == "AAC")
         precondition(media.directContentType == "video/x-matroska")
         precondition(media.videoDescription.contains("1920×1080"))
         precondition(media.availableQualities.contains(.high))
@@ -58,6 +60,13 @@ actor ProgressLog {
         unavailable = true
         let directOnly = try await resolver.prepare(directLink: link)
         precondition(directOnly.availableQualities.isEmpty && directOnly.directCompatible)
+        audioDetails = ["jpn1":["lang_iso":"jpn","codec":"ac3"]]
+        let dolby = try await resolver.prepare(directLink:link)
+        precondition(!dolby.directCompatible && dolby.audioCodecsDescription == "AC3" && dolby.directAudioNotice?.contains("Dolby") == true)
+        audioDetails = ["jpn1":["lang_iso":"jpn","codec":"aac"],"eng1":["lang_iso":"eng","codec":"aac"]]
+        let multiple = try await resolver.prepare(directLink:link)
+        precondition(!multiple.directCompatible && multiple.directAudioNotice?.contains("sceglie l’audio del file") == true)
+        audioDetails = ["jpn1":["lang_iso":"jpn","codec":"aac"]]
         responseHost = "example.com"
         do { _ = try await resolver.prepare(directLink: link); fatalError("Untrusted download accepted") } catch RDResolverError.invalidStream {}
         do { _ = try await resolver.prepare(directLink: URL(string: "https://example.com/file.mkv")!); fatalError("Untrusted input accepted") } catch RDResolverError.invalidStream {}
@@ -105,4 +114,3 @@ actor ProgressLog {
         print("Resolver tests passed: direct playback, automatic readiness, progress, pending reuse, RD codes and rate-limit cooldown")
     }
 }
-

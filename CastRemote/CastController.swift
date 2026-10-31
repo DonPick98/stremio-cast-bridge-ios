@@ -26,6 +26,8 @@ import UIKit
     @Published var userAdjustingVolume = false
     @Published var hasLoaded = false
     @Published private(set) var loading = false
+    @Published private(set) var playbackIssue: String?
+    @Published private(set) var deviceMuted = false
     @Published var subtitleFile: URL?
     @Published private(set) var embeddedSubtitleURL: URL?
     private var handoff: BridgeHandoff?
@@ -57,6 +59,8 @@ import UIKit
     private var directCaptureAttempt = Date.distantPast
     private var directCaptureAttemptKey: String?
     private var subtitleStyleWork: Task<Void,Never>?
+    private var streamCheckTask: Task<Void,Never>?
+    private var checkingStream = false
     private var commandRequest: GCKRequest?
     private var commandContinuation: CheckedContinuation<Bool, Never>?
     private var commandTimeout: Task<Void, Never>?
@@ -113,6 +117,7 @@ import UIKit
         connected = GCKCastContext.sharedInstance().sessionManager.hasConnectedCastSession()
         guard let session = castSession, let client = session.remoteMediaClient else { playing = false; updateActivity(status: "Apri l’app per riconnettere Chromecast"); return }
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
+        deviceMuted = session.currentDeviceMuted
         if let status = client.mediaStatus {
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
@@ -135,7 +140,7 @@ import UIKit
             let currentLoad = !loadPending || loadAccepted
             if (status.playerState == .playing || status.playerState == .paused) && currentLoad {
                 if loadPending { loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = true }
-                message = playing ? "In riproduzione sulla TV." : "In pausa sulla TV."
+                if !checkingStream { message = playing ? "In riproduzione sulla TV." : "In pausa sulla TV." }
                 updateActivity(status: playing ? "In riproduzione" : "In pausa")
                 prepareDirectControls()
             } else if status.playerState == .buffering {
@@ -313,6 +318,35 @@ import UIKit
         }
     }
     func load(preservePosition: Bool = false) {
+        guard let prepared, client != nil else { message = "Collega prima il Chromecast e scegli un file."; return }
+        guard !loading, !loadPending, subtitleRequest == nil else { return }
+        guard compatibilityMode else { sendLoad(preservePosition:preservePosition); return }
+        let audio = selectedAudio, subtitle = selectedSubtitle, quality = selectedQuality
+        let chosenSubtitle: String? = ["none","external","embedded"].contains(subtitle) ? nil : subtitle
+        let url: URL
+        do { url = try prepared.streamURL(audio:audio,subtitle:chosenSubtitle,quality:quality) }
+        catch { playbackIssue = "Real-Debrid non offre un flusso valido per queste tracce e qualità."; return }
+        capturePosition()
+        checkingStream = true; loading = true; playbackIssue = nil
+        message = "Verifico il flusso compatibile Real-Debrid prima di cambiare il video…"
+        streamCheckTask = Task { [weak self] in
+            do {
+                try await RDStreamProbe.check(url)
+                try Task.checkCancellation()
+                guard let self else { return }
+                self.checkingStream = false; self.loading = false
+                guard self.prepared?.directURL == prepared.directURL, self.compatibilityMode,
+                      self.selectedAudio == audio, self.selectedSubtitle == subtitle, self.selectedQuality == quality else { return }
+                self.sendLoad(preservePosition:preservePosition)
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.checkingStream = false; self.loading = false
+                self.playbackIssue = (error as? RDStreamProbeError)?.localizedDescription ?? "Verifica del flusso compatibile non riuscita."
+                self.message = "La modalità compatibilità non è partita."
+            }
+        }
+    }
+    private func sendLoad(preservePosition: Bool) {
         guard let prepared, let client else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loadPending, subtitleRequest == nil else { return }
         capturePosition()
@@ -357,6 +391,7 @@ import UIKit
             load.mediaInformation = info.build()
             if preservePosition || lastGoodPosition > 0 { load.startTime = max(0, lastGoodPosition) }
             loadPending = true
+            playbackIssue = nil
             loading = true
             hasLoaded = false
             loadAccepted = false
@@ -376,6 +411,7 @@ import UIKit
                 guard !Task.isCancelled, let self, self.loadPending else { return }
                 self.loadPending = false; self.loading = false; self.loadRequest = nil
                 self.message = "La TV non ha avviato il video. Riprova o cambia modalità; la posizione è conservata."
+                self.playbackIssue = "La TV non ha avviato il flusso entro 30 secondi. Se usavi la compatibilità, la playlist era leggibile dall’iPhone, ma questo non conferma che il Chromecast possa riprodurla."
                 self.updateActivity(status: "Apri l’app per riprovare")
             }
         } catch { message = "Non riesco a preparare il video con queste tracce." }
@@ -438,6 +474,7 @@ import UIKit
     }
     func seek(to value: Double) { guard let client, ownsCurrentMedia, !loadPending, value.isFinite else { return }; let opts = GCKMediaSeekOptions(); opts.interval = min(duration > 0 ? duration : value,max(0,value)); client.seek(with:opts) }
     func setVolume(_ value: Double) { castSession?.setDeviceVolume(Float(min(1,max(0,value)))) }
+    func unmuteDevice() { castSession?.setDeviceMuted(false) }
     func openControls() { if connected { GCKCastContext.sharedInstance().presentDefaultExpandedMediaControls() } }
     func requestDidComplete(_ request: GCKRequest) {
         if request == subtitleRequest { loadedSubtitle = pendingSubtitle; subtitleRequest = nil; pendingSubtitle = nil; message = "Sottotitoli aggiornati sulla TV."; return }
@@ -447,7 +484,7 @@ import UIKit
     func request(_ request: GCKRequest, didFailWithError error: GCKError) {
         if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; message = "Cambio sottotitoli non riuscito. Riprova."; return }
         if request == commandRequest { finishCommand(false); return }
-        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); message = "Errore Cast \(error.code): riprova o cambia modalità; la posizione è conservata."; loadRequest = nil; updateActivity(status: "Apri l’app per riprovare") }
+        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); message = "Errore Cast \(error.code): riprova o cambia modalità; la posizione è conservata."; playbackIssue = message; loadRequest = nil; updateActivity(status: "Apri l’app per riprovare") }
     }
     func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) {
         if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; message = "Cambio sottotitoli interrotto. Riprova."; return }
@@ -496,6 +533,7 @@ import UIKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        streamCheckTask?.cancel(); streamCheckTask = nil; checkingStream = false; playbackIssue = nil
         subtitleStyleWork?.cancel()
         directCaptureTask?.cancel(); directCaptureKey = nil; CastDirectControl.clear()
         capturePosition()
@@ -535,4 +573,3 @@ import UIKit
         }
     }
 }
-

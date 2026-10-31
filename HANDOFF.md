@@ -123,3 +123,14 @@ Verifica di questa UI: controllo diff e revisione visiva di uno studio del layou
 ## 0.5.1 build 8 - compilazione autorizzata e icona
 
 L'utente ha approvato la UI minimale e richiesto esplicitamente la nuova IPA, revocando lo stop precedente. Aggiunta icona opaca 1024 px nel catalogo AppIcon, collegato alle risorse del target app; versione app/estensione allineata a 0.5.1 (8). La verifica reale dei controlli in background resta da svolgere su iPhone. Nessuna modifica al backend Sites o nuova promessa su audio multitraccia/hosting sottotitoli.
+
+
+## 0.5.2 build 9 - audio AC3 e verifica conversione
+
+Riscontro utente: MKV senza audio nel percorso diretto, conversione in caricamento senza avvio, codec AC3. GET_STATUS sola lettura sul ricevitore il 31 ottobre: PLAYING, contentType video/x-matroska, volume dispositivo e media 1, muted false su entrambi. Non e' una prova di audio effettivamente decodificato; esclude solo il mute esposto dal Cast in quel momento.
+
+Aggiunti avvisi audio Dolby/DTS/multitraccia nei pannelli e sommario codec reale; il default HLS non e' presentato come audio predefinito del file originale. Stato muto del dispositivo visibile con riattivazione esplicita, senza alzare automaticamente il volume.
+
+Prima di LOAD in compatibilita', RDStreamProbe legge solo playlist HLS dal telefono: massimo tre livelli, 256 KiB per risposta, timeout risorsa 20 s, soli host stream RD gia' previsti, niente credenziali API nelle richieste. Verifica header, playlist non vuota, riferimenti child e cicli. Non scarica segmenti, non verifica decodifica/passthrough o accessibilita' dal Chromecast. Un errore HTTP/playlist e' persistente in UI e non sostituisce il video diretto gia' in riproduzione. Non trasforma AC3 in AAC in locale e non implementa un nuovo servizio di conversione.
+
+Da collaudare: ottenere l'errore effettivo della conversione sullo stesso film. Non dichiarare risolto l'audio AC3 finche' manca questa prova.
