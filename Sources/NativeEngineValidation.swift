@@ -49,25 +49,27 @@ import UIKit
             result["inputAudio"] = inspected.audioCodecsDescription
             result["inputVideoConversion"] = inspected.requiresVideoConversion
             var gatewayResults: [[String:Any]] = []
-            for mode in [EmbeddedMediaEngine.VideoMode.copy,.hardwareH264,.softwareVP8] {
+            let scenarios: [(EmbeddedMediaEngine.VideoMode,Bool)] = [(.copy,false),(.hardwareH264,false),(.softwareVP8,false),(.copy,true)]
+            for (mode,repairAudio) in scenarios {
                 let engine = EmbeddedMediaEngine()
                 do {
                     let began = Date()
-                    let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:mode,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
+                    let source = repairAudio ? documents.appendingPathComponent("CodecSamples/truehd.mkv") : input
+                    let url = try await engine.start(input:source,deviceIP:"127.0.0.1",start:0,videoMode:mode,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),repairAudio:repairAudio,selfTest:true)
                     let capture = NativeStreamCapture()
                     let (body,cors,eof) = try await capture.read(url)
                     let suffix = mode == .softwareVP8 ? "webm" : "mp4"
                     let file = documents.appendingPathComponent("gateway-\(gatewayResults.count).\(suffix)")
                     try body.write(to:file)
                     let checked = try await EmbeddedMediaEngine.inspect(file)
-                    gatewayResults.append(["mode":String(describing:mode),"bytes":body.count,"cors":cors,"eof":eof,"seconds":Date().timeIntervalSince(began),"description":checked.videoDescription,"audio":checked.audioCodecsDescription,"passed":cors && eof && !checked.audio.isEmpty])
+                    gatewayResults.append(["mode":String(describing:mode),"audioRepair":repairAudio,"bytes":body.count,"cors":cors,"eof":eof,"seconds":Date().timeIntervalSince(began),"description":checked.videoDescription,"audio":checked.audioCodecsDescription,"passed":cors && eof && !checked.audio.isEmpty])
                 } catch {
                     gatewayResults.append(["mode":String(describing:mode),"passed":false,"error":error.localizedDescription])
                 }
                 engine.stop()
             }
             result["gateway"] = gatewayResults
-            result["passed"] = (result["passed"] as? Bool == true) && (gatewayResults[0]["passed"] as? Bool == true) && (gatewayResults[2]["passed"] as? Bool == true)
+            result["passed"] = (result["passed"] as? Bool == true) && gatewayResults.allSatisfy{$0["passed"] as? Bool == true}
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
                 result["matrix"] = matrix

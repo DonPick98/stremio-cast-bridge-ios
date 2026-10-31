@@ -22,6 +22,7 @@ enum EmbeddedMediaError: LocalizedError {
         fallbackLevel >= 2 ? [.softwareVP8] : (requiresVideo || fallbackLevel == 1) ? [.hardwareH264,.softwareVP8] : [.copy,.hardwareH264,.softwareVP8]
     }
     private var player: VLCMediaPlayer?
+    private var audioRepair: AudioRepairPipe?
     private var proxy: LocalStreamProxy?
     private var backgroundPlayer: VLCMediaPlayer?
     private var observers: [NSObjectProtocol] = []
@@ -95,7 +96,7 @@ enum EmbeddedMediaError: LocalizedError {
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, captions:[Int:String] = [:], selfTest:Bool = false) async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], selfTest:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         offset = start.isFinite ? max(0,start) : 0
         let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
@@ -107,17 +108,23 @@ enum EmbeddedMediaError: LocalizedError {
         let url = try await bridge.start()
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
-        let media = VLCMedia(url:input)
-        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio,burn:subtitleID != nil,access:"http",target:"127.0.0.1:\(port)\(bridge.path)")
+        var producerInput = input
+        if repairAudio {
+            let repair = AudioRepairPipe(); audioRepair = repair
+            producerInput = try repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
+        }
+        let media = VLCMedia(url:producerInput)
+        if repairAudio { media.addOption(":demux=mkv") }
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,access:"http",target:"127.0.0.1:\(port)\(bridge.path)")
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
         media.addOption(":sout-keep")
         media.addOption(":sout-mux-caching=4000")
-        media.addOption(":start-time=\(offset)")
+        if !repairAudio { media.addOption(":start-time=\(offset)") }
         media.addOption(":network-caching=1500")
-        if let audioID { media.addOption(":audio-track-id=\(audioID)") }
+        if let audioID, !repairAudio { media.addOption(":audio-track-id=\(audioID)") }
         if let subtitleID {
-            media.addOption(":sub-track-id=\(subtitleID)")
+            media.addOption(repairAudio ? ":sub-track=0" : ":sub-track-id=\(subtitleID)")
             let font = style.font == "serif" ? "Georgia" : style.font == "mono" ? "Courier New" : "Arial"
             media.addOption(":freetype-font=\(font)")
             media.addOption(":freetype-rel-fontsize=\(Int(18/style.scale))")
@@ -144,11 +151,15 @@ enum EmbeddedMediaError: LocalizedError {
         guard let upstream = URL(string:"http://127.0.0.1:\(port)\(bridge.path)") else { throw EmbeddedMediaError.address }
         for _ in 0..<35 {
             try Task.checkCancellation()
-            if player.state == .error { stop(); throw EmbeddedMediaError.encoder }
+            if player.state == .error || audioRepair?.failed == true { stop(); throw EmbeddedMediaError.encoder }
             var request = URLRequest(url:upstream); request.httpMethod = "HEAD"
             if let (_,response) = try? await session.data(for:request), (response as? HTTPURLResponse)?.statusCode == 200 {
-                do { try await PlayableStreamHeader.validateProducer(upstream,contentType:contentType) }
+                do { try await bridge.prepare() }
                 catch { stop(); throw EmbeddedMediaError.encoder }
+                if player.state == .playing { player.pause() }
+                bridge.onNextConsumer { [weak self] in
+                    Task { @MainActor in if self?.player?.state == .paused { self?.player?.play() } }
+                }
                 streamURL = url; startedStream = true
                 return url
             }
@@ -161,6 +172,7 @@ enum EmbeddedMediaError: LocalizedError {
         backgroundPlayer?.stop(); backgroundPlayer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
+        audioRepair?.stop(); audioRepair = nil
         let old = player; player = nil; old?.delegate = nil
         if let old { DispatchQueue.global(qos:.utility).async { old.stop() } }
     }

@@ -13,3 +13,16 @@ Cast Bridge uses MobileVLCKit 3.7.5 from VideoLAN, an Objective-C/Swift wrapper 
 The complete Cast Bridge application source and Xcode project are available in this repository. To relink a modified library, rebuild VLCKit from the upstream source, replace the MobileVLCKit CocoaPods framework with that build, then build the application using the supplied Xcode workspace. The codec fixtures are generated from synthetic video and audio; they contain no third-party movies.
 
 Cast Bridge is independent of VideoLAN. It does not redistribute VideoLAN branding.
+
+## FFmpegKit Extended
+
+Selected TrueHD/MLP audio is decoded and converted to AAC by the LGPL base build of FFmpegKit Extended, because the pinned VideoLAN iOS distribution omits that decoder. Other selected video/subtitle packets are copied unchanged through a private bounded FIFO to the VLC pipeline.
+
+- Copyright Akash Patel, FFmpeg authors and contributors.
+- License: LGPL 3.0 or later. Included texts: ThirdPartyLicenses/LGPL-3.0.txt and GPL-3.0.txt (referenced by LGPL).
+- Source/build scripts: https://github.com/akashskypatel/ffmpeg-kit-builders/tree/fac2076d06a473b8e1c1ed5a1fabe52ee974a5c0
+- Release: v0.11.2-ios, bundle-base-ios-universal-lgpl.xcframework.zip.
+- SHA256: 2c152562cd107281cf2a8034ac8eb45629497f5eec2fb346f29ba9d0a62bde5f.
+- The pinned build declares CONFIG_GPL=0, CONFIG_NONFREE=0, CONFIG_TRUEHD_DECODER=1, CONFIG_AAC_ENCODER=1 and CONFIG_SECURETRANSPORT=1.
+
+The dependency is dynamically linked. To relink a modified version, build the same base LGPL variant from the supplied upstream scripts, replace the archive in ThirdParty/CastFFmpegKit.podspec, run pod install and rebuild this app from source. CastFFmpegBridge.h declares only the public C ABI needed by this integration; no library binary is modified.

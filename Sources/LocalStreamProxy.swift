@@ -18,6 +18,17 @@ final class LocalStreamProxy: @unchecked Sendable {
     private var pairs: [UUID:Pair] = [:]
     private var stopped = false
     private var producerEnded = false
+    private var preparing: CheckedContinuation<Void,Error>?
+    private var warm: Warm?
+    private var onConsumer: (@Sendable () -> Void)?
+    private final class Warm {
+        let connection: NWConnection
+        var header = Data()
+        var body = Data()
+        var complete = false
+        var ready = false
+        init(_ connection:NWConnection) { self.connection = connection }
+    }
     private final class Pair {
         let client: NWConnection
         var producer: NWConnection?
@@ -56,6 +67,62 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
     func stop() { queue.async { self.finish() } }
+    func onNextConsumer(_ handler:@escaping @Sendable () -> Void) { queue.async { self.onConsumer = handler } }
+    /// Keep the validated initialization and first media bytes on the very
+    /// connection that the receiver will consume, rather than probing and
+    /// discarding the beginning of a short video.
+    func prepare() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                guard !self.stopped, self.warm == nil, let port = NWEndpoint.Port(rawValue:self.producerPort) else { continuation.resume(throwing:LocalStreamError.upstream); return }
+                self.preparing = continuation
+                let stream = Warm(NWConnection(host:"127.0.0.1",port:port,using:.tcp))
+                self.warm = stream
+                stream.connection.stateUpdateHandler = { [weak self] state in
+                    guard let self else { return }
+                    if case .ready = state {
+                        let request = "GET \(self.path) HTTP/1.1\r\nHost: 127.0.0.1:\(self.producerPort)\r\nConnection: close\r\n\r\n"
+                        stream.connection.send(content:Data(request.utf8),completion:.contentProcessed { error in
+                            if error != nil { self.failPreparation() } else { self.readWarmHeader(stream,buffer:Data()) }
+                        })
+                    } else if case .failed = state { self.failPreparation() }
+                }
+                stream.connection.start(queue:self.queue)
+                self.queue.asyncAfter(deadline:.now()+15) { if self.preparing != nil { self.failPreparation() } }
+            }
+        }
+    }
+    private func failPreparation() {
+        warm?.connection.stateUpdateHandler = nil; warm?.connection.cancel(); warm = nil
+        let c = preparing; preparing = nil; c?.resume(throwing:LocalStreamError.upstream)
+    }
+    private func readWarmHeader(_ stream:Warm,buffer:Data) {
+        stream.connection.receive(minimumIncompleteLength:1,maximumLength:65_536) { [weak self] data,_,complete,error in
+            guard let self, self.warm === stream, self.preparing != nil else { return }
+            var received = buffer; if let data { received.append(data) }
+            do {
+                if let (header,body) = try Self.responseHeader(received,contentType:self.contentType) {
+                    stream.header = header; stream.body = body; stream.complete = complete
+                    self.validateWarm(stream)
+                } else if complete || error != nil { self.failPreparation() }
+                else { self.readWarmHeader(stream,buffer:received) }
+            } catch { self.failPreparation() }
+        }
+    }
+    private func validateWarm(_ stream:Warm) {
+        do {
+            if try PlayableStreamHeader.check(stream.body,contentType:contentType) {
+                stream.ready = true
+                let c = preparing; preparing = nil; c?.resume(); return
+            }
+            guard !stream.complete, stream.body.count < 1_048_576 else { failPreparation(); return }
+            stream.connection.receive(minimumIncompleteLength:1,maximumLength:min(65_536,1_048_576-stream.body.count)) { [weak self] data,_,complete,error in
+                guard let self, self.warm === stream, self.preparing != nil else { return }
+                if let data { stream.body.append(data) }; stream.complete = complete
+                if error != nil { self.failPreparation() } else { self.validateWarm(stream) }
+            }
+        } catch { failPreparation() }
+    }
     func producerDidEnd() { queue.async { self.producerEnded = true; self.finishDrainedStreams() } }
     private func finishDrainedStreams() {
         guard producerEnded, !stopped else { return }
@@ -67,6 +134,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     }
     private func finish() {
         stopped = true
+        onConsumer = nil; failPreparation()
         listener?.stateUpdateHandler = nil; listener?.newConnectionHandler = nil
         listener?.cancel(); listener = nil
         let c = opening; opening = nil; c?.resume(throwing:LocalStreamError.listener)
@@ -148,6 +216,21 @@ final class LocalStreamProxy: @unchecked Sendable {
     }
     private func connectProducer(_ id: UUID, method: String) {
         guard let pair = pairs[id], let port = NWEndpoint.Port(rawValue:producerPort) else { close(id); return }
+        if let stream = warm, stream.ready {
+            if method == "HEAD" {
+                pair.client.send(content:stream.header,contentContext:.finalMessage,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.close(id) })
+                return
+            }
+            warm = nil; stream.connection.stateUpdateHandler = nil
+            pair.producer = stream.connection
+            stream.connection.stateUpdateHandler = { [weak self] state in if case .failed = state { self?.close(id) } }
+            onConsumer?(); onConsumer = nil
+            pair.client.send(content:stream.header+stream.body,contentContext:stream.complete ? .finalMessage : .defaultMessage,isComplete:true,completion:.contentProcessed { [weak self] error in
+                guard let self else { return }
+                if error != nil || stream.complete { self.close(id) } else { self.pipe(id) }
+            })
+            return
+        }
         let upstream = NWConnection(host:"127.0.0.1",port:port,using:.tcp)
         pair.producer = upstream
         var sent = false

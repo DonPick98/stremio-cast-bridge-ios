@@ -95,7 +95,7 @@ struct ContentView: View {
                 Slider(value:Binding(get:{ min(max(0,cast.position),max(1,cast.duration)) },set:{ cast.position = $0 }),in:0...max(1,cast.duration),onEditingChanged:{ editing in
                     cast.userSeeking = editing
                     if !editing { cast.seek(to:cast.position) }
-                }).disabled(cast.duration <= 0)
+                }).disabled(cast.duration <= 0 || cast.loading)
                 HStack { Text(playbackTime(cast.position)); Spacer(); Text(playbackTime(cast.duration)) }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             HStack(spacing:36) {
@@ -118,7 +118,7 @@ struct ContentView: View {
                 Button { cast.unmuteDevice() } label: { Label("Riattiva audio Chromecast",systemImage:"speaker.slash") }.font(.subheadline)
             }
             HStack {
-                Button("Controlli TV") { cast.openControls() }
+                if !cast.localProcessing { Button("Controlli TV") { cast.openControls() } }
                 Spacer()
                 Button("Interrompi") { cast.stopPlayback() }
             }.font(.caption.weight(.medium)).foregroundStyle(.secondary)

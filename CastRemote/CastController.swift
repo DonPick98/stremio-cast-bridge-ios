@@ -412,7 +412,10 @@ import UIKit
                         let audioTrack = prepared.audio.first(where:{$0.key == audio})
                         let copyAudio = ["aac","mp3"].contains(audioTrack?.codec.lowercased() ?? "") && (audioTrack?.channels ?? 0) > 0 && (audioTrack?.channels ?? 0) <= 2
                         let subtitleID = burnedSubtitle.hasPrefix("vlc_") ? Int(burnedSubtitle.dropFirst(4)) : nil
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,captions:captions)
+                        let repairAudio = AudioRepairPipe.required(audioTrack?.codec ?? "")
+                        let audioIndex = prepared.audio.firstIndex(where:{$0.key == audio}) ?? 0
+                        let subtitleIndex = prepared.subtitles.firstIndex(where:{$0.key == burnedSubtitle})
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions)
                         try Task.checkCancellation()
                         guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, self.selectedSubtitle == subtitle else { engine.stop(); self.checkingStream = false; self.loading = false; return }
                         self.nativeEngine?.stop()
@@ -509,7 +512,7 @@ import UIKit
                 guard !Task.isCancelled, let self, self.loadPending else { return }
                 self.loadPending = false; self.loading = false; self.loadRequest = nil
                 if self.recoverPlayback() { return }
-                self.message = "La TV non ha avviato il video. Riprova o cambia modalità; la posizione è conservata."
+                self.message = "La TV non ha avviato il video dopo l’adattamento automatico. La posizione è conservata."
                 self.playbackIssue = "La TV non ha avviato il flusso dopo l’adattamento automatico. La posizione è conservata."
                 self.updateActivity(status: "Apri l’app per riprovare")
             }
@@ -554,6 +557,7 @@ import UIKit
         if let failed = captionFailures[url], Date().timeIntervalSince(failed) < 60 { return nil }
         do {
             let text = try await WebVTTTimeline.fetch(url)
+            _ = try WebVTTTimeline.rebased(text,offset:0)
             if captionCache.count >= 4 { captionCache.removeAll() }
             captionCache[url] = text; return text
         } catch { if !Task.isCancelled { captionFailures[url] = Date() }; return nil }

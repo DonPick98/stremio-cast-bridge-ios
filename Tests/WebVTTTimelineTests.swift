@@ -7,6 +7,9 @@ import Foundation
         precondition(result.contains("Ciao\nHello") && result.contains("00:01:00.000 --> 00:01:02.000"))
         let empty = String(data:try WebVTTTimeline.rebased(input,offset:1000),encoding:.utf8)!
         precondition(empty.hasPrefix("WEBVTT") && !empty.contains("-->"))
+        let annotated = "WEBVTT\n\nNOTE esempio --> nota\nCommento\n\n00:00:10.000 --> 00:00:12.000\n<00:00:10.500>Ciao\n"
+        let rebased = String(data:try WebVTTTimeline.rebased(annotated,offset:10),encoding:.utf8)!
+        precondition(rebased.contains("NOTE esempio --> nota") && rebased.contains("<00:00:00.500>Ciao"))
         do { _ = try WebVTTTimeline.rebased("bad",offset:1); fatalError("Invalid subtitle accepted") } catch StreamHeaderError.invalid {}
         do { _ = try WebVTTTimeline.rebased("WEBVTT\n\n999999999999999999999999:00:00.000 --> 999999999999999999999999:00:01.000\nBad\n",offset:0); fatalError("Unbounded timestamp accepted") } catch StreamHeaderError.invalid {}
         print("Caption timeline tests passed: seeking, clipped cues, settings and text preservation")

@@ -20,20 +20,22 @@ import MobileVLCKit
                 let subtitle = burn ? original.subtitles.first : nil
                 if burn && subtitle == nil { throw EmbeddedMediaError.metadata }
                 let copyAudio = ["aac","mp3"].contains(audio.codec.lowercased()) && (audio.channels ?? 0) > 0 && (audio.channels ?? 0) <= 2
+                let repairAudio = AudioRepairPipe.required(audio.codec)
                 var attempts: [[String:String]] = []
-                let candidates = EmbeddedMediaEngine.modes(requiresVideo:original.requiresVideoConversion || burn).map{($0,false)} + (name == "truehd" ? [(EmbeddedMediaEngine.VideoMode.copy,true)] : [])
-                for (mode,avformat) in candidates {
+                for mode in EmbeddedMediaEngine.modes(requiresVideo:original.requiresVideoConversion || burn) {
                     row["stage"] = "conversion"
                     let type = mode == .softwareVP8 ? "video/webm" : "video/mp4"
                     let ext = mode == .softwareVP8 ? "webm" : "mp4"
-                    let label = String(describing:mode) + (avformat ? "-avformat" : "")
+                    let label = String(describing:mode)
                     let output = documents.appendingPathComponent("matrix-\(name)-\(label).\(ext)")
-                    let media = VLCMedia(url:input)
-                    if avformat { media.addOption(":demux=avformat") }
-                    media.addOption(":sout=\(EmbeddedMediaEngine.outputChain(videoMode:mode,copyAudio:copyAudio,burn:burn,access:"file",target:output.path))")
+                    let repair = AudioRepairPipe(); defer { repair.stop() }
+                    let repaired = repairAudio ? try repair.start(input:input,position:0,audioIndex:original.audio.firstIndex(where:{$0.key == audio.key}) ?? 0,subtitleIndex:subtitle.flatMap{s in original.subtitles.firstIndex(where:{$0.key == s.key})}) : input
+                    let media = VLCMedia(url:repaired)
+                    if repairAudio { media.addOption(":demux=mkv") }
+                    media.addOption(":sout=\(EmbeddedMediaEngine.outputChain(videoMode:mode,copyAudio:copyAudio || repairAudio,burn:burn,access:"file",target:output.path))")
                     media.addOption(":no-sout-all"); media.addOption(":sout-mux-caching=4000")
-                    if original.audio.count > 1, let id = Int(audio.key.dropFirst(4)) { media.addOption(":audio-track-id=\(id)") }
-                    if let subtitle, let id = Int(subtitle.key.dropFirst(4)) { media.addOption(":sub-track-id=\(id)") }
+                    if !repairAudio, original.audio.count > 1, let id = Int(audio.key.dropFirst(4)) { media.addOption(":audio-track-id=\(id)") }
+                    if let subtitle, let id = Int(subtitle.key.dropFirst(4)) { media.addOption(repairAudio ? ":sub-track=0" : ":sub-track-id=\(id)") }
                     else { media.addOption(":no-spu"); media.addOption(":no-sout-spu") }
                     let player = VLCMediaPlayer(options:["--quiet","--no-video-title-show"])
                     if name == "truehd" { NativeEngineValidation.log(player,to:documents.appendingPathComponent("matrix-\(name)-\(label).log")) }
@@ -51,7 +53,7 @@ import MobileVLCKit
                         let converted = try await EmbeddedMediaEngine.inspect(output)
                         row["outputAudio"] = converted.audioCodecsDescription; row["outputVideo"] = converted.videoDescription
                         row["outputChannels"] = converted.audio.first?.channels ?? 0; row["videoMode"] = String(describing:mode)
-                        row["demux"] = avformat ? "avformat" : "automatic"
+                        row["audioRepair"] = repairAudio
                         row["audioTracks"] = original.audio.count; row["chosenAudio"] = audio.language; row["subtitleBurn"] = burn
                         row["passed"] = (converted.audio.first?.channels ?? 0) == 2
                         row["stage"] = "complete"

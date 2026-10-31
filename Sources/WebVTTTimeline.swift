@@ -11,6 +11,9 @@ enum WebVTTTimeline {
         var output: [String] = []
         for block in normalized.components(separatedBy:"\n\n") {
             var lines = block.components(separatedBy:"\n").filter{!$0.hasPrefix("X-TIMESTAMP-MAP")}
+            if let first = lines.first, first == "NOTE" || first.hasPrefix("NOTE ") || first.hasPrefix("NOTE\t") || first == "STYLE" || first == "REGION" {
+                output.append(lines.joined(separator:"\n")); continue
+            }
             guard let i = lines.firstIndex(where:{$0.contains("-->")}) else { if !lines.joined(separator:"\n").isEmpty { output.append(lines.joined(separator:"\n")) }; continue }
             let line = lines[i] as NSString
             guard let match = regex.firstMatch(in:lines[i],range:NSRange(location:0,length:line.length)),
