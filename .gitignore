@@ -1,0 +1,6 @@
+Pods/
+*.xcworkspace/
+DerivedData/
+build/
+*.ipa
+
