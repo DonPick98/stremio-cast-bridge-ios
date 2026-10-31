@@ -29,6 +29,7 @@ import CryptoKit
     @Published private(set) var embeddedSubtitleURL: URL?
     private var handoff: BridgeHandoff?
     private var configuration: AddonConfiguration?
+    private var preparedCache: [String:(RDPreparedMedia,Date)] = [:]
     private var originalURL: URL?
     private var work: Task<Void, Never>?
     private var loadRequest: GCKRequest?
@@ -242,12 +243,25 @@ import CryptoKit
                 guard let key = configuration?.realDebridKey, !key.isEmpty else { throw BridgeError.cannotResolve }
                 let resolver = RDNativeResolver(apiKey:key, session:URLSession(configuration:.ephemeral))
                 let result: RDPreparedMedia
-                if let hash = source.torrentHash, let filename = source.filename {
-                    result = try await resolver.prepare(torrentHash:hash, filename:filename, videoSize:source.behaviorHints?.videoSize)
+                let cacheKey = contentDigest(key + "|" + handoff.id + "|" + source.identity)
+                if let (saved,time) = preparedCache[cacheKey], Date().timeIntervalSince(time) < 120 {
+                    result = saved
                 } else {
-                    let direct = try await BridgeClient.shared.resolveDirect(source)
-                    originalURL = direct
-                    result = try await resolver.prepare(directLink:direct)
+                    let direct: URL?
+                    do { direct = try await BridgeClient.shared.resolveDirect(source) }
+                    catch BridgeError.cannotResolve { direct = nil }
+                    try Task.checkCancellation()
+                    if let direct {
+                        originalURL = direct
+                        result = try await resolver.prepare(directLink:direct)
+                    } else if let hash = source.torrentHash, let filename = source.filename {
+                        result = try await resolver.prepare(torrentHash:hash, filename:filename, videoSize:source.behaviorHints?.videoSize,onProgress:{ [weak self] state,progress in
+                            guard let self else { return }
+                            await self.showPreparationStatus(state,progress:progress)
+                        })
+                    } else { throw BridgeError.cannotResolve }
+                    if preparedCache.count >= 8, let oldest = preparedCache.min(by:{$0.value.1 < $1.value.1})?.key { preparedCache[oldest] = nil }
+                    preparedCache[cacheKey] = (result,Date())
                 }
                 try Task.checkCancellation()
                 guard !result.audio.isEmpty else { throw BridgeError.cannotResolve }
@@ -260,8 +274,19 @@ import CryptoKit
             } catch is CancellationError { } catch {
                 if Task.isCancelled { return }
                 busy = false
-                message = (error as? RDResolverError)?.localizedDescription ?? "Non riesco a leggere le tracce di questo file. Scegli un’altra sorgente."
+                message = (error as? RDResolverError)?.localizedDescription ?? (error as? BridgeError)?.localizedDescription ?? "Non riesco a leggere le tracce di questo file. Scegli un’altra sorgente."
             }
+        }
+    }
+    private func showPreparationStatus(_ state: String, progress: Int?) {
+        guard !Task.isCancelled else { return }
+        let percent = progress.map { " (\($0)%)" } ?? ""
+        switch state {
+        case "downloading": message = "Real-Debrid sta scaricando questa sorgente\(percent). Attendo automaticamente; puoi cambiare sorgente."
+        case "queued": message = "Questa sorgente è in coda su Real-Debrid\(percent). Attendo automaticamente; puoi cambiare sorgente."
+        case "waiting_files_selection": message = "Seleziono il file su Real-Debrid…"
+        case "downloaded", "reading_metadata": message = "File disponibile: leggo audio e sottotitoli…"
+        default: message = "Real-Debrid prepara questa sorgente\(percent). Attendo automaticamente; puoi cambiare sorgente."
         }
     }
     func load(preservePosition: Bool = false) {

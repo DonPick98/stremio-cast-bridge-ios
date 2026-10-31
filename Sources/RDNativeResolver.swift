@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -23,7 +24,10 @@ enum RDQuality: String, CaseIterable {
 }
 
 enum RDResolverError: LocalizedError {
-    case invalidConfiguration, invalidFile, fileNotIdentified, fileNotReady
+    case invalidConfiguration, invalidFile, fileNotIdentified
+    case fileNotReady(String, Int?)
+    case rateLimited(Int)
+    case apiFailure(status: Int, code: Int?, stage: String)
     case unavailable, invalidResponse, invalidTrack, invalidStream, http(Int)
 
     var errorDescription: String? {
@@ -31,7 +35,15 @@ enum RDResolverError: LocalizedError {
         case .invalidConfiguration: return "La configurazione Real-Debrid non è valida."
         case .invalidFile: return "Il file selezionato non può essere identificato."
         case .fileNotIdentified: return "Non riesco a trovare esattamente il file scelto."
-        case .fileNotReady: return "Real-Debrid sta ancora preparando il file. Riprova tra poco."
+        case .fileNotReady(let state, let progress):
+            let labels = ["queued":"in coda", "downloading":"in download", "magnet_conversion":"lettura torrent", "waiting_files_selection":"attesa selezione file", "compressing":"compressione", "uploading":"preparazione collegamento"]
+            return "Questa sorgente non è pronta per lo streaming. Real-Debrid è ancora in stato \(labels[state] ?? "file non pronto")\(progress.map { " (\($0)%)" } ?? "") dopo l’attesa massima. Scegli un’altra sorgente o controlla la preparazione nel tuo account RD."
+        case .rateLimited(let seconds): return "Real-Debrid limita le richieste. Attendi almeno \(seconds) secondi prima di riprovare."
+        case .apiFailure(let status, let code, let stage):
+            let diagnostic = "HTTP \(status)\(code.map { ", RD \($0)" } ?? "") · \(stage)"
+            if code == 35 { return "Real-Debrid rifiuta questo file (\(diagnostic))." }
+            if code == 36 { return "Real-Debrid segnala un limite di utilizzo (\(diagnostic))." }
+            return "Real-Debrid non ha completato la richiesta (\(diagnostic))."
         case .unavailable: return "Il file non è disponibile su Real-Debrid."
         case .invalidResponse: return "Real-Debrid ha restituito una risposta non valida."
         case .invalidTrack: return "La traccia scelta non è disponibile."
@@ -39,6 +51,34 @@ enum RDResolverError: LocalizedError {
         case .http(let code): return "Real-Debrid ha risposto con errore \(code)."
         }
     }
+}
+
+/// Shared, in-memory pacing across resolvers. No tokens or links are persisted.
+actor RDRequestGate {
+    static let shared = RDRequestGate()
+    private var next: [String:Date] = [:]
+    private var blocked: [String:Date] = [:]
+    private var torrents: [String:(String,Date)] = [:]
+    func enter(_ account: String) async throws {
+        try Task.checkCancellation()
+        if let until = blocked[account], until > Date() { throw RDResolverError.rateLimited(Int(ceil(until.timeIntervalSinceNow))) }
+        let when = max(Date(), next[account] ?? .distantPast)
+        next[account] = when.addingTimeInterval(0.4)
+        let delay = when.timeIntervalSinceNow
+        if delay > 0 { try await Task.sleep(nanoseconds:UInt64(delay*1e9)) }
+        try Task.checkCancellation()
+        if let until = blocked[account], until > Date() { throw RDResolverError.rateLimited(Int(ceil(until.timeIntervalSinceNow))) }
+    }
+    func block(_ account: String, seconds: Int) { blocked[account] = Date().addingTimeInterval(Double(seconds)) }
+    func torrent(_ key: String) -> String? {
+        guard let (id,time) = torrents[key], Date().timeIntervalSince(time) < 300 else { torrents[key] = nil; return nil }
+        return id
+    }
+    func remember(_ id: String, key: String) {
+        if torrents.count >= 64, let oldest = torrents.min(by:{$0.value.1 < $1.value.1})?.key { torrents[oldest] = nil }
+        torrents[key] = (id,Date())
+    }
+    func forget(_ key: String) { torrents[key] = nil }
 }
 
 /// A validated original file and, when available, HLS conversion variants.
@@ -94,48 +134,73 @@ struct RDPreparedMedia {
 struct RDNativeResolver {
     private let apiKey: String
     private let session: URLSession
+    private let pollDelay: UInt64
+    private let maxPreparationChecks: Int
+    private var account: String { SHA256.hash(data:Data(apiKey.utf8)).map{String(format:"%02x",$0)}.joined() }
 
-    init(apiKey: String, session: URLSession = .shared) {
+    init(apiKey: String, session: URLSession = .shared, pollDelay: UInt64 = 5_000_000_000, maxPreparationChecks: Int = 36) {
         self.apiKey = apiKey
         self.session = session
+        self.pollDelay = pollDelay
+        self.maxPreparationChecks = min(36,max(1,maxPreparationChecks))
     }
 
-    func prepare(torrentHash: String, filename: String, videoSize: Int64? = nil) async throws -> RDPreparedMedia {
+    func prepare(torrentHash: String, filename: String, videoSize: Int64? = nil,
+                 onProgress: @escaping @Sendable (String,Int?) async -> Void = {_,_ in}) async throws -> RDPreparedMedia {
         guard torrentHash.range(of: #"^[a-fA-F0-9]{40}$"#, options: .regularExpression) != nil,
               !filename.isEmpty, filename.count <= 500 else { throw RDResolverError.invalidFile }
-        let added = try await api("torrents/addMagnet", form: ["magnet": "magnet:?xt=urn:btih:\(torrentHash)"])
-        guard let id = added["id"] as? String, validID(id) else { throw RDResolverError.invalidResponse }
+        let cacheKey = account + "|" + torrentHash.lowercased() + "|" + basename(filename) + "|" + String(videoSize ?? 0)
+        let id: String
+        if let saved = await RDRequestGate.shared.torrent(cacheKey) { id = saved }
+        else {
+            let added = try await api("torrents/addMagnet", form: ["magnet": "magnet:?xt=urn:btih:\(torrentHash)"])
+            guard let newID = added["id"] as? String, validID(newID) else { throw RDResolverError.invalidResponse }
+            id = newID
+            await RDRequestGate.shared.remember(id,key:cacheKey)
+        }
         let infoPath = "torrents/info/\(id)"
-        var info = try await api(infoPath)
         let wanted = basename(filename)
-        guard !wanted.isEmpty, let files = info["files"] as? [[String: Any]] else { throw RDResolverError.invalidResponse }
-        var matches = files.filter { basename($0["path"] as? String ?? "") == wanted }
-        if matches.count > 1, let videoSize = videoSize {
-            matches = matches.filter { ($0["bytes"] as? NSNumber)?.int64Value == videoSize }
-        }
-        guard matches.count == 1, let targetID = (matches[0]["id"] as? NSNumber)?.intValue, targetID > 0 else {
-            throw RDResolverError.fileNotIdentified
-        }
-        if (matches[0]["selected"] as? NSNumber)?.intValue != 1 {
-            _ = try await api("torrents/selectFiles/\(id)", form: ["files": String(targetID)])
-            info = try await api(infoPath)
-        }
-        for _ in 0..<10 {
+        guard !wanted.isEmpty else { throw RDResolverError.invalidFile }
+        var info: [String:Any] = [:], selectedOnce = false
+        let deadline = Date().addingTimeInterval(180)
+        for check in 0..<maxPreparationChecks {
+            try Task.checkCancellation()
+            if check > 0 {
+                guard Date() < deadline else { break }
+                try await Task.sleep(nanoseconds:pollDelay)
+            }
+            do { info = try await api(infoPath) }
+            catch { await RDRequestGate.shared.forget(cacheKey); throw error }
             let status = info["status"] as? String ?? ""
-            if status == "downloaded" { break }
-            if ["magnet_error", "error", "virus", "dead"].contains(status) { throw RDResolverError.unavailable }
-            try await Task.sleep(nanoseconds: 1_200_000_000)
-            info = try await api(infoPath)
+            let rawProgress = (info["progress"] as? NSNumber)?.intValue
+            let progress = rawProgress.map { min(100,max(0,$0)) }
+            await onProgress(status,progress)
+            if ["magnet_error", "error", "virus", "dead"].contains(status) {
+                await RDRequestGate.shared.forget(cacheKey)
+                throw RDResolverError.unavailable
+            }
+            guard let files = info["files"] as? [[String:Any]], !files.isEmpty else { continue }
+            var matches = files.filter { basename($0["path"] as? String ?? "") == wanted }
+            if matches.count > 1, let videoSize { matches = matches.filter { ($0["bytes"] as? NSNumber)?.int64Value == videoSize } }
+            guard matches.count == 1, let targetID = (matches[0]["id"] as? NSNumber)?.intValue, targetID > 0 else { throw RDResolverError.fileNotIdentified }
+            if (matches[0]["selected"] as? NSNumber)?.intValue != 1 {
+                if !selectedOnce {
+                    _ = try await api("torrents/selectFiles/\(id)",form:["files":String(targetID)])
+                    selectedOnce = true
+                }
+                continue
+            }
+            guard status == "downloaded" else { continue }
+            guard let links = info["links"] as? [String] else { throw RDResolverError.invalidResponse }
+            let selected = files.filter { ($0["selected"] as? NSNumber)?.intValue == 1 }
+            guard selected.count == links.count,
+                  let index = selected.firstIndex(where:{($0["id"] as? NSNumber)?.intValue == targetID}),
+                  let link = URL(string:links[index]) else { throw RDResolverError.invalidResponse }
+            await onProgress("reading_metadata",100)
+            return try await prepare(directLink:link)
         }
-        guard info["status"] as? String == "downloaded" else { throw RDResolverError.fileNotReady }
-        guard let finalFiles = info["files"] as? [[String: Any]], let links = info["links"] as? [String] else {
-            throw RDResolverError.invalidResponse
-        }
-        let selected = finalFiles.filter { ($0["selected"] as? NSNumber)?.intValue == 1 }
-        guard selected.count == links.count,
-              let index = selected.firstIndex(where: { ($0["id"] as? NSNumber)?.intValue == targetID }),
-              let link = URL(string: links[index]) else { throw RDResolverError.invalidResponse }
-        return try await prepare(directLink: link)
+        let progress = (info["progress"] as? NSNumber)?.intValue
+        throw RDResolverError.fileNotReady(info["status"] as? String ?? "",progress.map{min(100,max(0,$0))})
     }
 
     /// Accepts an account link from Real-Debrid, not an arbitrary third-party URL.
@@ -210,6 +275,7 @@ struct RDNativeResolver {
               let url = URL(string: "https://api.real-debrid.com/rest/1.0/" + path) else {
             throw RDResolverError.invalidConfiguration
         }
+        try await RDRequestGate.shared.enter(account)
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("Bearer " + apiKey, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -223,7 +289,17 @@ struct RDNativeResolver {
         }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw RDResolverError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else { throw RDResolverError.http(http.statusCode) }
+        guard (200..<300).contains(http.statusCode) else {
+            let object = data.count <= 100_000 ? (try? JSONSerialization.jsonObject(with:data)) as? [String:Any] : nil
+            let code = (object?["error_code"] as? NSNumber)?.intValue
+            if http.statusCode == 429 || code == 34 || code == 5 {
+                let wait = min(3600,max(60,Int(http.value(forHTTPHeaderField:"Retry-After") ?? "") ?? 60))
+                await RDRequestGate.shared.block(account,seconds:wait)
+                throw RDResolverError.rateLimited(wait)
+            }
+            let stage = path.hasPrefix("torrents/add") ? "aggiunta torrent" : path.hasPrefix("torrents/select") ? "selezione file" : path.hasPrefix("torrents/info") ? "stato torrent" : path.hasPrefix("unrestrict/") ? "collegamento video" : path.hasPrefix("streaming/mediaInfos") ? "lettura tracce" : "conversione"
+            throw RDResolverError.apiFailure(status:http.statusCode,code:code,stage:stage)
+        }
         if http.statusCode == 204 { return [:] }
         guard data.count <= 2_000_000,
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {

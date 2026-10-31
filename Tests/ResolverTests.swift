@@ -16,6 +16,10 @@ final class StubProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+actor ProgressLog {
+    var states: [String] = []
+    func append(_ state: String) { states.append(state) }
+}
 @main struct ResolverTests {
     static func main() async throws {
         precondition(CastContentIdentity.matches(expected:"https://example.test/movie",contentURL:"https://example.test/movie",contentID:"receiver-generated-id"))
@@ -57,7 +61,48 @@ final class StubProtocol: URLProtocol {
         responseHost = "example.com"
         do { _ = try await resolver.prepare(directLink: link); fatalError("Untrusted download accepted") } catch RDResolverError.invalidStream {}
         do { _ = try await resolver.prepare(directLink: URL(string: "https://example.com/file.mkv")!); fatalError("Untrusted input accepted") } catch RDResolverError.invalidStream {}
-        print("Resolver tests passed: direct 1080p, tracks, exact quality, conversion outage and URL validation")
+        unavailable = false; responseHost = "1.download.real-debrid.com"
+        let normal = StubProtocol.handler!
+        var additions = 0, infoCalls = 0, alwaysPending = false
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            if path.contains("torrents/addMagnet") { additions += 1; return (201,["id":"fixture-torrent"]) }
+            if path.contains("torrents/selectFiles") { return (204,[:]) }
+            if path.contains("torrents/info") {
+                infoCalls += 1
+                if !alwaysPending && infoCalls == 1 { return (200,["status":"magnet_conversion","files":[],"progress":0]) }
+                let status = alwaysPending ? "downloading" : infoCalls == 2 ? "waiting_files_selection" : infoCalls == 3 ? "downloading" : "downloaded"
+                return (200,["status":status,"progress":alwaysPending ? 42 : status == "downloaded" ? 100 : 25,
+                             "files":[["id":1,"path":"/test.mkv","bytes":100,"selected":status == "waiting_files_selection" ? 0 : 1]],"links":["https://real-debrid.com/d/test"]])
+            }
+            return try normal(request)
+        }
+        let progress = ProgressLog()
+        let preparing = RDNativeResolver(apiKey:String(repeating:"a",count:30),session:URLSession(configuration:config),pollDelay:0,maxPreparationChecks:8)
+        let ready = try await preparing.prepare(torrentHash:String(repeating:"b",count:40),filename:"test.mkv",onProgress:{state,_ in await progress.append(state)})
+        precondition(ready.directCompatible && additions == 1 && infoCalls == 4)
+        let states = await progress.states
+        precondition(states == ["magnet_conversion","waiting_files_selection","downloading","downloaded","reading_metadata"])
+        alwaysPending = true; additions = 0
+        let pending = RDNativeResolver(apiKey:String(repeating:"a",count:30),session:URLSession(configuration:config),pollDelay:0,maxPreparationChecks:2)
+        for _ in 0..<2 {
+            do { _ = try await pending.prepare(torrentHash:String(repeating:"c",count:40),filename:"test.mkv"); fatalError("Pending source marked ready") }
+            catch RDResolverError.fileNotReady(let state, let percent) { precondition(state == "downloading" && percent == 42) }
+        }
+        precondition(additions == 1,"Pending torrent was added more than once")
+        for (status,code) in [(451,35),(451,36),(403,8)] {
+            StubProtocol.handler = { _ in (status,["error_code":code,"error":"not displayed verbatim"]) }
+            do { _ = try await resolver.prepare(directLink:link); fatalError("RD failure swallowed") }
+            catch RDResolverError.apiFailure(let actualStatus,let actualCode,let stage) { precondition(actualStatus == status && actualCode == code && stage == "collegamento video") }
+        }
+        var rateRequests = 0
+        StubProtocol.handler = { _ in rateRequests += 1; return (429,["error_code":34]) }
+        for _ in 0..<2 {
+            do { _ = try await resolver.prepare(directLink:link); fatalError("Rate limit ignored") }
+            catch RDResolverError.rateLimited(let wait) { precondition(wait > 0) }
+        }
+        precondition(rateRequests == 1,"Cooldown sent another network request")
+        print("Resolver tests passed: direct playback, automatic readiness, progress, pending reuse, RD codes and rate-limit cooldown")
     }
 }
 

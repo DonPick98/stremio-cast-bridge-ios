@@ -68,6 +68,7 @@ struct AddonStream: Decodable, Identifiable {
 
 enum BridgeError: LocalizedError {
     case invalidLink, expired, network, noSources, cannotResolve
+    case sourceHTTP(Int)
     var errorDescription: String? {
         switch self {
         case .invalidLink: return "Collegamento non valido. Riapri la sorgente da Stremio."
@@ -75,6 +76,7 @@ enum BridgeError: LocalizedError {
         case .network: return "Non riesco a contattare il servizio. Controlla la connessione e riprova."
         case .noSources: return "Nessuna sorgente disponibile. Riprova da Stremio."
         case .cannotResolve: return "Non riesco a preparare questo file. Prova un’altra sorgente."
+        case .sourceHTTP(let status): return "L’add-on non ha risolto la sorgente (HTTP \(status)). Attendi prima di riprovare se segnala un limite di richieste."
         }
     }
 }
@@ -135,6 +137,9 @@ final class BridgeClient {
         if isRealDebridDownload(url) { return url }
         var req = URLRequest(url:url); req.httpMethod = "HEAD"
         let (_, response) = try await session.data(for:req)
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400, http.statusCode != 405 {
+            throw BridgeError.sourceHTTP(http.statusCode)
+        }
         guard let final = response.url, isRealDebridDownload(final), let http = response as? HTTPURLResponse, (200..<400).contains(http.statusCode) else { throw BridgeError.cannotResolve }
         return final
     }
@@ -229,3 +234,4 @@ struct AddonConfigStore {
         guard SecItemAdd(record as CFDictionary,nil) == errSecSuccess else { throw AddonConfigError.keychain }
     }
 }
+

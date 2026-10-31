@@ -1,4 +1,6 @@
-# Cast Bridge per iPhone 0.4
+# Cast Bridge per iPhone 0.4.1
+
+La 0.4.1 prova prima il collegamento fornito dall'add-on, anche quando la sorgente contiene un hash torrent. La preparazione tramite aggiunta torrent e' un ripiego per collegamenti non risolvibili, non la prima scelta. Se il file deve essere preparato, l'app mostra coda/download e percentuale, attende automaticamente e presenta le tracce quando il file e' pronto. L'attesa e' annullabile con Cambia sorgente e ha un limite di circa tre minuti, oltre i quali viene mostrato lo stato non pronto senza invitare a ripetere alla cieca. Cache in memoria dei risultati per due minuti e dell'identificativo torrent per cinque minuti; distanziamento delle richieste API e pausa su 429/codici RD 5 o 34. Gli errori mostrano HTTP, codice RD e fase, senza URL o credenziali.
 
 La versione 0.4 aggiunge estrazione sul telefono di sottotitoli MKV testuali indicizzati (UTF8, ASS/SSA semplificato), esportazione WebVTT e invio facoltativo del solo testo a un servizio HTTPS configurabile. Il componente server e' in SubtitleService e non e' stato distribuito: senza un servizio configurato il file e' esportabile, ma non viene automaticamente reso disponibile al Chromecast. Gli indici MKV possono essere parziali: confrontare il risultato con l'episodio completo. PGS, MKV senza indice adeguato e fedelta' degli effetti ASS restano esclusi. Il cambio audio continua a usare la conversione esplicita; non e' stata implementata una soluzione audio universale senza conversione.
 
@@ -31,3 +33,4 @@ La Live Activity mostra titolo, stato e avanzamento. Su iOS 17+ offre pausa/ripr
 Le prove dal PC hanno validato video diretto MKV H264/AAC 1080p e sottotitolo WebVTT esterno sul Chromecast dell'utente. Non equivalgono al collaudo della nuova IPA. L'estrazione e l'hosting autonomo dei sottotitoli incorporati non sono ancora implementati; in compatibilita' vengono impressi da Real-Debrid. Il Default Media Receiver non garantisce selezione nativa degli audio incorporati.
 
 Leggere [HANDOFF.md](HANDOFF.md) per risultati, limiti e istruzioni di ripresa da un altro account. Non inserire chiavi o link personali in issue, log o screenshot.
+
