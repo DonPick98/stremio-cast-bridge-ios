@@ -280,7 +280,7 @@ import CryptoKit
         if request == commandRequest { finishCommand(false); return }
         if request == loadRequest { loadPending = false; loadTimeout?.cancel(); message = "Il Chromecast non è riuscito ad aprire il video. Riprova o cambia modalità; la posizione è conservata."; loadRequest = nil; updateActivity(status: "Apri l’app per riprovare") }
     }
-    func request(_ request: GCKRequest, didAbortWithReason abortReason: GCKRequestAbortReason) {
+    func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) {
         if request == commandRequest { finishCommand(false); return }
         if request == loadRequest {
             loadPending = false; loadTimeout?.cancel(); loadRequest = nil
