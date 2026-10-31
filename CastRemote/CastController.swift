@@ -24,6 +24,7 @@ import CryptoKit
     @Published var userSeeking = false
     @Published var userAdjustingVolume = false
     @Published var hasLoaded = false
+    @Published private(set) var loading = false
     private var handoff: BridgeHandoff?
     private var configuration: AddonConfiguration?
     private var originalURL: URL?
@@ -41,12 +42,18 @@ import CryptoKit
     private var positionKey: String?
     private var previousMediaSessionID = 0
     private var ignorePriorSession = false
+    private var expectedContentID: String?
+    private var loadedSignature: String?
+    private var loadedSubtitle: String?
+    private var subtitleRequest: GCKRequest?
+    private var pendingSubtitle: String?
     private var commandRequest: GCKRequest?
     private var commandContinuation: CheckedContinuation<Bool, Never>?
     private var commandTimeout: Task<Void, Never>?
 
     override init() {
         super.init()
+        activity = Activity<CastActivityAttributes>.activities.first
         CastActivityCommands.handler = { [weak self] command in
             guard let self else { return false }
             return await self.performActivityCommand(command)
@@ -57,15 +64,32 @@ import CryptoKit
     }
     private var castSession: GCKCastSession? { GCKCastContext.sharedInstance().sessionManager.currentCastSession }
     private var client: GCKRemoteMediaClient? { castSession?.remoteMediaClient }
+    private func contentDigest(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+    private var ownsCurrentMedia: Bool {
+        guard let id = client?.mediaStatus?.mediaInformation?.contentID else { return false }
+        if let expectedContentID { return id == expectedContentID }
+        return UserDefaults.standard.string(forKey: "cast.session.content") == contentDigest(id)
+    }
+    private func capturePosition() {
+        guard ownsCurrentMedia, !loadPending, let client,
+              let state = client.mediaStatus?.playerState, state == .playing || state == .paused || state == .buffering else { return }
+        let value = client.approximateStreamPosition()
+        guard value.isFinite, value >= 0, state != .buffering || value > 0 else { return }
+        lastGoodPosition = value
+        if let positionKey { UserDefaults.standard.set(value, forKey: positionKey) }
+    }
+    func savePlaybackPosition() { capturePosition() }
     private func updateStatus() {
         connected = client != nil
         guard let session = castSession, let client = session.remoteMediaClient else { playing = false; updateActivity(status: "Apri l’app per riconnettere Chromecast"); return }
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         if let status = client.mediaStatus {
-            if ignorePriorSession && status.mediaSessionID != 0 && status.mediaSessionID != previousMediaSessionID && loadAccepted {
-                ignorePriorSession = false
-            }
-            if ignorePriorSession { return }
+            // Receivers can reuse mediaSessionID across LOAD calls. Match the
+            // expected content instead; never copy another video's position.
+            guard ownsCurrentMedia else { playing = false; return }
+            if loadPending && !loadAccepted { return }
             playing = status.playerState == .playing
             let observed = client.approximateStreamPosition()
             if !loadPending && observed.isFinite && observed >= 0 && (status.playerState == .playing || status.playerState == .paused) {
@@ -79,18 +103,18 @@ import CryptoKit
             duration = d.isFinite && d > 0 ? d : 0
             let currentLoad = !loadPending || loadAccepted
             if (status.playerState == .playing || status.playerState == .paused) && currentLoad {
-                if loadPending { loadPending = false; loadTimeout?.cancel(); hasLoaded = true }
+                if loadPending { loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = true }
                 message = playing ? "In riproduzione sulla TV." : "In pausa sulla TV."
                 updateActivity(status: playing ? "In riproduzione" : "In pausa")
             } else if status.playerState == .buffering {
                 message = "Caricamento sulla TV…"
                 updateActivity(status: "Caricamento")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .error {
-                loadPending = false; loadTimeout?.cancel(); loadRequest = nil
+                loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil
                 message = "La riproduzione si è interrotta. Riprova: la posizione è conservata."
                 updateActivity(status: "Errore: apri l’app per riprovare")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .finished {
-                loadPending = false; loadTimeout?.cancel()
+                loadPending = false; loading = false; loadTimeout?.cancel()
                 message = "Riproduzione terminata."
                 if let positionKey { UserDefaults.standard.removeObject(forKey: positionKey) }
                 lastGoodPosition = 0
@@ -217,10 +241,23 @@ import CryptoKit
     func load(preservePosition: Bool = false) {
         guard let prepared, let client else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loadPending else { return }
+        capturePosition()
         do {
             let chosenSubtitle: String? = ["none", "external"].contains(selectedSubtitle) ? nil : selectedSubtitle
             guard compatibilityMode || chosenSubtitle == nil else { message = "Per i sottotitoli incorporati attiva la modalità compatibilità."; return }
             let url = compatibilityMode ? try prepared.streamURL(audio:selectedAudio, subtitle:chosenSubtitle, quality:selectedQuality) : prepared.directURL
+            let signature = url.absoluteString
+            // Text tracks are attached even when disabled, so selecting one
+            // later does not need to reload the movie or recreate its buffer.
+            if hasLoaded && ownsCurrentMedia && loadedSignature == signature && loadedSubtitle != selectedSubtitle {
+                let ids: [NSNumber] = selectedSubtitle == "external" ? [1] : []
+                if selectedSubtitle == "external" && externalSubtitleURL == nil { return }
+                let request = client.setActiveTrackIDs(ids)
+                subtitleRequest = request; request.delegate = self
+                pendingSubtitle = selectedSubtitle
+                message = "Aggiorno i sottotitoli sulla TV…"
+                return
+            }
             let info = GCKMediaInformationBuilder(contentURL:url)
             info.streamType = .buffered
             info.contentType = compatibilityMode ? "application/vnd.apple.mpegurl" : prepared.directContentType
@@ -229,10 +266,10 @@ import CryptoKit
             info.metadata = metadata
             let load = GCKMediaLoadRequestDataBuilder()
             load.autoplay = NSNumber(value: true)
-            if selectedSubtitle == "external", let external = externalSubtitleURL {
+            if let external = externalSubtitleURL {
                 if let track = GCKMediaTrack(identifier:1, contentIdentifier:external.absoluteString, contentType:"text/vtt", type:.text, textSubtype:.subtitles, name:externalSubtitleLabel, languageCode:(handoff?.subtitleLanguage == "ita" ? "it" : "en"), customData:nil) {
                     info.mediaTracks = [track]
-                    load.activeTrackIDs = [1]
+                    load.activeTrackIDs = selectedSubtitle == "external" ? [1] : []
                 }
             }
             load.mediaInformation = info.build()
@@ -240,7 +277,13 @@ import CryptoKit
             previousMediaSessionID = client.mediaStatus?.mediaSessionID ?? 0
             ignorePriorSession = previousMediaSessionID != 0
             loadPending = true
+            loading = true
+            hasLoaded = false
             loadAccepted = false
+            expectedContentID = url.absoluteString
+            loadedSignature = signature
+            loadedSubtitle = selectedSubtitle
+            UserDefaults.standard.set(contentDigest(url.absoluteString), forKey: "cast.session.content")
             let request = client.loadMedia(with:load.build())
             loadRequest = request; request.delegate = self
             message = "Invio il video al Chromecast…"
@@ -249,7 +292,7 @@ import CryptoKit
             loadTimeout = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
                 guard !Task.isCancelled, let self, self.loadPending else { return }
-                self.loadPending = false; self.loadRequest = nil
+                self.loadPending = false; self.loading = false; self.loadRequest = nil
                 self.message = "La TV non ha avviato il video. Riprova o cambia modalità; la posizione è conservata."
                 self.updateActivity(status: "Apri l’app per riprovare")
             }
@@ -268,22 +311,25 @@ import CryptoKit
            url.path.hasPrefix("/api/bridge/subtitle/"), url.pathExtension == "vtt" { return url }
         return nil
     }
-    func togglePlayback() { guard let client else { return }; if playing { client.pause() } else { client.play() } }
-    func seek(to value: Double) { guard let client, value.isFinite else { return }; let opts = GCKMediaSeekOptions(); opts.interval = min(duration > 0 ? duration : value,max(0,value)); client.seek(with:opts) }
+    func togglePlayback() { guard let client, ownsCurrentMedia, !loadPending else { return }; if playing { client.pause() } else { client.play() } }
+    func seek(to value: Double) { guard let client, ownsCurrentMedia, !loadPending, value.isFinite else { return }; let opts = GCKMediaSeekOptions(); opts.interval = min(duration > 0 ? duration : value,max(0,value)); client.seek(with:opts) }
     func setVolume(_ value: Double) { castSession?.setDeviceVolume(Float(min(1,max(0,value)))) }
     func openControls() { if connected { GCKCastContext.sharedInstance().presentDefaultExpandedMediaControls() } }
     func requestDidComplete(_ request: GCKRequest) {
+        if request == subtitleRequest { loadedSubtitle = pendingSubtitle; subtitleRequest = nil; pendingSubtitle = nil; message = "Sottotitoli aggiornati sulla TV."; return }
         if request == commandRequest { finishCommand(true); return }
         if request == loadRequest { loadAccepted = true; message = "Attendo l’avvio sulla TV…"; loadRequest = nil }
     }
     func request(_ request: GCKRequest, didFailWithError error: GCKError) {
+        if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; message = "Cambio sottotitoli non riuscito. Riprova."; return }
         if request == commandRequest { finishCommand(false); return }
-        if request == loadRequest { loadPending = false; loadTimeout?.cancel(); message = "Il Chromecast non è riuscito ad aprire il video. Riprova o cambia modalità; la posizione è conservata."; loadRequest = nil; updateActivity(status: "Apri l’app per riprovare") }
+        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); message = "Errore Cast \(error.code): riprova o cambia modalità; la posizione è conservata."; loadRequest = nil; updateActivity(status: "Apri l’app per riprovare") }
     }
     func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) {
+        if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; message = "Cambio sottotitoli interrotto. Riprova."; return }
         if request == commandRequest { finishCommand(false); return }
         if request == loadRequest {
-            loadPending = false; loadTimeout?.cancel(); loadRequest = nil
+            loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil
             message = "Impossibile verificare l’avvio. Riprova: la posizione è conservata."
             updateActivity(status: "Apri l’app per riprovare")
         }
@@ -293,7 +339,7 @@ import CryptoKit
             if client != nil { break }
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
-        guard let client, commandContinuation == nil else {
+        guard let client, ownsCurrentMedia, !loadPending, commandContinuation == nil else {
             message = "Riconnetti Chromecast per usare i controlli."
             return false
         }
@@ -323,12 +369,17 @@ import CryptoKit
         commandContinuation = nil; commandRequest = nil
         commandTimeout?.cancel(); commandTimeout = nil
         continuation.resume(returning: success)
+        if success { updateStatus() }
     }
     private func resetPlayback() {
+        capturePosition()
         if let positionKey, lastGoodPosition > 0 { UserDefaults.standard.set(lastGoodPosition, forKey: positionKey) }
         positionKey = nil
         finishCommand(false)
-        loadTimeout?.cancel(); loadPending = false; loadAccepted = false; loadRequest = nil; ignorePriorSession = false
+        loadTimeout?.cancel(); loadPending = false; loading = false; loadAccepted = false; loadRequest = nil; ignorePriorSession = false
+        expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil
+        subtitleRequest = nil; pendingSubtitle = nil
+        UserDefaults.standard.removeObject(forKey: "cast.session.content")
         lastGoodPosition = 0; position = 0; duration = 0
         if let old = activity {
             activity = nil; lastActivityState = ""

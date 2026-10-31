@@ -21,6 +21,11 @@ jobs:
           LANG: en_US.UTF-8
         run: pod install --repo-update
 
+      - name: Test resolver without personal credentials
+        run: |
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
+          "$RUNNER_TEMP/resolver-tests"
+
       - name: Build for iPhone without signing
         run: |
           xcodebuild \

@@ -84,13 +84,14 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
 
                             Button(cast.hasLoaded ? "Applica le tracce" : "Riproduci sulla TV") { cast.load(preservePosition:cast.hasLoaded) }
 
-                                .buttonStyle(.borderedProminent).tint(.mint).disabled(!cast.connected || cast.busy || cast.selectedAudio.isEmpty)
+                                .buttonStyle(.borderedProminent).tint(.mint).disabled(!cast.connected || cast.busy || cast.loading || cast.selectedAudio.isEmpty)
+                            if cast.loading { ProgressView("Attendo la TV…").tint(.mint) }
 
                             if !cast.connected { Text("Collega il Chromecast con il pulsante in alto.").font(.caption).foregroundStyle(.secondary) }
 
                             Text(prepared.videoDescription).font(.caption).foregroundStyle(.secondary)
                             Toggle("Modalità compatibilità", isOn:$cast.compatibilityMode)
-                                .disabled(prepared.availableQualities.isEmpty)
+                                .disabled(prepared.availableQualities.isEmpty || cast.loading)
                                 .onChange(of: cast.compatibilityMode) { enabled in
                                     if !enabled { cast.selectedAudio = prepared.defaultAudioKey; if cast.selectedSubtitle != "external" { cast.selectedSubtitle = "none" } }
                                 }
@@ -130,7 +131,7 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
 
                                     } }
 
-                                    Text("Per cambiare le tracce durante la riproduzione premi Applica le tracce. In modalità originale sono disponibili solo eventuali sottotitoli esterni.").font(.caption).foregroundStyle(.secondary)
+                                    Text("Premi Applica le tracce per confermare. I sottotitoli esterni si cambiano senza ricaricare il video. Per cambiare audio o sottotitoli incorporati usa la modalità compatibilità.").font(.caption).foregroundStyle(.secondary)
 
                                 }
 
@@ -220,9 +221,9 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
 
         switch quality {
 
-        case .medium: return "Media (conversione)"
+        case .medium: return "720p"
 
-        case .high: return "Alta (conversione)"
+        case .high: return "1080p"
 
         case .original: return "Originale (conversione)"
 
@@ -232,7 +233,7 @@ Text(cast.message).font(.subheadline).foregroundStyle(.secondary)
 
     private func audioSummary(_ prepared: RDPreparedMedia) -> String {
 
-        if !cast.compatibilityMode { return "Audio originale" }
+        if !cast.compatibilityMode { return "Audio predefinito del file" }
         guard let track = prepared.audio.first(where: { $0.key == cast.selectedAudio }) else { return "Audio da scegliere" }
 
         return "Audio: \(track.label)"

@@ -12,12 +12,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 @main struct CastRemoteApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var controller = CastController()
     var body: some Scene {
         WindowGroup {
             ContentView().environmentObject(controller)
                 .onOpenURL { controller.open($0) }
+                .onChange(of: scenePhase) { phase in
+                    if phase != .active { controller.savePlaybackPosition() }
+                }
         }
     }
 }
