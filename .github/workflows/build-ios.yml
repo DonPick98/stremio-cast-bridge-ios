@@ -28,7 +28,9 @@ jobs:
             -scheme CastRemote \
             -configuration Release \
             -sdk iphoneos \
+            -jobs 1 \
             -derivedDataPath "$RUNNER_TEMP/castremote-build" \
+            SWIFT_ENABLE_EXPLICIT_MODULES=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build
