@@ -13,8 +13,9 @@ uno strumento compatibile, per esempio AltStore Classic o Sideloadly. La
 compatibilità della firma con questa specifica IPA deve ancora essere provata.
 Ogni persona deve usare il proprio account e la propria configurazione.
 
-La compilazione e la riproduzione su iPhone e Chromecast non sono ancora state
-verificate. Con AltStore Classic le app installate scadono dopo sette giorni e
+La compilazione è riuscita il 31 ottobre 2026: l'artefatto contiene una IPA con
+eseguibile iOS e librerie Google Cast. Firma, installazione e riproduzione su
+iPhone e Chromecast non sono ancora state verificate. Con AltStore Classic le app installate scadono dopo sette giorni e
 devono essere aggiornate; il rinnovo richiede AltServer sul computer. Per i
 repository privati GitHub Actions usa la quota inclusa nell'account e l'uso
 oltre tale quota può essere a pagamento; i runner standard per repository
