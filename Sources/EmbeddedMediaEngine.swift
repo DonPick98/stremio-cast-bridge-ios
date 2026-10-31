@@ -26,6 +26,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var backgroundPlayer: VLCMediaPlayer?
     private var observers: [NSObjectProtocol] = []
     private(set) var streamURL: URL?
+    private(set) var captionURLs: [Int:URL] = [:]
     private(set) var contentType = "video/mp4"
     private(set) var offset: Double = 0
     private(set) var running = false
@@ -94,15 +95,17 @@ enum EmbeddedMediaError: LocalizedError {
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, selfTest:Bool = false) async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, captions:[Int:String] = [:], selfTest:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         offset = start.isFinite ? max(0,start) : 0
         let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
         let port = try Self.freeLoopbackPort()
         contentType = videoMode == .softwareVP8 ? "video/webm" : "video/mp4"
-        let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType)
+        let rebased = try captions.mapValues { try WebVTTTimeline.rebased($0,offset:offset) }
+        let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType,captions:rebased)
         proxy = bridge
         let url = try await bridge.start()
+        captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
         let media = VLCMedia(url:input)
         let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio,burn:subtitleID != nil,access:"http",target:"127.0.0.1:\(port)\(bridge.path)")
@@ -124,6 +127,12 @@ enum EmbeddedMediaError: LocalizedError {
             media.addOption(":freetype-outline-thickness=\(style.outline ? 2 : 0)")
         } else { media.addOption(":no-spu"); media.addOption(":no-sout-spu") }
         let player = VLCMediaPlayer(options:["--quiet","--no-video-title-show"])
+#if CAST_ENGINE_TESTING
+        if selfTest {
+            let folder = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
+            NativeEngineValidation.log(player,to:folder.appendingPathComponent("gateway-\(String(describing:videoMode)).log"))
+        }
+#endif
         self.player = player
         running = true
         observeLifecycle(); updateBackground()

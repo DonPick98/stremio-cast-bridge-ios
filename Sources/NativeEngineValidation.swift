@@ -5,6 +5,12 @@ import UIKit
 
 /// Exercises the actual iOS binary on synthetic fixtures in CI, without accounts or Cast devices.
 @MainActor enum NativeEngineValidation {
+    static func log(_ player:VLCMediaPlayer,to url:URL) {
+        FileManager.default.createFile(atPath:url.path,contents:nil)
+        guard let handle = try? FileHandle(forWritingTo:url) else { return }
+        let logger = VLCFileLogger(fileHandle:handle); logger.level = .debug
+        player.libraryInstance.loggers = [logger]
+    }
     static func run() async {
         let documents = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
         let report = documents.appendingPathComponent("engine-validation.json")

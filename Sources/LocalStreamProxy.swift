@@ -12,6 +12,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     private let peer: String
     private let producerPort: UInt16
     private let contentType: String
+    private let captions: [Int:Data]
     private var listener: NWListener?
     private var opening: CheckedContinuation<URL,Error>?
     private var pairs: [UUID:Pair] = [:]
@@ -25,8 +26,8 @@ final class LocalStreamProxy: @unchecked Sendable {
         var lastData = Date()
         init(_ client: NWConnection) { self.client = client }
     }
-    init(localIP:String, peer:String, producerPort:UInt16, contentType:String = "video/mp4") {
-        self.localIP = localIP; self.peer = peer; self.producerPort = producerPort; self.contentType = contentType
+    init(localIP:String, peer:String, producerPort:UInt16, contentType:String = "video/mp4", captions:[Int:Data] = [:]) {
+        self.localIP = localIP; self.peer = peer; self.producerPort = producerPort; self.contentType = contentType; self.captions = captions
     }
     var path: String { "/\(token)/stream.mp4" }
     func start() async throws -> URL {
@@ -60,19 +61,21 @@ final class LocalStreamProxy: @unchecked Sendable {
         guard producerEnded, !stopped else { return }
         for (id,pair) in pairs where pair.producer != nil && pair.waiting && !pair.sending && Date().timeIntervalSince(pair.lastData) > 1 {
             pair.waiting = false
-            pair.client.send(content:nil,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.close(id) })
+            pair.client.send(content:nil,contentContext:.finalMessage,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.close(id) })
         }
         queue.asyncAfter(deadline:.now()+0.5) { [weak self] in self?.finishDrainedStreams() }
     }
     private func finish() {
         stopped = true
+        listener?.stateUpdateHandler = nil; listener?.newConnectionHandler = nil
         listener?.cancel(); listener = nil
         let c = opening; opening = nil; c?.resume(throwing:LocalStreamError.listener)
-        for pair in pairs.values { pair.client.cancel(); pair.producer?.cancel() }
+        for pair in pairs.values { pair.client.stateUpdateHandler = nil; pair.producer?.stateUpdateHandler = nil; pair.client.cancel(); pair.producer?.cancel() }
         pairs.removeAll()
     }
     private func close(_ id: UUID) {
         guard let pair = pairs.removeValue(forKey:id) else { return }
+        pair.client.stateUpdateHandler = nil; pair.producer?.stateUpdateHandler = nil
         pair.client.cancel(); pair.producer?.cancel()
     }
     private func accept(_ client: NWConnection) {
@@ -86,7 +89,7 @@ final class LocalStreamProxy: @unchecked Sendable {
             if let pair = self?.pairs[id], pair.producer == nil { self?.close(id) }
         }
     }
-    static func method(_ data: Data, path: String) throws -> String? {
+    static func method(_ data: Data, path: String, additionalPaths:[String] = []) throws -> String? {
         guard data.count <= 8192 else { throw LocalStreamError.request }
         guard let range = data.range(of:Data("\r\n\r\n".utf8)) else { return nil }
         guard range.upperBound == data.endIndex,
@@ -94,7 +97,7 @@ final class LocalStreamProxy: @unchecked Sendable {
               let line = header.components(separatedBy:"\r\n").first else { throw LocalStreamError.request }
         let parts = line.split(separator:" ",omittingEmptySubsequences:false)
         guard parts.count == 3, ["GET","HEAD","OPTIONS"].contains(String(parts[0])),
-              parts[1] == Substring(path), ["HTTP/1.0","HTTP/1.1"].contains(String(parts[2])) else { throw LocalStreamError.request }
+              ([path]+additionalPaths).contains(String(parts[1])), ["HTTP/1.0","HTTP/1.1"].contains(String(parts[2])) else { throw LocalStreamError.request }
         return String(parts[0])
     }
     private func request(_ id: UUID, buffer: Data) {
@@ -103,11 +106,21 @@ final class LocalStreamProxy: @unchecked Sendable {
             guard let self, let pair = self.pairs[id] else { return }
             var received = buffer; if let data { received.append(data) }
             do {
-                if let method = try Self.method(received,path:self.path) {
+                let captionPaths = self.captions.keys.map { "/\(self.token)/subtitle-\($0).vtt" }
+                if let method = try Self.method(received,path:self.path,additionalPaths:captionPaths) {
                     if method == "OPTIONS" {
                         let reply = "HTTP/1.1 204 No Content\r\n\(Self.cors)Content-Length: 0\r\nConnection: close\r\n\r\n"
                         pair.client.send(content:Data(reply.utf8),completion:.contentProcessed { _ in self.close(id) })
-                    } else { self.connectProducer(id,method:method) }
+                    } else {
+                        let firstLine = String(data:received,encoding:.utf8)?.components(separatedBy:"\r\n").first ?? ""
+                        let parts = firstLine.split(separator:" ")
+                        let requested = parts.count > 1 ? String(parts[1]) : ""
+                        if let key = self.captions.keys.first(where:{requested == "/\(self.token)/subtitle-\($0).vtt"}), let caption = self.captions[key] {
+                            let head = "HTTP/1.1 200 OK\r\n\(Self.cors)Content-Type: text/vtt; charset=utf-8\r\nContent-Length: \(caption.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+                            let content = Data(head.utf8) + (method == "HEAD" ? Data() : caption)
+                            pair.client.send(content:content,isComplete:true,completion:.contentProcessed { _ in self.close(id) })
+                        } else { self.connectProducer(id,method:method) }
+                    }
                 } else if complete || error != nil { self.close(id) }
                 else { self.request(id,buffer:received) }
             } catch { self.close(id) }
@@ -157,7 +170,7 @@ final class LocalStreamProxy: @unchecked Sendable {
             var received = buffer; if let data { received.append(data) }
             do {
                 if let (header,body) = try Self.responseHeader(received,contentType:self.contentType) {
-                    pair.client.send(content:header+body,isComplete:complete,completion:.contentProcessed { error in
+                    pair.client.send(content:header+body,contentContext:complete ? .finalMessage : .defaultMessage,isComplete:complete,completion:.contentProcessed { error in
                         if error != nil { self.close(id) }
                         else if complete { self.close(id) }
                         else { self.pipe(id) }
@@ -174,7 +187,7 @@ final class LocalStreamProxy: @unchecked Sendable {
             guard let self, let pair = self.pairs[id] else { return }
             pair.waiting = false; pair.lastData = Date(); pair.sending = true
             if error != nil { self.close(id); return }
-            pair.client.send(content:data,isComplete:complete,completion:.contentProcessed { error in
+            pair.client.send(content:data,contentContext:complete ? .finalMessage : .defaultMessage,isComplete:complete,completion:.contentProcessed { error in
                 pair.sending = false
                 if error != nil || complete { self.close(id) } else { self.pipe(id) }
             })

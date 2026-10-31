@@ -64,11 +64,15 @@ import UIKit
     private var streamCheckTask: Task<Void,Never>?
     private var checkingStream = false
     private var nativeEngine: EmbeddedMediaEngine?
+    private var captionCache: [URL:String] = [:]
+    private var captionFailures: [URL:Date] = [:]
     private struct NativeSelection: Equatable {
         let input: URL
         let audio: String
         let subtitle: String
         let appearance: SubtitleAppearance
+        let external: URL?
+        let extracted: URL?
     }
     private var nativeSelection: NativeSelection?
     private var streamOffset: Double { nativeEngine?.offset ?? 0 }
@@ -137,7 +141,10 @@ import UIKit
         if let status = client.mediaStatus {
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
-            guard ownsCurrentMedia else { playing = false; return }
+            guard ownsCurrentMedia else {
+                if localProcessing && hasLoaded && !loadPending && !checkingStream { stopLocalProcessing(); hasLoaded = false; message = "La TV sta riproducendo un altro contenuto." }
+                playing = false; return
+            }
             if checkingStream && status.playerState == .idle {
                 if status.idleReason == .cancelled { streamCheckTask?.cancel(); checkingStream = false; loading = false; stopLocalProcessing(); hasLoaded = false }
                 return
@@ -179,9 +186,10 @@ import UIKit
                 loadPending = false; loading = false; loadTimeout?.cancel()
                 message = "Riproduzione terminata."
                 if let positionKey { UserDefaults.standard.removeObject(forKey: positionKey) }
-                lastGoodPosition = 0
+                hasLoaded = false; lastGoodPosition = duration
                 stopLocalProcessing()
                 updateActivity(status: "Riproduzione terminata")
+                lastGoodPosition = 0
             } else if status.playerState == .idle && currentLoad && status.idleReason == .cancelled {
                 loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = false
                 stopLocalProcessing(); message = "Riproduzione interrotta."
@@ -365,8 +373,9 @@ import UIKit
             return
         }
         let appearance = burnedSubtitle == "none" ? SubtitleAppearance() : SubtitleAppearance.load()
-        let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance)
-        if requestedPosition == nil, selection == nativeSelection, let engine = nativeEngine, engine.running, let url = engine.streamURL {
+        let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:externalSubtitleURL,extracted:embeddedSubtitleURL)
+        let requiredCaption = subtitle == "external" ? 1 : subtitle == "embedded" ? 2 : nil
+        if requestedPosition == nil, selection == nativeSelection, let engine = nativeEngine, engine.running, let url = engine.streamURL, requiredCaption == nil || engine.captionURLs[requiredCaption!] != nil {
             sendLoad(preservePosition:false,urlOverride:url,contentTypeOverride:engine.contentType,autoplay:autoplay)
             return
         }
@@ -379,6 +388,18 @@ import UIKit
             defer { if background != .invalid { UIApplication.shared.endBackgroundTask(background) } }
             do {
                 guard let self else { return }
+                var captions: [Int:String] = [:]
+                for (id,url) in [(1,selection.external),(2,selection.extracted)] {
+                    if let url, let text = await self.readCaption(url) { captions[id] = text }
+                    try Task.checkCancellation()
+                }
+                if let requiredCaption, captions[requiredCaption] == nil {
+                    let languages = self.handoff?.subtitleLanguage == "ita" ? ["it","ita"] : ["en","eng"]
+                    self.selectedSubtitle = prepared.subtitles.first(where:{languages.contains($0.language.lowercased())})?.key ?? "none"
+                    self.checkingStream = false; self.loading = false
+                    self.startPlayback(requestedPosition:start,autoplay:autoplay)
+                    return
+                }
                 let convertVideo = prepared.requiresVideoConversion || burnedSubtitle != "none"
                 let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel)
                 var lastError: Error = EmbeddedMediaError.encoder
@@ -391,7 +412,7 @@ import UIKit
                         let audioTrack = prepared.audio.first(where:{$0.key == audio})
                         let copyAudio = ["aac","mp3"].contains(audioTrack?.codec.lowercased() ?? "") && (audioTrack?.channels ?? 0) > 0 && (audioTrack?.channels ?? 0) <= 2
                         let subtitleID = burnedSubtitle.hasPrefix("vlc_") ? Int(burnedSubtitle.dropFirst(4)) : nil
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio)
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,captions:captions)
                         try Task.checkCancellation()
                         guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, self.selectedSubtitle == subtitle else { engine.stop(); self.checkingStream = false; self.loading = false; return }
                         self.nativeEngine?.stop()
@@ -453,13 +474,15 @@ import UIKit
             let load = GCKMediaLoadRequestDataBuilder()
             load.autoplay = NSNumber(value:autoplay)
             var textTracks: [GCKMediaTrack] = []
-            if let external = externalSubtitleURL {
+            let externalTrack = urlOverride == nil ? externalSubtitleURL : nativeEngine?.captionURLs[1]
+            let extractedTrack = urlOverride == nil ? embeddedSubtitleURL : nativeEngine?.captionURLs[2]
+            if let external = externalTrack {
                 if let track = GCKMediaTrack(identifier:1, contentIdentifier:external.absoluteString, contentType:"text/vtt", type:.text, textSubtype:.subtitles, name:externalSubtitleLabel, languageCode:(handoff?.subtitleLanguage == "ita" ? "it" : "en"), customData:nil) {
                     textTracks.append(track)
                     load.activeTrackIDs = selectedSubtitle == "external" ? [1] : []
                 }
             }
-            if let embedded = embeddedSubtitleURL, let track = GCKMediaTrack(identifier:2, contentIdentifier:embedded.absoluteString, contentType:"text/vtt",type:.text,textSubtype:.subtitles,name:externalSubtitleLabel + " · dal file",languageCode:(handoff?.subtitleLanguage == "ita" ? "it" : "en"),customData:nil) { textTracks.append(track) }
+            if let embedded = extractedTrack, let track = GCKMediaTrack(identifier:2, contentIdentifier:embedded.absoluteString, contentType:"text/vtt",type:.text,textSubtype:.subtitles,name:externalSubtitleLabel + " · dal file",languageCode:(handoff?.subtitleLanguage == "ita" ? "it" : "en"),customData:nil) { textTracks.append(track) }
             info.mediaTracks = textTracks
             if selectedSubtitle == "embedded" { load.activeTrackIDs = [2] }
             load.mediaInformation = info.build()
@@ -526,6 +549,15 @@ import UIKit
             }
         }
     }
+    private func readCaption(_ url:URL) async -> String? {
+        if let text = captionCache[url] { return text }
+        if let failed = captionFailures[url], Date().timeIntervalSince(failed) < 60 { return nil }
+        do {
+            let text = try await WebVTTTimeline.fetch(url)
+            if captionCache.count >= 4 { captionCache.removeAll() }
+            captionCache[url] = text; return text
+        } catch { if !Task.isCancelled { captionFailures[url] = Date() }; return nil }
+    }
     var externalSubtitleLabel: String { handoff?.subtitleLanguage == "ita" ? "Italiano" : "English" }
     var externalSubtitleURL: URL? {
         guard handoff?.subtitleLanguage != "off" else { return nil }
@@ -539,7 +571,7 @@ import UIKit
            url.path.hasPrefix("/api/bridge/subtitle/"), url.pathExtension == "vtt" { return url }
         return nil
     }
-    func togglePlayback() { guard let client, ownsCurrentMedia, !loadPending else { return }; if playing { client.pause() } else { client.play() } }
+    func togglePlayback() { guard let client, ownsCurrentMedia, !loadPending, !loading else { return }; if !hasLoaded { load(); return }; if playing { client.pause() } else { client.play() } }
     func applySubtitleAppearance() {
         subtitleStyleWork?.cancel()
         subtitleStyleWork = Task {
@@ -646,6 +678,7 @@ import UIKit
         directCaptureTask?.cancel(); directCaptureKey = nil; CastDirectControl.clear()
         capturePosition()
         stopLocalProcessing(); forceLocalPlayback = false; localFallbackLevel = 0
+        captionCache.removeAll(); captionFailures.removeAll()
         if let positionKey, lastGoodPosition > 0 { UserDefaults.standard.set(lastGoodPosition, forKey: positionKey) }
         positionKey = nil
         finishCommand(false)

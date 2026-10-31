@@ -30,6 +30,8 @@ jobs:
           "$RUNNER_TEMP/local-stream-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
+          "$RUNNER_TEMP/caption-timeline-tests"
       - name: Exercise native AC3 to AAC conversion
         run: |
           set -euo pipefail
