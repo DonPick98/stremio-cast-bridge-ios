@@ -1,30 +1,30 @@
-# Preparare la IPA da Windows
-
-Il file `.github/workflows/build-ios.yml` prepara una compilazione su un
-computer macOS fornito da GitHub Actions. Si avvia solo manualmente. Il progetto
-va caricato come contenuto principale di un repository separato: non inserire
-nel repository collegamenti personali agli add-on, chiavi Real-Debrid, password
-o certificati Apple.
-
-Una volta eseguito il flusso dalla scheda **Actions**, l'archivio
-`CastRemote-unsigned` contiene `CastRemote-unsigned.ipa`. La IPA √® senza firma:
-non si installa direttamente e va firmata con il proprio account Apple tramite
-uno strumento compatibile, per esempio AltStore Classic o Sideloadly. La
-compatibilit√† della firma con questa specifica IPA deve ancora essere provata.
-Ogni persona deve usare il proprio account e la propria configurazione.
-
-La compilazione √® riuscita il 31 ottobre 2026: l'artefatto contiene una IPA con
-eseguibile iOS e librerie Google Cast. Firma, installazione e riproduzione su
-iPhone e Chromecast non sono ancora state verificate. Con AltStore Classic le app installate scadono dopo sette giorni e
-devono essere aggiornate; il rinnovo richiede AltServer sul computer. Per i
-repository privati GitHub Actions usa la quota inclusa nell'account e l'uso
-oltre tale quota pu√≤ essere a pagamento; i runner standard per repository
-pubblici sono gratuiti. Controllare la quota prima di eseguire il flusso.
-
-Riferimenti: [runner GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
-[costi Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
-[AltStore Classic](https://faq.altstore.io/altstore-classic/your-altstore).
-
-
-## Prova Live Activity
-Installa líIPA con SideStore e apri Cast Bridge su iPhone con iOS 16.1 o successivo. Premi **Avvia test**, poi blocca líiPhone: dovrebbe apparire ìTest Live Activity attivoî. Su iPhone compatibili verifica anche Dynamic Island. Riapri líapp e premi **Termina test**. Se il test non parte, verifica che le attivit‡ in tempo reale siano abilitate nelle impostazioni dellíapp e annota il messaggio mostrato. Questa Ë una prova statica: non controlla la riproduzione. La firma e il funzionamento dellíestensione tramite SideStore vanno verificati sul dispositivo.
+# Preparare la IPA da Windows
+
+Il file `.github/workflows/build-ios.yml` prepara una compilazione su un
+computer macOS fornito da GitHub Actions. Si avvia solo manualmente. Il progetto
+va caricato come contenuto principale di un repository separato: non inserire
+nel repository collegamenti personali agli add-on, chiavi Real-Debrid, password
+o certificati Apple.
+
+Una volta eseguito il flusso dalla scheda **Actions**, l'archivio
+`CastRemote-unsigned` contiene `CastRemote-unsigned.ipa`. La IPA √® senza firma:
+non si installa direttamente e va firmata con il proprio account Apple tramite
+uno strumento compatibile, per esempio AltStore Classic o Sideloadly. La
+compatibilit√† della firma con questa specifica IPA deve ancora essere provata.
+Ogni persona deve usare il proprio account e la propria configurazione.
+
+La compilazione √® riuscita il 31 ottobre 2026: l'artefatto contiene una IPA con
+eseguibile iOS e librerie Google Cast. Firma, installazione e riproduzione su
+iPhone e Chromecast non sono ancora state verificate. Con AltStore Classic le app installate scadono dopo sette giorni e
+devono essere aggiornate; il rinnovo richiede AltServer sul computer. Per i
+repository privati GitHub Actions usa la quota inclusa nell'account e l'uso
+oltre tale quota pu√≤ essere a pagamento; i runner standard per repository
+pubblici sono gratuiti. Controllare la quota prima di eseguire il flusso.
+
+Riferimenti: [runner GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
+[costi Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
+[AltStore Classic](https://faq.altstore.io/altstore-classic/your-altstore).
+
+
+## Prova Live Activity
+Installa l‚ÄôIPA con SideStore e apri Cast Bridge su iPhone con iOS 16.1 o successivo. Premi **Avvia test**, poi blocca l‚ÄôiPhone: dovrebbe apparire ‚ÄúTest Live Activity attivo‚Äù. Su iPhone compatibili verifica anche Dynamic Island. Riapri l‚Äôapp e premi **Termina test**. Se il test non parte, verifica che le attivit√† in tempo reale siano abilitate nelle impostazioni dell‚Äôapp e annota il messaggio mostrato. Questa √® una prova statica: non controlla la riproduzione. La firma e il funzionamento dell‚Äôestensione tramite SideStore vanno verificati sul dispositivo.
