@@ -30,7 +30,7 @@ import Darwin
     }
 #endif
 
-    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false) async throws -> URL {
+    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil) async throws -> URL {
         _ = Self.initialized
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
               audioIndex >= 0, position.isFinite, position >= 0 else { throw EmbeddedMediaError.encoder }
@@ -64,7 +64,16 @@ import Darwin
         args += ["-map","0:v:0","-map","0:a:\(audioIndex)"]
         if let subtitleIndex { args += ["-map","0:s:\(subtitleIndex)","-c:s","copy"] }
         else { args += ["-sn"] }
-        args += ["-dn","-c:v","copy"]
+        args += ["-dn"]
+        if let video = transcodeVideo {
+            // Software decode legacy MPEG-4 ASP, then encode a Cast-compatible
+            // H.264 stream directly. Do not force 30 fps or upscale SD sources.
+            args += ["-c:v","h264_videotoolbox","-allow_sw","1","-realtime","1","-pix_fmt","yuv420p",
+                     "-profile:v","high","-level:v","4.1","-b:v",String(video.conversionBitrate * 1000),
+                     "-vf","scale=w=min(1920\\,iw):h=min(1080\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2",
+                     "-fps_mode","passthrough","-g",String(Int((video.conversionFrameRate ?? (video.frameRate > 0 ? video.frameRate : 30)) * 2))]
+            if let rate = video.conversionFrameRate { args += ["-r",String(rate)] }
+        } else { args += ["-c:v","copy"] }
         if copyAudio { args += ["-c:a","copy"] }
         else { args += ["-c:a","aac","-b:a","192k","-ac","2"] }
         args += ["-max_muxing_queue_size","2048","-avoid_negative_ts","make_zero"]
@@ -88,6 +97,7 @@ import Darwin
                 if state == 2 || state == 3 {
                     self.finished = true
                     self.failed = state == 3 || ffmpeg_kit_session_get_return_code(h) != 0
+                    PlaybackDiagnostics.record(.producer,["phase":"ffmpeg_exit","status":String(state),"code":String(ffmpeg_kit_session_get_return_code(h))])
 #if CAST_ENGINE_TESTING
                     self.record(h)
 #endif

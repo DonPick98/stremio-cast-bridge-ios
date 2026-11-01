@@ -38,6 +38,6 @@ const rows=(report.quality||[]).map(item=>{
   return {name:item.name,input,actual,bitExact,seekError,audio,passed};
  }catch(error){return {name:item.name,passed:false,error:error.message};}
 });
-const result={passed:rows.length===8&&rows.every(x=>x.passed),rows};
+const result={passed:rows.length===10&&rows.every(x=>x.passed),rows};
 fs.writeFileSync(path.join(root,'video-quality-check.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));
 if(!result.passed)process.exitCode=1;

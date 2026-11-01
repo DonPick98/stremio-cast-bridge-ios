@@ -93,11 +93,13 @@ import UIKit
     private var trackApplyTask: Task<Void,Never>?
     private var seekDispatchTask: Task<Void,Never>?
     private var wantsPlayback = false
+    private var lastDiagnosticSnapshot = Date.distantPast
     var displayTitle: String { MediaDisplayTitle.clean(selectedSource?.filename ?? selectedSource?.descriptionText.components(separatedBy:.newlines).first ?? "Video da Stremio") }
     var deviceName: String { castSession?.device.friendlyName ?? lastDevice?.friendlyName ?? "Chromecast" }
 
     override init() {
         super.init()
+        PlaybackDiagnostics.record(.app,["phase":"launch"])
         // Keep only the system media card, including after an upgrade from 0.6.0.
         Task {
             for old in Activity<CastActivityAttributes>.activities {
@@ -133,7 +135,11 @@ import UIKit
         lastGoodPosition = value
         if let positionKey { UserDefaults.standard.set(value, forKey: positionKey) }
     }
-    func savePlaybackPosition() { capturePosition() }
+    func savePlaybackPosition() { capturePosition(); PlaybackDiagnostics.record(.app,["phase":"background","position":PlaybackDiagnostics.number(lastGoodPosition)]); PlaybackDiagnostics.shared.flush() }
+    func copyDiagnostics() {
+        PlaybackDiagnostics.record(.snapshot,["phase":"copy","connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position),"duration":PlaybackDiagnostics.number(duration),"pending":String(loading || loadPending || checkingStream)])
+        UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic:PlaybackDiagnostics.shared.report()]],options:[.localOnly:true,.expirationDate:Date().addingTimeInterval(3600)])
+    }
     func refreshConnection() {
         let manager = GCKCastContext.sharedInstance().sessionManager
         if !listenersAttached { manager.add(self); listenersAttached = true }
@@ -148,11 +154,13 @@ import UIKit
     func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager: GCKSessionManager, didResumeSession session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager:GCKSessionManager,didSuspend session:GCKSession,withReason reason:GCKConnectionSuspendReason) {
+        PlaybackDiagnostics.record(.cast,["phase":"suspend","code":String(reason.rawValue)])
         guard wantsPlayback else { return }
         connected = false; message = "Ricollego i controlli alla TV…"
         reconnectControls()
     }
     func sessionManager(_ manager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) {
+        PlaybackDiagnostics.record(.cast,["phase":"end","result":error == nil ? "normal" : "error"])
         if error != nil && wantsPlayback && (hasLoaded || localProcessing) {
             connected = false; finishCommand(false)
             message = "Ricollego i controlli alla TV…"
@@ -166,6 +174,7 @@ import UIKit
     private func updateStatus() {
         guard UIApplication.shared.applicationState == .active || localProcessing || lockScreen.active else { return }
         connected = GCKCastContext.sharedInstance().sessionManager.hasConnectedCastSession()
+        PlaybackDiagnostics.shared.changed("connection",event:.cast,["connected":String(connected)])
         guard let session = castSession, let client = session.remoteMediaClient, connected else {
             if wantsPlayback { reconnectControls(); updateActivity(status:"Ricollego i controlli…") }
             return
@@ -174,6 +183,11 @@ import UIKit
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         deviceMuted = session.currentDeviceMuted
         if let status = client.mediaStatus {
+            PlaybackDiagnostics.shared.changed("receiver",event:.cast,["status":String(status.playerState.rawValue),"idle":String(status.idleReason.rawValue),"owned":String(ownsCurrentMedia),"pending":String(loadPending),"local":String(localProcessing)])
+            if Date().timeIntervalSince(lastDiagnosticSnapshot) >= 15 {
+                lastDiagnosticSnapshot = Date()
+                PlaybackDiagnostics.record(.snapshot,["position":PlaybackDiagnostics.number(position),"offset":PlaybackDiagnostics.number(streamOffset),"duration":PlaybackDiagnostics.number(duration),"target":PlaybackDiagnostics.number(timeline.target ?? -1)])
+            }
             // This status still belongs to the stream being replaced. Keep the
             // requested position, autoplay intent and any new preparation intact.
             if checkingStream { return }
@@ -277,6 +291,7 @@ import UIKit
         }
     }
     func open(_ url: URL) {
+        PlaybackDiagnostics.record(.source,["phase":"handoff"])
         if url.scheme == "stremiocast" && url.host == "controls" {
             if client == nil { message = "Riconnetti Chromecast per usare i controlli." }
             return
@@ -356,6 +371,7 @@ import UIKit
         }
     }
     func changeSource() {
+        PlaybackDiagnostics.record(.source,["phase":"chooser","position":PlaybackDiagnostics.number(position)])
         captureSourceResume()
         resetPlayback()
         work?.cancel(); work = nil; busy = false; selectedSource = nil; prepared = nil; hasLoaded = false
@@ -380,6 +396,7 @@ import UIKit
         UserDefaults.standard.set(lastGoodPosition,forKey:content.positionKey)
         position = lastGoodPosition
         let sourceToken = sourceRequests.generation
+        PlaybackDiagnostics.record(.source,["phase":"choose","generation":String(sourceToken.uuidString.prefix(8)),"position":PlaybackDiagnostics.number(lastGoodPosition)])
         busy = true; message = "Leggo audio e sottotitoli del file…"
         work = Task {
             do {
@@ -415,6 +432,7 @@ import UIKit
                 try validateSource(sourceToken)
                 guard !result.audio.isEmpty else { throw BridgeError.cannotResolve }
                 prepared = result; selectedAudio = PlaybackPreferences.audio(result.audio,fallback:result.defaultAudioKey)
+                PlaybackDiagnostics.record(.metadata,["codec":result.video?.codec ?? "unknown","width":String(result.video?.width ?? 0),"height":String(result.video?.height ?? 0),"fps":PlaybackDiagnostics.number(result.video?.frameRate ?? 0),"duration":PlaybackDiagnostics.number(result.duration),"tracks":String(result.audio.count),"subtitle":String(result.subtitles.count)])
                 selectedQuality = result.availableQualities.contains(.high) ? .high : (result.availableQualities.first ?? .high)
                 compatibilityMode = false
                 selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage)
@@ -429,6 +447,7 @@ import UIKit
                 if connected && wantsPlayback { load() }
             } catch is CancellationError { } catch {
                 if Task.isCancelled || !sourceRequests.accepts(sourceToken) { return }
+                PlaybackDiagnostics.record(.error,["phase":"resolve","kind":String(describing:type(of:error)),"code":String((error as NSError).code)])
                 busy = false
                 message = (error as? RDResolverError)?.localizedDescription ?? (error as? BridgeError)?.localizedDescription ?? "Non riesco a leggere le tracce di questo file. Scegli un’altra sorgente."
             }
@@ -446,6 +465,7 @@ import UIKit
     }
     private func showPreparationStatus(_ state: String, progress: Int?, sourceToken: UUID) {
         guard !Task.isCancelled, sourceRequests.accepts(sourceToken) else { return }
+        PlaybackDiagnostics.shared.changed("debrid",event:.source,["phase":state])
         let percent = progress.map { " (\($0)%)" } ?? ""
         switch state {
         case "downloading": message = "Real-Debrid sta scaricando questa sorgente\(percent). Attendo automaticamente; puoi cambiare sorgente."
@@ -466,6 +486,7 @@ import UIKit
         capturePosition()
         let requested = timeline.consumeQueued() ?? requestedPosition
         let audio = selectedAudio, subtitle = selectedSubtitle
+        PlaybackDiagnostics.record(.prepare,["phase":"request","audio":audio,"subtitle":subtitle,"position":PlaybackDiagnostics.number(requested ?? lastGoodPosition)])
         let burnedSubtitle = subtitle.hasPrefix("vlc_") ? subtitle : "none"
         let needsLocal = forceLocalPlayback || !prepared.directCompatible || audio != prepared.defaultAudioKey || burnedSubtitle != "none"
         if !needsLocal {
@@ -498,6 +519,7 @@ import UIKit
             _ = client?.pause()
         }
         checkingStream = true; loading = true; playbackIssue = nil
+        processingDetail = "Preparazione del flusso…"
         message = "Preparo il flusso sull’iPhone…"
         updateActivity(status:"Caricamento")
         streamCheckTask = Task { [weak self] in
@@ -518,9 +540,10 @@ import UIKit
                     return
                 }
                 let convertVideo = prepared.requiresVideoConversion || burnedSubtitle != "none"
-                let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel)
+                let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel,video:prepared.video,burn:burnedSubtitle != "none")
                 var lastError: Error = EmbeddedMediaError.encoder
                 for mode in modes {
+                    PlaybackDiagnostics.record(.prepare,["phase":"attempt","mode":String(describing:mode),"generation":String(streamToken.uuidString.prefix(8)),"offset":PlaybackDiagnostics.number(start)])
                     try self.validateStream(source:sourceToken,stream:streamToken)
                     self.message = mode == .copy ? "Adatto l’audio sull’iPhone, mantenendo il video originale…" : "Adatto il video sull’iPhone per il Chromecast…"
                     let engine = EmbeddedMediaEngine()
@@ -543,13 +566,17 @@ import UIKit
                         }
                         self.nativeEngine?.stop()
                         self.nativeEngine = engine; self.nativeSelection = selection
+                        PlaybackDiagnostics.record(.prepare,["phase":"ready","mode":String(describing:mode)])
                         engine.refreshBackground()
                         self.localProcessing = true; self.compatibilityMode = true; CastActivityCommands.usesLocalStream = true
-                        self.localFallbackLevel = mode == .copy ? 0 : mode == .hardwareH264 ? 1 : 2
+                        self.localFallbackLevel = mode == .copy ? 0 : mode == .softwareVP8 ? 2 : 1
                         let rate = prepared.video.map { format in
                             format.conversionFrameRate.map { "\(Int($0)) fps" } ?? format.frameRateLabel
                         } ?? "fps originali"
-                        self.processingDetail = mode == .copy ? "Video originale · \(prepared.video?.label ?? prepared.videoDescription) · \(copyAudio ? "audio originale" : "audio AAC stereo")" : "Video convertito \(mode == .hardwareH264 ? "H.264" : "VP8") · fino a 1080p · \(rate)"
+                        let format = prepared.video
+                        let scale = format.map{ min(1,min(1920 / Double(max(1,$0.width)),1080 / Double(max(1,$0.height)))) } ?? 1
+                        let dimensions = format.map{ "\(Int(Double($0.width)*scale)/2*2)×\(Int(Double($0.height)*scale)/2*2)" } ?? "dimensioni adattate"
+                        self.processingDetail = mode == .copy ? "Video originale · \(prepared.video?.label ?? prepared.videoDescription) · \(copyAudio ? "audio originale" : "audio AAC stereo")" : "Video convertito \(mode == .softwareVP8 ? "VP8" : "H.264") · \(dimensions) · \(rate)"
                         engine.onFailure = { [weak self, weak engine] in
                             guard let self, let engine, self.nativeEngine === engine, self.sourceRequests.accepts(sourceToken), self.streamRequests.accepts(streamToken), !self.checkingStream, !self.loadPending else { return }
                             if !self.recoverPlayback() { self.playbackIssue = "Il motore integrato ha interrotto la conversione. La posizione è conservata." }
@@ -559,6 +586,7 @@ import UIKit
                         self.sendLoad(preservePosition:false,urlOverride:url,contentTypeOverride:engine.contentType,autoplay:self.playWhenReady)
                         return
                     } catch {
+                        PlaybackDiagnostics.record(.error,["phase":"prepare","mode":String(describing:mode),"kind":String(describing:type(of:error)),"code":(error as? EmbeddedMediaError).map{String(describing:$0)} ?? "other"])
                         engine.stop(); lastError = error
                         try self.validateStream(source:sourceToken,stream:streamToken)
                     }
@@ -568,6 +596,7 @@ import UIKit
                 guard !Task.isCancelled, let self, self.sourceRequests.accepts(sourceToken), self.streamRequests.accepts(streamToken) else { return }
                 self.checkingStream = false; self.loading = false
                 self.hasLoaded = false
+                self.processingDetail = "Flusso non disponibile"
                 self.playbackIssue = (error as? EmbeddedMediaError)?.localizedDescription ?? "Il motore integrato non ha preparato questa sorgente."
                 self.message = "Preparazione del flusso non riuscita."
             }
@@ -578,6 +607,7 @@ import UIKit
         guard streamRequests.accepts(stream) else { throw CancellationError() }
     }
     private func sendLoad(preservePosition: Bool, urlOverride: URL? = nil, contentTypeOverride: String? = nil, autoplay: Bool = true) {
+        PlaybackDiagnostics.record(.load,["phase":"request","local":String(urlOverride != nil),"position":PlaybackDiagnostics.number(position),"paused":String(!autoplay)])
         guard let prepared, let client else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loadPending, subtitleRequest == nil else { return }
         // startPlayback captured the original-media position before replacing
@@ -710,6 +740,7 @@ import UIKit
     }
     func togglePlayback() { Task { _ = await handleCommand("toggle") } }
     func tracksChanged(audio:Bool) {
+        PlaybackDiagnostics.record(.tracks,["kind":audio ? "audio" : "subtitle","audio":selectedAudio,"subtitle":selectedSubtitle,"position":PlaybackDiagnostics.number(position)])
         guard let prepared, !busy else { return }
         if audio { PlaybackPreferences.remember(audio:prepared.audio.first(where:{$0.key == selectedAudio}),subtitle:nil) }
         else {
@@ -733,6 +764,7 @@ import UIKit
         }
     }
     func seek(to value: Double) {
+        PlaybackDiagnostics.record(.seek,["target":PlaybackDiagnostics.number(value),"position":PlaybackDiagnostics.number(position)])
         guard hasLoaded || loadPending || loading, value.isFinite else { return }
         let target = min(duration > 0 ? max(0,duration-(localProcessing ? 1 : 0)) : value,max(0,value))
         timeline.queue(at:target); position = target; lastGoodPosition = target
@@ -772,6 +804,7 @@ import UIKit
         localProcessing = false; CastActivityCommands.usesLocalStream = false
     }
     @discardableResult private func recoverPlayback(allowVideoConversion:Bool = true) -> Bool {
+        PlaybackDiagnostics.record(.recovery,["attempt":String(transportRetries),"position":PlaybackDiagnostics.number(lastGoodPosition)])
         guard !checkingStream, let prepared, connected else { return false }
         if !allowVideoConversion {
             guard transportRetries < 1 else { return false }
@@ -791,16 +824,19 @@ import UIKit
     func unmuteDevice() { castSession?.setDeviceMuted(false) }
     func openControls() { if connected { GCKCastContext.sharedInstance().presentDefaultExpandedMediaControls() } }
     func requestDidComplete(_ request: GCKRequest) {
+        PlaybackDiagnostics.record(.load,["phase":"ack","kind":request == loadRequest ? "load" : request == subtitleRequest ? "subtitle" : "command"])
         if request == subtitleRequest { loadedSubtitle = pendingSubtitle; subtitleRequest = nil; pendingSubtitle = nil; message = "Sottotitoli aggiornati sulla TV."; return }
         if request == commandRequest { finishCommand(true); return }
         if request == loadRequest { loadAccepted = true; message = "Attendo l’avvio sulla TV…"; loadRequest = nil }
     }
     func request(_ request: GCKRequest, didFailWithError error: GCKError) {
+        PlaybackDiagnostics.record(.error,["phase":"cast_request","code":String(error.code),"kind":request == loadRequest ? "load" : request == subtitleRequest ? "subtitle" : "command"])
         if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; message = "Cambio sottotitoli non riuscito. Riprova."; return }
         if request == commandRequest { finishCommand(false); return }
         if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; if recoverPlayback() { return }; message = "Errore Cast \(error.code): il formato non è stato riprodotto dopo l’adattamento automatico."; playbackIssue = message; updateActivity(status: "Apri l’app per riprovare") }
     }
     func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) {
+        PlaybackDiagnostics.record(.error,["phase":"cast_abort","code":String(abortReason.rawValue)])
         if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; message = "Cambio sottotitoli interrotto. Riprova."; return }
         if request == commandRequest { finishCommand(false); return }
         if request == loadRequest {
@@ -810,6 +846,7 @@ import UIKit
         }
     }
     private func handleCommand(_ command:String) async -> Bool {
+        PlaybackDiagnostics.record(.command,["kind":command,"connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
         if let target = CastWire.seekTarget(command,current:timeline.queuedTarget ?? lastGoodPosition,duration:duration) {
             seek(to:target); return true
         }
@@ -908,6 +945,7 @@ import UIKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        processingDetail = "Automatico"
         sourceRequests.invalidate(); streamRequests.invalidate(); controlRequests.invalidate(); playbackIntent.reset()
         wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil
         trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear()

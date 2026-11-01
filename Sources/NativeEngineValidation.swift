@@ -97,12 +97,12 @@ import MediaPlayer
             trace("quality and seek regressions")
             let quality = await qualityProbe(documents:documents)
             result["quality"] = quality
-            result["passed"] = (result["passed"] as? Bool == true) && quality.count == 8 && quality.allSatisfy{$0["passed"] as? Bool == true}
+            result["passed"] = (result["passed"] as? Bool == true) && quality.count == 10 && quality.allSatisfy{$0["passed"] as? Bool == true}
             trace("codec matrix")
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
                 result["matrix"] = matrix
-                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 25 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 28 && matrix.allSatisfy { $0["passed"] as? Bool == true }
                 trace("background conversion")
                 let background = try await backgroundProbe(documents:documents)
                 result["background"] = background
@@ -116,7 +116,8 @@ import MediaPlayer
             ("copy1080","1080-23976",.copy,0,0),("h2641080","1080-23976",.hardwareH264,0,0),
             ("h26425","25",.hardwareH264,0,0),("h2642997","2997",.hardwareH264,0,0),
             ("vp82997","2997",.softwareVP8,0,0),("h26472060","720-60",.hardwareH264,0,0),
-            ("seekTrueHD","seek",.copy,5.5,0),("seekAAC","seek",.copy,5.5,1)
+            ("seekTrueHD","seek",.copy,5.5,0),("seekAAC","seek",.copy,5.5,1),
+            ("legacyASP","legacy-asp",.ffmpegH264,0,0),("legacyASPSeek","legacy-asp",.ffmpegH264,3.25,1)
         ]
         var rows:[[String:Any]] = []
         for (name,fixture,mode,offset,audioIndex) in cases {
