@@ -800,11 +800,9 @@ import UIKit
         let tracks = selectedSource?.subtitles ?? []
         let languages = handoff?.subtitleLanguage == "ita" ? ["it", "ita", "italian"] : ["en", "eng", "english"]
         for track in tracks where languages.contains((track.lang ?? "").lowercased()) {
-            if let url = URL(string:track.url), url.scheme == "https", url.user == nil, url.password == nil, url.pathExtension.lowercased() == "vtt" { return url }
+            if let url = URL(string:track.url), let safe = OnlineSubtitle.safeURL(url) { return safe }
         }
-        if handoff?.subtitleLanguage != "ita", let url = handoff?.externalSubtitleURL,
-           url.scheme == "https", url.host == "stremio-chromecast-bridge.donotpeek.chatgpt.site",
-           url.path.hasPrefix("/api/bridge/subtitle/"), url.pathExtension == "vtt" { return url }
+        if let url = handoff?.externalSubtitleURL, let safe = OnlineSubtitle.safeURL(url) { return safe }
         return nil
     }
     var sourceSubtitleOptions:[OnlineSubtitle] {
