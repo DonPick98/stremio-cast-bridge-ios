@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 /// Replaces only the selected unsupported audio with AAC. Video and the
-/// selected subtitle pass unchanged through a 0600 FIFO, never a movie file.
+/// selected subtitle pass unchanged over loopback HTTP, never a movie file.
 @MainActor final class AudioRepairPipe {
     private static let initialized: Void = {
         ffmpeg_kit_initialize()
@@ -12,7 +12,6 @@ import Darwin
     }()
     static func required(_ codec:String) -> Bool { ["trhd","truehd","mlp"].contains(codec.lowercased()) }
     private var handle: UnsafeMutableRawPointer?
-    private var keeper: Int32 = -1
     private var monitor: Task<Void,Never>?
     private(set) var url: URL?
     private(set) var failed = false
@@ -34,7 +33,8 @@ import Darwin
         _ = Self.initialized
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
               audioIndex >= 0, position.isFinite, position >= 0 else { throw EmbeddedMediaError.encoder }
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("cast-audio-\(UUID().uuidString).mkv")
+        let port = try EmbeddedMediaEngine.freeLoopbackPort()
+        let path = URL(string:"http://127.0.0.1:\(port)/\(UUID().uuidString).mkv")!
 #if CAST_ENGINE_TESTING
         let selectedPath = testingOutput ?? path
         let folder = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
@@ -43,16 +43,11 @@ import Darwin
 #else
         let selectedPath = path
 #endif
-        var useFIFO = true
+        var useHTTP = true
 #if CAST_ENGINE_TESTING
-        useFIFO = testingOutput == nil
+        useHTTP = testingOutput == nil
 #endif
-        if useFIFO {
-        guard mkfifo(path.path,mode_t(0o600)) == 0 else { throw EmbeddedMediaError.encoder }
-        url = path
-        keeper = Darwin.open(path.path,O_RDWR | O_NONBLOCK)
-        guard keeper >= 0 else { stop(); throw EmbeddedMediaError.encoder }
-        }
+        url = selectedPath
         var args = ["-hide_banner","-nostdin","-loglevel","quiet","-y"]
 #if CAST_ENGINE_TESTING
         args[3] = "error"
@@ -62,7 +57,9 @@ import Darwin
         args += ["-i",input.isFileURL ? input.path : input.absoluteString,"-map","0:v:0","-map","0:a:\(audioIndex)"]
         if let subtitleIndex { args += ["-map","0:s:\(subtitleIndex)","-c:s","copy"] }
         else { args += ["-sn"] }
-        args += ["-dn","-c:v","copy","-c:a","aac","-b:a","192k","-ac","2","-avoid_negative_ts","make_zero","-f","matroska","-live","1","-cluster_time_limit","500","-flush_packets","1",selectedPath.path]
+        args += ["-dn","-c:v","copy","-c:a","aac","-b:a","192k","-ac","2","-avoid_negative_ts","make_zero","-f","matroska","-live","1","-cluster_time_limit","500","-flush_packets","1"]
+        if useHTTP { args += ["-listen","1"] }
+        args += [useHTTP ? selectedPath.absoluteString : selectedPath.path]
         let copies = args.map { strdup($0)! }
         defer { copies.forEach { free($0) } }
         var pointers = copies.map { UnsafePointer<CChar>($0) as UnsafePointer<CChar>? }
@@ -82,26 +79,31 @@ import Darwin
 #if CAST_ENGINE_TESTING
                     self.record(h)
 #endif
-                    self.closeKeeper(); return
+                    return
                 }
                 try? await Task.sleep(nanoseconds:100_000_000)
             }
         }
-        if useFIFO {
-            // A FIFO is non-seekable and VLC's file access can read it before
-            // FFmpeg has emitted its first header. Wait without consuming any
-            // bytes, so an initially empty pipe cannot be mistaken for EOF.
+        if useHTTP {
+            // Inspect the bind state without accepting the single HTTP client.
+            // VLC then opens the connection and waits for streamed headers.
             for _ in 0..<150 {
                 try Task.checkCancellation()
                 if failed { throw EmbeddedMediaError.encoder }
-                if keeper >= 0, CastFIFOAvailableBytes(keeper) >= 512 { return selectedPath }
+                if Self.listening(port) { return selectedPath }
                 try await Task.sleep(nanoseconds:100_000_000)
             }
             throw EmbeddedMediaError.timeout
         }
         return selectedPath
     }
-    private func closeKeeper() { if keeper >= 0 { Darwin.close(keeper); keeper = -1 } }
+    private static func listening(_ port:UInt16) -> Bool {
+        let fd = Darwin.socket(AF_INET,SOCK_STREAM,0); guard fd >= 0 else { return false }; defer { Darwin.close(fd) }
+        var addr = sockaddr_in(); addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); addr.sin_family = sa_family_t(AF_INET); addr.sin_port = port.bigEndian
+        inet_pton(AF_INET,"127.0.0.1",&addr.sin_addr)
+        let result = withUnsafePointer(to:&addr) { $0.withMemoryRebound(to:sockaddr.self,capacity:1) { Darwin.bind(fd,$0,socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        return result != 0 && errno == EADDRINUSE
+    }
     func stop() {
         monitor?.cancel(); monitor = nil
         if let handle {
@@ -113,7 +115,6 @@ import Darwin
             // last handle. Never block the player/UI during a seek or stop.
             DispatchQueue.global(qos:.utility).async { ffmpeg_kit_handle_release(handle) }
         }
-        handle = nil; closeKeeper()
-        if let url { Darwin.unlink(url.path) }; url = nil
+        handle = nil; url = nil
     }
 }
