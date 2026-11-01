@@ -1,4 +1,16 @@
 import Foundation
+import CryptoKit
+
+/// The resume point belongs to the film/episode, independently of the file,
+/// quality, torrent, add-on or expiring download link selected for it.
+struct PlaybackContent: Equatable {
+    let type: String
+    let id: String
+    var positionKey: String {
+        let digest = SHA256.hash(data:Data((type + "|" + id).utf8)).map { String(format:"%02x",$0) }.joined()
+        return "cast.position.content." + digest
+    }
+}
 
 /// A cancelled preparation must never publish progress or errors into its successor.
 struct PlaybackRequestState {

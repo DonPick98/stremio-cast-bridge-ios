@@ -48,6 +48,7 @@ import UIKit
     private var timeline = PlaybackTimeline()
     private var playWhenReady = true
     private var transportRetries = 0
+    private var sourceResume: (content:PlaybackContent,position:Double,duration:Double,playing:Bool)?
     private var lastPositionSave = Date.distantPast
     private var positionKey: String?
     private var bufferingSince: Date?
@@ -223,7 +224,8 @@ import UIKit
                 wantsPlayback = false; lockScreen.clear()
                 loadPending = false; loading = false; loadTimeout?.cancel()
                 message = "Riproduzione terminata."
-                if let positionKey { UserDefaults.standard.removeObject(forKey: positionKey) }
+                if let positionKey { UserDefaults.standard.set(0,forKey:positionKey) }
+                sourceResume = nil
                 hasLoaded = false; lastGoodPosition = duration
                 stopLocalProcessing()
                 updateActivity(status: "Riproduzione terminata")
@@ -270,6 +272,7 @@ import UIKit
             return
         }
         work?.cancel()
+        sourceResume = nil
         resetPlayback()
         sources = []; selectedSource = nil; prepared = nil; handoff = nil; configuration = nil; originalURL = nil; hasLoaded = false; lastGoodPosition = 0
         do {
@@ -343,19 +346,28 @@ import UIKit
         }
     }
     func changeSource() {
+        captureSourceResume()
         resetPlayback()
         work?.cancel(); work = nil; busy = false; selectedSource = nil; prepared = nil; hasLoaded = false
         message = "Scegli una sorgente."
     }
     func choose(_ source: AddonStream) {
+        if selectedSource != nil { captureSourceResume() }
         resetPlayback()
         wantsPlayback = true
         work?.cancel(); subtitleFile = nil; embeddedSubtitleURL = nil; selectedSource = source; prepared = nil; originalURL = nil; hasLoaded = false; lastGoodPosition = 0
         guard let handoff else { message = "Riapri la sorgente da Stremio."; return }
         let identity = handoff.provider + "|" + source.identity
         let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-        positionKey = "cast.position." + digest
-        lastGoodPosition = max(0, UserDefaults.standard.double(forKey: positionKey!))
+        let content = PlaybackContent(type:handoff.type,id:handoff.id)
+        let legacyKey = "cast.position." + digest
+        positionKey = content.positionKey
+        let stored = UserDefaults.standard.object(forKey:content.positionKey) != nil ? UserDefaults.standard.double(forKey:content.positionKey) : UserDefaults.standard.double(forKey:legacyKey)
+        let resume = sourceResume?.content == content ? sourceResume : nil
+        lastGoodPosition = max(0,resume?.position ?? stored)
+        duration = resume?.duration ?? 0
+        playWhenReady = resume?.playing ?? true
+        UserDefaults.standard.set(lastGoodPosition,forKey:content.positionKey)
         position = lastGoodPosition
         let sourceToken = sourceRequests.generation
         busy = true; message = "Leggo audio e sottotitoli del file…"
@@ -397,7 +409,11 @@ import UIKit
                 compatibilityMode = false
                 selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage)
                 busy = false
-                duration = result.duration > 0 ? result.duration : duration
+                if result.duration > 0 {
+                    duration = result.duration
+                    lastGoodPosition = min(lastGoodPosition,max(0,duration-1))
+                    position = lastGoodPosition
+                }
                 playbackIssue = nil
                 message = "Video pronto. Collega la TV per iniziare."
                 if connected && wantsPlayback { load() }
@@ -411,6 +427,12 @@ import UIKit
     private func validateSource(_ token: UUID) throws {
         try Task.checkCancellation()
         guard sourceRequests.accepts(token) else { throw CancellationError() }
+    }
+    private func captureSourceResume() {
+        guard let handoff else { return }
+        capturePosition()
+        sourceResume = (PlaybackContent(type:handoff.type,id:handoff.id),lastGoodPosition,duration,playWhenReady)
+        if ownsCurrentMedia { _ = client?.pause() }
     }
     private func showPreparationStatus(_ state: String, progress: Int?, sourceToken: UUID) {
         guard !Task.isCancelled, sourceRequests.accepts(sourceToken) else { return }
@@ -705,7 +727,7 @@ import UIKit
     }
     private func endPlayback() {
         if ownsCurrentMedia { client?.stop() }
-        resetPlayback(); hasLoaded = false; playing = false; message = "Riproduzione interrotta."
+        resetPlayback(); sourceResume = nil; hasLoaded = false; playing = false; message = "Riproduzione interrotta."
     }
     private func stopLocalProcessing() {
         nativeEngine?.stop(); nativeEngine = nil; nativeSelection = nil

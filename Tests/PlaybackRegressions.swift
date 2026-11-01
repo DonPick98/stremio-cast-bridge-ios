@@ -2,6 +2,10 @@ import Foundation
 
 @main struct PlaybackRegressions {
     static func main() {
+        let episode = PlaybackContent(type:"series",id:"tt1234567:1:1")
+        precondition(episode.positionKey == PlaybackContent(type:"series",id:"tt1234567:1:1").positionKey)
+        precondition(episode.positionKey != PlaybackContent(type:"series",id:"tt1234567:1:2").positionKey)
+        precondition(episode.positionKey != PlaybackContent(type:"movie",id:"tt1234567").positionKey)
         var requests = PlaybackRequestState()
         let first = requests.generation
         precondition(requests.accepts(first))
