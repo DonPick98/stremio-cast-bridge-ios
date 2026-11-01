@@ -58,17 +58,7 @@ struct CastLiveActivity: Widget {
             if state.duration > 0 {
                 if advancing { ProgressView(timerInterval:start...end,countsDown:false).labelsHidden() }
                 else { ProgressView(value:position,total:state.duration) }
-                if #available(iOS 17.0, *) {
-                    HStack(spacing:3) {
-                        ForEach(0..<11,id:\.self) { step in
-                            let target = state.duration * Double(step) / 10
-                            Button(intent:CastSeekIntent(seconds:target)) {
-                                Capsule().fill(target <= position ? Color.mint : Color.gray.opacity(0.4)).frame(height:12)
-                            }.buttonStyle(.plain).accessibilityLabel("Vai al \(Int(target/60)) minuto")
-                        }
-                    }
-                    Text("Tocca un tratto per saltare nel video").font(.caption2).foregroundStyle(.secondary)
-                }
+
             }
             HStack {
                 if advancing { Text(timerInterval:start...end,countsDown:false).monospacedDigit() }
@@ -90,4 +80,3 @@ struct CastLiveActivity: Widget {
         return Date().timeIntervalSince(context.state.updatedAt) >= 60
     }
 }
-

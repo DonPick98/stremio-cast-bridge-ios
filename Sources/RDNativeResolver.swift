@@ -16,6 +16,7 @@ struct RDTrack: Identifiable, Hashable {
     let language: String
     let label: String
     let codec: String
+    var channels: Int? = nil
     var id: String { key }
 }
 
@@ -94,7 +95,12 @@ struct RDPreparedMedia {
     let directCompatible: Bool
     let videoDescription: String
     let duration: Double
+    let requiresVideoConversion: Bool
     fileprivate let variants: [String: String]
+
+    static func native(audio:[RDTrack],subtitles:[RDTrack],defaultAudio:String,url:URL,contentType:String,direct:Bool,videoConversion:Bool,description:String,duration:Double) -> Self {
+        Self(audio:audio,subtitles:subtitles,defaultAudioKey:defaultAudio,directURL:url,directContentType:contentType,directCompatible:direct,videoDescription:description,duration:duration,requiresVideoConversion:videoConversion,variants:[:])
+    }
 
     var availableQualities: [RDQuality] { RDQuality.allCases.filter { variants[$0.rawValue] != nil } }
 
@@ -163,6 +169,11 @@ struct RDNativeResolver {
 
     func prepare(torrentHash: String, filename: String, videoSize: Int64? = nil,
                  onProgress: @escaping @Sendable (String,Int?) async -> Void = {_,_ in}) async throws -> RDPreparedMedia {
+        let link = try await resolveTorrentLink(torrentHash:torrentHash,filename:filename,videoSize:videoSize,onProgress:onProgress)
+        return try await prepare(directLink:link)
+    }
+    func resolveTorrentLink(torrentHash: String, filename: String, videoSize: Int64? = nil,
+                 onProgress: @escaping @Sendable (String,Int?) async -> Void = {_,_ in}) async throws -> URL {
         guard torrentHash.range(of: #"^[a-fA-F0-9]{40}$"#, options: .regularExpression) != nil,
               !filename.isEmpty, filename.count <= 500 else { throw RDResolverError.invalidFile }
         let cacheKey = account + "|" + torrentHash.lowercased() + "|" + basename(filename) + "|" + String(videoSize ?? 0)
@@ -213,14 +224,14 @@ struct RDNativeResolver {
                   let index = selected.firstIndex(where:{($0["id"] as? NSNumber)?.intValue == targetID}),
                   let link = URL(string:links[index]) else { throw RDResolverError.invalidResponse }
             await onProgress("reading_metadata",100)
-            return try await prepare(directLink:link)
+            return link
         }
         let progress = (info["progress"] as? NSNumber)?.intValue
         throw RDResolverError.fileNotReady(info["status"] as? String ?? "",progress.map{min(100,max(0,$0))})
     }
 
-    /// Accepts an account link from Real-Debrid, not an arbitrary third-party URL.
-    func prepare(directLink: URL) async throws -> RDPreparedMedia {
+    /// Resolves on the phone; metadata and conversion can then remain entirely local.
+    func originalFile(directLink: URL) async throws -> (download:URL,filename:String,id:String) {
         guard isRealDebridLink(directLink) else { throw RDResolverError.invalidStream }
         let unrestricted = try await api("unrestrict/link", form: ["link": directLink.absoluteString])
         guard let id = unrestricted["id"] as? String, validID(id) else { throw RDResolverError.invalidResponse }
@@ -231,6 +242,12 @@ struct RDNativeResolver {
               download.user == nil, download.password == nil, download.port == nil else {
             throw RDResolverError.invalidStream
         }
+        return (download,unrestricted["filename"] as? String ?? download.lastPathComponent,id)
+    }
+    /// Legacy RD conversion metadata, retained for resolver regression coverage.
+    func prepare(directLink: URL) async throws -> RDPreparedMedia {
+        let file = try await originalFile(directLink:directLink)
+        let download = file.download, id = file.id
         async let info = api("streaming/mediaInfos/\(id)")
         async let transcodes = try? api("streaming/transcode/\(id)")
         let (media, converted) = try await (info, transcodes)
@@ -274,7 +291,7 @@ struct RDNativeResolver {
         let height = number(video["height"])
         let fpsValue = video["fps"] ?? video["frame_rate"]
         let fps = number(fpsValue)
-        let ext = ((unrestricted["filename"] as? String ?? download.lastPathComponent) as NSString).pathExtension.lowercased()
+        let ext = (file.filename as NSString).pathExtension.lowercased()
         let type = ext == "mkv" ? "video/x-matroska" : "video/mp4"
         let dimensionsOK = width.map { $0 > 0 && $0 <= 1920 } == true && height.map { $0 > 0 && $0 <= 1080 } == true
         let fpsOK = fps.map { $0 <= 60 } ?? (fpsValue == nil)
@@ -282,7 +299,8 @@ struct RDNativeResolver {
         let resolution = width.flatMap { w in height.map { h in "\(Int(w))×\(Int(h))" } }
         let description = (["Originale", codec.isEmpty ? nil : codec.uppercased(), resolution].compactMap { $0 }).joined(separator: " · ")
         let duration = number(media["duration"] ?? details["duration"] ?? video["duration"]) ?? 0
-        return RDPreparedMedia(audio: audio, subtitles: tracks(details["subtitles"]), defaultAudioKey: defaultAudioKey, directURL: download, directContentType: type, directCompatible: compatible, videoDescription: description, duration: duration, variants: apple)
+        let videoNeedsConversion = !["h264","avc","avc1"].contains(codec) || !dimensionsOK || !fpsOK
+        return RDPreparedMedia(audio: audio, subtitles: tracks(details["subtitles"]), defaultAudioKey: defaultAudioKey, directURL: download, directContentType: type, directCompatible: compatible, videoDescription: description, duration: duration, requiresVideoConversion:videoNeedsConversion, variants: apple)
     }
 
     private func api(_ path: String, form: [String: String]? = nil) async throws -> [String: Any] {

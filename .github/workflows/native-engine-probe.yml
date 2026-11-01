@@ -1,0 +1,91 @@
+name: Validate embedded iOS media engine
+on:
+  push:
+    branches: [native/embedded-media-engine]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Boot simulator while building
+        run: |
+          device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid)})')
+          xcrun simctl boot "$device" || true
+      - name: Install media engines
+        env:
+          LANG: en_US.UTF-8
+        run: pod install --repo-update
+      - name: Prepare synthetic codec matrix
+        run: |
+          command -v ffmpeg || brew install ffmpeg
+          node Tests/make-codec-matrix.mjs "$RUNNER_TEMP/codec-matrix"
+      - name: Build simulator application
+        run: |
+          xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES CAST_ENGINE_VALIDATION=CAST_ENGINE_TESTING -jobs 1 -derivedDataPath "$RUNNER_TEMP/native-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Test stream boundary and resolver regressions
+        run: |
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
+          "$RUNNER_TEMP/local-stream-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
+          "$RUNNER_TEMP/output-channel-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
+          "$RUNNER_TEMP/resolver-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
+          "$RUNNER_TEMP/caption-timeline-tests"
+      - name: Exercise native AC3 to AAC conversion
+        run: |
+          set -euo pipefail
+          device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone"));if(!a)process.exit(1);process.stdout.write(a.udid)})')
+          xcrun simctl boot "$device" || true
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" "$RUNNER_TEMP/native-engine/Build/Products/Release-iphonesimulator/CastRemote.app"
+          data=$(xcrun simctl get_app_container "$device" app.example.castbridge data)
+          mkdir -p "$data/Documents"
+          cp Tests/CodecSamples/h264-ac3.mkv "$data/Documents/"
+          cp -R "$RUNNER_TEMP/codec-matrix" "$data/Documents/CodecSamples"
+          SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch --stdout="$data/Documents/stdio.log" --stderr="$data/Documents/stdio-error.log" "$device" app.example.castbridge
+          mkdir -p native-engine-report
+          background_tested=0
+          for i in $(seq 1 360); do
+            if test "$background_tested" -eq 0 && test -f "$data/Documents/background-ready.json"; then
+              background_tested=1
+              node Tests/read-background-probe.mjs "$data/Documents/background-ready.json" "$data/Documents/background-network.json" &
+              probe_reader=$!
+              xcrun simctl openurl "$device" 'https://example.com/'
+              wait "$probe_reader"
+            fi
+            if test -f "$data/Documents/engine-validation.json"; then
+              cp "$data/Documents/engine-validation.json" native-engine-report/
+              test ! -f "$data/Documents/converted.mp4" || cp "$data/Documents/converted.mp4" native-engine-report/
+              find "$data/Documents" -name 'gateway-*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'matrix-*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'repair-*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'stdio*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'background-*.json' -exec cp '{}' native-engine-report/ \;
+              if test -f "$data/Documents/matrix-embedded_text.mp4"; then ffmpeg -hide_banner -loglevel error -ss 0.5 -i "$data/Documents/matrix-embedded_text.mp4" -frames:v 1 native-engine-report/subtitle-frame.png; fi
+              cat native-engine-report/engine-validation.json
+              tail -n 50 "$data/Documents/stdio.log"
+              node Tests/verify-decoded-media.mjs native-engine-report Tests/CodecSamples/h264-ac3.mkv
+              node -e 'const r=require("./native-engine-report/engine-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
+              exit 0
+            fi
+            sleep 1
+          done
+          find "$data/Documents" -name 'gateway-*' -exec cp '{}' native-engine-report/ \;
+          find "$data/Documents" -name 'matrix-*' -exec cp '{}' native-engine-report/ \;
+          find "$data/Documents" -name 'repair-*' -exec cp '{}' native-engine-report/ \;
+          find "$data/Documents" -name 'stdio*' -exec cp '{}' native-engine-report/ \;
+          test ! -f "$data/Documents/stdio.log" || tail -n 80 "$data/Documents/stdio.log"
+          xcrun simctl spawn "$device" log show --last 2m --style compact --predicate 'process == "CastRemote"' | tail -n 100
+          exit 1
+      - name: Upload native engine evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: embedded-engine-evidence
+          path: native-engine-report
+          if-no-files-found: ignore

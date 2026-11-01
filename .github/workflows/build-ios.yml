@@ -2,7 +2,7 @@ name: Build unsigned iOS app
 
 on:
   push:
-    branches: [main]
+    branches: [main, native/embedded-media-engine]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v6
 
-      - name: Install Cast SDK
+      - name: Install Cast and embedded media engines
         env:
           LANG: en_US.UTF-8
         run: pod install --repo-update
@@ -25,12 +25,20 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/playback-preferences-tests"
+          "$RUNNER_TEMP/playback-preferences-tests"
           swiftc -parse-as-library Sources/SubtitleAppearance.swift CastRemote/BridgeClient.swift Tests/HandoffTests.swift -o "$RUNNER_TEMP/handoff-tests"
           "$RUNNER_TEMP/handoff-tests"
           swiftc -parse-as-library Sources/CastWire.swift Sources/SubtitleAppearance.swift Tests/ControlPreferencesTests.swift -o "$RUNNER_TEMP/control-tests"
           "$RUNNER_TEMP/control-tests"
           swiftc -parse-as-library Sources/RDStreamProbe.swift Tests/StreamProbeTests.swift -o "$RUNNER_TEMP/stream-probe-tests"
           "$RUNNER_TEMP/stream-probe-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
+          "$RUNNER_TEMP/local-stream-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
+          "$RUNNER_TEMP/output-channel-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
+          "$RUNNER_TEMP/caption-timeline-tests"
 
       - name: Test embedded subtitles and hosting service
         run: |
@@ -59,6 +67,12 @@ jobs:
           app="$RUNNER_TEMP/castremote-build/Build/Products/Release-iphoneos/CastRemote.app"
           test -d "$app"
           test -d "$app/PlugIns/CastLiveActivity.appex"
+          test -f "$app/LGPL-2.1.txt"
+          test -f "$app/LGPL-3.0.txt"
+          test -f "$app/GPL-3.0.txt"
+          test -f "$app/Frameworks/ffmpegkit.framework/ffmpegkit"
+          test -f "$app/Assets.car"
+          node -e 'const fs=require("fs");const b=fs.readFileSync(process.argv[1]);if(b.includes(Buffer.from("CAST_ENGINE_SELFTEST")))throw new Error("Validation code found in production app")' "$app/CastRemote"
           mkdir -p "$RUNNER_TEMP/castremote-package/Payload"
           ditto "$app" "$RUNNER_TEMP/castremote-package/Payload/CastRemote.app"
           cd "$RUNNER_TEMP/castremote-package"

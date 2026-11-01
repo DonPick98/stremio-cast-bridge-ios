@@ -60,7 +60,7 @@ struct SubtitleAppearanceView: View {
                 }
                 Section {
                     Label("Salvate automaticamente",systemImage:"checkmark.circle").font(.subheadline).foregroundStyle(.secondary)
-                    Text("Funziona con i sottotitoli esterni. Il testo già impresso nell’immagine non può essere modificato.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Le preferenze si applicano ai sottotitoli esterni e al testo elaborato sull’iPhone. I sottotitoli grafici e il testo già impresso possono mantenere l’aspetto del file.").font(.footnote).foregroundStyle(.secondary)
                 }
             }.navigationTitle("Sottotitoli").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Fine") { dismiss() } } }
@@ -74,4 +74,3 @@ struct SubtitleAppearanceView: View {
         switch value { case "yellow": return "Giallo"; case "cyan": return "Ciano"; case "green": return "Verde"; default: return "Bianco" }
     }
 }
-

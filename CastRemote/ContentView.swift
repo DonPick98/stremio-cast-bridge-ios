@@ -25,7 +25,7 @@ struct ContentView: View {
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
                     else { emptyState }
-                    if cast.connected && (cast.hasLoaded || cast.duration > 0 || cast.playing) { playerCard }
+                    if cast.hasLoaded || cast.playing { playerCard }
                     if let media = cast.prepared {
                         optionsCard(media)
                         if !cast.hasLoaded { playButton }
@@ -44,13 +44,14 @@ struct ContentView: View {
                 Text("Cast Bridge").font(.title2.weight(.semibold)).tracking(-0.6)
                 HStack(spacing:6) {
                     Circle().fill(cast.connected ? CastPalette.accent : Color.gray).frame(width:5,height:5)
-                    Text(cast.connected ? "TV collegata" : "Collega una TV").font(.caption).foregroundStyle(.secondary)
+                    Text(cast.connected ? cast.deviceName : cast.hasLoaded ? "Ricollego i controlli…" : "Collega una TV").font(.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer()
             Menu {
                 Button { showSubtitleAppearance = true } label: { Label("Aspetto sottotitoli",systemImage:"textformat.size") }
                 Button { cast.showSetup = true } label: { Label("Configura sorgenti",systemImage:"link") }
+                Link("Componenti open source",destination:URL(string:"https://github.com/DonPick98/stremio-cast-bridge-ios/blob/main/THIRD_PARTY_NOTICES.md")!)
             } label: {
                 Image(systemName:"slider.horizontal.3").font(.system(size:17)).frame(width:44,height:44).background(.white.opacity(0.045),in:Circle())
             }.foregroundStyle(.white).accessibilityLabel("Impostazioni")
@@ -94,7 +95,7 @@ struct ContentView: View {
                 Slider(value:Binding(get:{ min(max(0,cast.position),max(1,cast.duration)) },set:{ cast.position = $0 }),in:0...max(1,cast.duration),onEditingChanged:{ editing in
                     cast.userSeeking = editing
                     if !editing { cast.seek(to:cast.position) }
-                }).disabled(cast.duration <= 0)
+                }).disabled(cast.duration <= 0 || cast.loading)
                 HStack { Text(playbackTime(cast.position)); Spacer(); Text(playbackTime(cast.duration)) }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             HStack(spacing:36) {
@@ -116,7 +117,11 @@ struct ContentView: View {
             if cast.deviceMuted {
                 Button { cast.unmuteDevice() } label: { Label("Riattiva audio Chromecast",systemImage:"speaker.slash") }.font(.subheadline)
             }
-            Button("Controlli TV") { cast.openControls() }.font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            HStack {
+                if !cast.localProcessing { Button("Controlli TV") { cast.openControls() } }
+                Spacer()
+                Button("Interrompi") { cast.stopPlayback() }
+            }.font(.caption.weight(.medium)).foregroundStyle(.secondary)
         }.castCard()
     }
     private func optionsCard(_ media: RDPreparedMedia) -> some View {
@@ -124,10 +129,8 @@ struct ContentView: View {
             Button { showTrackOptions = true } label: { optionRow(icon:"waveform",title:"Audio e sottotitoli",detail:audioSummary(media) + " · " + subtitleSummary(media)) }.buttonStyle(.plain)
             Divider().padding(.leading,38)
             Button { showSubtitleAppearance = true } label: { optionRow(icon:"textformat.size",title:"Aspetto sottotitoli",detail:"Anteprima e preferenze") }.buttonStyle(.plain)
-            if !cast.compatibilityMode, let notice = media.directAudioNotice {
-                Divider()
-                Label(notice,systemImage:"speaker.badge.exclamationmark").font(.footnote).foregroundStyle(.orange).fixedSize(horizontal:false,vertical:true).padding(.vertical,16)
-            }
+            Divider()
+            Label(cast.processingDetail,systemImage:cast.localProcessing ? "iphone" : "wand.and.stars").font(.footnote).foregroundStyle(.secondary).padding(.vertical,14).frame(maxWidth:.infinity,alignment:.leading)
         }.padding(.horizontal,20).background(CastPalette.surface,in:RoundedRectangle(cornerRadius:24))
     }
     private var playButton: some View {
@@ -159,7 +162,7 @@ struct ContentView: View {
     }
     private func sectionLabel(_ title: String) -> some View { Text(title.uppercased()).font(.system(size:10,weight:.semibold)).tracking(1.3).foregroundStyle(.secondary) }
     private func audioSummary(_ media: RDPreparedMedia) -> String {
-        guard cast.compatibilityMode, let track = media.audio.first(where:{$0.key == cast.selectedAudio}) else {
+        guard let track = media.audio.first(where:{$0.key == cast.selectedAudio}) else {
             return media.audioCodecsDescription.isEmpty ? "Audio del file" : "Audio del file · " + media.audioCodecsDescription
         }
         return trackLanguage(track)
@@ -179,63 +182,43 @@ private struct TrackOptionsView: View {
         NavigationStack {
             Form {
                 if let media = cast.prepared {
-                    if !cast.compatibilityMode, let notice = media.directAudioNotice {
-                        Section { Label(notice,systemImage:"speaker.badge.exclamationmark").font(.subheadline).foregroundStyle(.orange) }
-                    }
                     Section {
-                        Picker("Audio",selection:$cast.selectedAudio) { ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) } }
-                            .onChange(of:cast.selectedAudio) { value in
-                                if !cast.compatibilityMode && value != media.defaultAudioKey {
-                                    if !media.availableQualities.isEmpty { cast.compatibilityMode = true }
-                                    else { cast.selectedAudio = media.defaultAudioKey; cast.message = "Questa traccia richiede una conversione non disponibile per il file." }
-                                }
-                            }
-                    } header: { Text("Audio") } footer: {
-                        if media.audio.count > 1 && !cast.compatibilityMode { Text("Un audio alternativo richiede la modalità compatibilità.") }
-                    }
+                        Picker("Audio",selection:$cast.selectedAudio) { ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) } }.disabled(cast.loading).onChange(of:cast.selectedAudio) { _ in cast.tracksChanged(audio:true) }
+                    } header: { Text("Audio") }
                     Section("Sottotitoli") {
                         Picker("Traccia",selection:$cast.selectedSubtitle) {
                             Text("Disattivati").tag("none")
                             if cast.externalSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · esterni").tag("external") }
                             if cast.embeddedSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · dal file").tag("embedded") }
-                            ForEach(media.subtitles) { Text(trackLabel($0,in:media.subtitles) + " · conversione").tag($0.key) }
-                        }.onChange(of:cast.selectedSubtitle) { value in
-                            if !["none","external","embedded"].contains(value) && !cast.compatibilityMode {
-                                if !media.availableQualities.isEmpty { cast.compatibilityMode = true }
-                                else { cast.selectedSubtitle = "none"; cast.message = "Per questa traccia prova l’estrazione: la conversione non è disponibile." }
-                            }
-                        }
+                            ForEach(media.subtitles) { Text(trackLabel($0,in:media.subtitles) + " · nel file").tag($0.key) }
+                        }.disabled(cast.loading).onChange(of:cast.selectedSubtitle) { _ in cast.tracksChanged(audio:false) }
                         Button { showAppearance = true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
-                        if media.subtitles.isEmpty { Text("Nessuna traccia incorporata segnalata dalla sorgente.").font(.footnote).foregroundStyle(.secondary) }
+                        if media.subtitles.isEmpty { Text("Nessuna traccia incorporata rilevata.").font(.footnote).foregroundStyle(.secondary) }
                     }
                     Section {
-                        Toggle("Modalità compatibilità",isOn:$cast.compatibilityMode).disabled(media.availableQualities.isEmpty || cast.loading)
-                            .onChange(of:cast.compatibilityMode) { enabled in
-                                if !enabled { cast.selectedAudio = media.defaultAudioKey; if !["external","embedded"].contains(cast.selectedSubtitle) { cast.selectedSubtitle = "none" } }
-                            }
-                        if cast.compatibilityMode { Picker("Qualità",selection:$cast.selectedQuality) { ForEach(media.availableQualities,id:\.self) { Text(qualityName($0)).tag($0) } } }
-                        if !cast.compatibilityMode && !media.directCompatible { Text("Formato originale da verificare sulla TV. Se non parte, prova la compatibilità.").font(.footnote).foregroundStyle(.secondary) }
-                    } header: { Text("Riproduzione") } footer: { Text(cast.compatibilityMode ? "Real-Debrid converte il flusso per le tracce scelte; può richiedere più tempo." : "Il file viene riprodotto alla qualità della sorgente, senza conversione.") }
-                    Section {
-                        Button("Estrai sottotitoli dal file") { cast.extractEmbeddedSubtitles() }.disabled(cast.busy || cast.loading)
-                        if let file = cast.subtitleFile { ShareLink("Esporta sottotitoli",item:file) }
-                    } header: { Text("Altre opzioni") } footer: { Text("L’estrazione dipende dal file. Alcuni stili possono andare persi: verifica che il testo sia completo.") }
+                        Label("Formato automatico",systemImage:"wand.and.stars")
+                        Text(cast.processingDetail).font(.footnote).foregroundStyle(.secondary)
+                    } header: { Text("Riproduzione") } footer: { Text("L’app adatta audio, contenitore e video quando necessario. Durante l’adattamento l’iPhone deve restare collegato alla rete Wi-Fi della TV.") }
                     Section {
                         DisclosureGroup("Dettagli sorgente") {
                             Text(cast.selectedSource?.displayName ?? "Sorgente").font(.caption).textSelection(.enabled)
                             Text(media.videoDescription).font(.caption).foregroundStyle(.secondary)
                             if let source = cast.selectedSource { LabeledContent("Dimensione",value:source.fileSizeLabel) }
+                            Button("Esporta sottotitoli dal file") { cast.extractEmbeddedSubtitles() }.disabled(cast.busy || cast.loading)
+                            if let file = cast.subtitleFile { ShareLink("Condividi sottotitoli",item:file) }
                         }
                     }
                 }
             }.navigationTitle("Audio e sottotitoli").navigationBarTitleDisplayMode(.inline)
                 .safeAreaInset(edge:.bottom) {
+                    if !cast.hasLoaded {
                     Button { cast.load(preservePosition:cast.hasLoaded); dismiss() } label: {
                         Text(cast.loading ? "Verifica e caricamento…" : cast.hasLoaded ? "Applica modifiche" : "Riproduci sulla TV").font(.subheadline.weight(.semibold)).frame(maxWidth:.infinity).padding(.vertical,15)
                     }.buttonStyle(.plain).foregroundStyle(.black).background(.white,in:RoundedRectangle(cornerRadius:16))
                         .opacity(!cast.connected || cast.busy || cast.loading ? 0.45 : 1)
                         .disabled(!cast.connected || cast.busy || cast.loading || cast.selectedAudio.isEmpty)
                         .padding(.horizontal,20).padding(.vertical,12).background(.ultraThinMaterial)
+                    }
                 }
                 .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Chiudi") { dismiss() } } }
         }.preferredColorScheme(.dark).tint(CastPalette.accent).sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
@@ -283,11 +266,11 @@ private extension View {
             .overlay(RoundedRectangle(cornerRadius:24).strokeBorder(.white.opacity(0.035),lineWidth:1))
     }
 }
-private func sourceTitle(_ source: AddonStream) -> String { source.filename ?? source.descriptionText.components(separatedBy:.newlines).first(where:{!$0.isEmpty}) ?? source.name ?? "Sorgente" }
-private func trackLanguage(_ track: RDTrack) -> String { track.language == "und" ? "Lingua non indicata" : (Locale(identifier:"it").localizedString(forLanguageCode:track.language) ?? track.label).capitalized }
+private func sourceTitle(_ source: AddonStream) -> String { MediaDisplayTitle.clean(source.filename ?? source.descriptionText.components(separatedBy:.newlines).first(where:{!$0.isEmpty}) ?? source.name ?? "Sorgente") }
+private func trackLanguage(_ track: RDTrack) -> String { track.language == "und" ? "Lingua non indicata" : (Locale(identifier:"it").localizedString(forLanguageCode:PlaybackPreferences.language(track.language)) ?? track.label).capitalized }
 private func trackLabel(_ track: RDTrack, in tracks: [RDTrack]) -> String {
-    let codec = track.codec.isEmpty ? "" : " · " + track.codec.uppercased()
-    let duplicates = tracks.filter{$0.language == track.language && $0.codec == track.codec}
+    let codec = track.channels.map { $0 > 2 ? " · Surround" : $0 == 1 ? " · Mono" : " · Stereo" } ?? ""
+    let duplicates = tracks.filter{PlaybackPreferences.language($0.language) == PlaybackPreferences.language(track.language) && $0.channels == track.channels}
     let index = duplicates.count > 1 ? " · Traccia \((tracks.firstIndex(of:track) ?? 0)+1)" : ""
     return trackLanguage(track) + codec + index
 }

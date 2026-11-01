@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let criteria = GCKDiscoveryCriteria(applicationID: kGCKDefaultMediaReceiverApplicationID)
         let options = GCKCastOptions(discoveryCriteria: criteria)
+        options.suspendSessionsWhenBackgrounded = false
         GCKCastContext.setSharedInstanceWith(options)
         GCKCastContext.sharedInstance().useDefaultExpandedMediaControls = true
         return true
@@ -19,7 +20,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         WindowGroup {
             ContentView().environmentObject(controller)
                 .onOpenURL { controller.open($0) }
-                .onAppear { controller.refreshConnection() }
+                .onAppear {
+                    controller.refreshConnection()
+#if CAST_ENGINE_TESTING
+                    if ProcessInfo.processInfo.environment["CAST_ENGINE_SELFTEST"] == "1" { Task { await NativeEngineValidation.run() } }
+#endif
+                }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active { controller.refreshConnection() }
                     else { controller.savePlaybackPosition() }
@@ -36,4 +42,3 @@ struct CastButton: UIViewRepresentable {
     }
     func updateUIView(_ uiView: GCKUICastButton, context: Context) {}
 }
-
