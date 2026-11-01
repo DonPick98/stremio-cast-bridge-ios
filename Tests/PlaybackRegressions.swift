@@ -12,6 +12,13 @@ import Foundation
         requests.invalidate()
         precondition(!requests.accepts(first),"A late error from an old source must be ignored")
         precondition(requests.accepts(requests.generation))
+        var intent = PlaybackIntent()
+        intent.request(false); intent.request(true)
+        precondition(!intent.accepts(false),"A late PAUSED must not replace the latest PLAY")
+        precondition(intent.pending == true)
+        precondition(intent.accepts(true) && intent.pending == nil)
+        intent.request(false); precondition(!intent.accepts(true))
+        precondition(intent.accepts(false))
 
         var timeline = PlaybackTimeline()
         timeline.begin(at:600)
@@ -30,6 +37,14 @@ import Foundation
         timeline.begin(at:25); timeline.begin(at:.nan)
         precondition(timeline.target == 25)
         timeline.reset(); precondition(timeline.target == nil)
+        timeline.begin(at:100); timeline.queue(at:200); timeline.queue(at:450)
+        precondition(!timeline.observe(0,ready:true))
+        precondition(timeline.target == 100 && timeline.queuedTarget == 450)
+        precondition(timeline.observe(100,ready:true))
+        precondition(timeline.consumeQueued() == 450)
+        timeline.begin(at:450); precondition(!timeline.observe(100,ready:true))
+        precondition(timeline.observe(450,ready:true))
+        timeline.queue(at:30); timeline.reset(); precondition(timeline.queuedTarget == nil)
 
         for rate in [24000.0/1001,24,25,30000.0/1001,30] {
             let video = VideoFormat(codec:"h264",width:1920,height:1080,frameRate:rate,profile:100,level:41)

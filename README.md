@@ -1,10 +1,10 @@
-# Cast Bridge iOS 0.6
+# Cast Bridge iOS 0.6.1
 
 iOS sender for Stremio video sources and Google Cast receivers. The app reads media tracks with MobileVLCKit and chooses direct playback, remuxing or local conversion automatically.
 
-Compatible H.264 video is preserved where possible. Incompatible audio becomes AAC stereo. Video conversion uses H.264 VideoToolbox with VP8/Vorbis fallback, up to 1920x1080 at 30 fps. TrueHD/MLP audio uses the pinned LGPL FFmpegKit backend, connected to VLC over loopback HTTP.
+Compatible H.264 video packets are copied by the pinned LGPL FFmpegKit backend, preserving the original picture and cadence while selecting or converting audio. Incompatible audio becomes AAC stereo. Video conversion uses H.264 VideoToolbox with VP8/Vorbis fallback, within receiver limits such as 1080p/30 or 720p/60. Unsupported audio and nonzero seeks can be normalized before video conversion through a private Matroska loopback stream.
 
-VLC output travels through a bounded anonymous socket into the local HTTP gateway. The same upstream connection is retained from initialization through playback, and natural end of stream waits for the muxer to close its output descriptor.
+FFmpeg remux and VLC conversion output travel through a bounded anonymous socket into the local HTTP gateway. The same upstream connection is retained from initialization through playback, and natural end of stream waits for the muxer to close its output descriptor. Copy-mode pause applies backpressure without closing the connection.
 
 The interface includes source sizes, automatic playback after source selection, remembered audio/subtitle languages and persistent subtitle appearance settings. The iOS system media card is the single playback surface on the Lock Screen and in Control Center, with a draggable timeline and 30-second controls through MPNowPlayingInfoCenter and MPRemoteCommandCenter. Version 0.6.1 closes legacy ActivityKit cards when opened.
 
@@ -20,6 +20,6 @@ Use CastRemote.xcworkspace, scheme CastRemote, Release and iphoneos. CocoaPods p
 
 Production builds must leave CAST_ENGINE_VALIDATION empty. CAST_ENGINE_TESTING enables the synthetic simulator validation only.
 
-The separate validation workflow covers 25 synthetic codec combinations, HTTP gateway output, HTTPS input and continuous network transfer in background. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
+The separate validation workflow covers 25 synthetic codec combinations, five gateway cases, eight resolution/cadence/seek cases and 65 seconds of continuous network transfer in background with pause/resume and cancellation. The copied 1080p test compares every decoded frame with its source. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
 
 See [HANDOFF.md](HANDOFF.md) for technical validation status, [BUILD-WINDOWS.md](BUILD-WINDOWS.md) for build steps and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licenses and upstream sources.

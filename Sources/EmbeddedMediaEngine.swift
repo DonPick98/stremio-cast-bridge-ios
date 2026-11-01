@@ -34,6 +34,8 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var offset: Double = 0
     private(set) var running = false
     private var startedStream = false
+    private var directRemux = false
+    private var producerMonitor: Task<Void,Never>?
     var onFailure: (() -> Void)?
 
     static func inspect(_ url: URL) async throws -> RDPreparedMedia {
@@ -114,23 +116,47 @@ enum EmbeddedMediaError: LocalizedError {
         try await channel.start(port:port,path:bridge.path,type:contentType)
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
+        if videoMode == .copy && subtitleID == nil {
+            // VLC's H.264 packetizer can drop/reorder B frames on remux. FFmpeg
+            // copies every original packet and normalizes the selected audio.
+            directRemux = true; running = true; producerEnded = false
+            observeLifecycle(); updateBackground()
+            let repair = AudioRepairPipe(); audioRepair = repair
+            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio)
+            producerMonitor = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self, self.running else { return }
+                    if repair.finished {
+                        if repair.failed { self.onFailure?() }
+                        self.producerEnded = true; channel.endWriting(); return
+                    }
+                    try? await Task.sleep(nanoseconds:50_000_000)
+                }
+            }
+            do { try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()}) }
+            catch { stop(); throw EmbeddedMediaError.encoder }
+            try Task.checkCancellation()
+            streamURL = url; startedStream = true
+            return url
+        }
         var producerInput = input
-        if repairAudio {
+        let repairInput = repairAudio || offset > 0
+        if repairInput {
             let repair = AudioRepairPipe(); audioRepair = repair
             producerInput = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
         }
         let media = VLCMedia(url:producerInput)
-        if repairAudio { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
-        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,video:video,access:"fd",target:String(channel.writer))
+        if repairInput { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:video,access:"fd",target:String(channel.writer))
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
         media.addOption(":no-sout-keep")
         media.addOption(":sout-mux-caching=4000")
-        if !repairAudio { media.addOption(":start-time=\(offset)"); media.addOption(":no-input-fast-seek") }
+        if !repairInput { media.addOption(":start-time=\(offset)"); media.addOption(":no-input-fast-seek") }
         media.addOption(":network-caching=1500")
-        if let audioID, !repairAudio { media.addOption(":audio-track-id=\(audioID)") }
+        if let audioID, !repairInput { media.addOption(":audio-track-id=\(audioID)") }
         if let subtitleID {
-            media.addOption(repairAudio ? ":sub-track=0" : ":sub-track-id=\(subtitleID)")
+            media.addOption(repairInput ? ":sub-track=0" : ":sub-track-id=\(subtitleID)")
             let font = style.font == "serif" ? "Georgia" : style.font == "mono" ? "Courier New" : "Arial"
             media.addOption(":freetype-font=\(font)")
             media.addOption(":freetype-rel-fontsize=\(Int(18/style.scale))")
@@ -143,7 +169,7 @@ enum EmbeddedMediaError: LocalizedError {
 #if CAST_ENGINE_TESTING
         if selfTest {
             let folder = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
-            NativeEngineValidation.log(player,to:folder.appendingPathComponent("gateway-\(String(describing:videoMode)).log"))
+            NativeEngineValidation.log(player,to:folder.appendingPathComponent("gateway-\(String(describing:videoMode))-\(input.lastPathComponent).log"))
         }
 #endif
         self.player = player
@@ -157,6 +183,17 @@ enum EmbeddedMediaError: LocalizedError {
         NativeEngineValidation.trace("native producer start on socket")
 #endif
         player.delegate = self; player.media = media; player.play()
+        producerMonitor = Task { [weak self,weak player] in
+            while !Task.isCancelled {
+                guard let self, let player, self.player === player else { return }
+                if self.realState(player) == 6 { self.finishProducer(player); return }
+                if self.realState(player) == 7 {
+                    if self.streamURL == nil { self.proxy?.stop() } else { self.onFailure?() }
+                    return
+                }
+                try? await Task.sleep(nanoseconds:100_000_000)
+            }
+        }
         for _ in 0..<1400 {
             try Task.checkCancellation()
             if player.state == .error || audioRepair?.failed == true { stop(); throw EmbeddedMediaError.encoder }
@@ -173,22 +210,26 @@ enum EmbeddedMediaError: LocalizedError {
     }
     func stop() {
         running = false; startedStream = false; onFailure = nil; producerEnded = true
+        producerMonitor?.cancel(); producerMonitor = nil
         let channel = outputChannel; outputChannel = nil
         channel?.stop()
         backgroundPlayer?.stop(); backgroundPlayer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
+#if CAST_ENGINE_TESTING
+        testingStoppedRepair = audioRepair
+#endif
         audioRepair?.stop(); audioRepair = nil
         let old = player; player = nil; old?.delegate = nil
         if let old {
 #if CAST_ENGINE_TESTING
-            testingStopCompleted = false
+            testingVideoStopped = false
 #endif
             DispatchQueue.global(qos:.utility).async { [weak self] in
                 old.stop()
                 withExtendedLifetime(channel) {}
 #if CAST_ENGINE_TESTING
-                Task { @MainActor [weak self] in self?.testingStopCompleted = true }
+                Task { @MainActor [weak self] in self?.testingVideoStopped = true }
 #endif
             }
         }
@@ -198,27 +239,41 @@ enum EmbeddedMediaError: LocalizedError {
         let state = origin.state
         Task { @MainActor [weak self, weak origin] in
             guard let self, let origin, self.player === origin else { return }
-            if state == .ended && !self.producerEnded {
-                self.producerEnded = true
-                // libVLC retains the sout muxer after input EOF. Stop the player
-                // while the output is still writable so its trailer is flushed.
-                // Only then close our descriptor and let the socket deliver EOF.
-                self.player = nil
-                let channel = self.outputChannel
-                DispatchQueue.global(qos:.utility).async {
-                    origin.stop()
-                    channel?.endWriting()
-                }
+            if state == .ended || self.realState(origin) == 6 { self.finishProducer(origin) }
+            else if self.running && state == .error {
+                if self.streamURL == nil { self.proxy?.stop() } else { self.onFailure?() }
             }
-            else if self.running && state == .error { self.onFailure?() }
         }
     }
     func setReceiverPaused(_ paused: Bool) {
-        guard running, !producerEnded, let player else { return }
+        guard running else { return }
+        if directRemux { proxy?.setPaused(paused); return }
+        guard !producerEnded, let player else { return }
         if paused { player.pause() }
         // Pause is asynchronous and may still be queued under backpressure.
         // Always enqueue PLAYING, even if isPlaying has not changed yet.
         else { player.play() }
+    }
+    private func finishProducer(_ origin:VLCMediaPlayer) {
+        guard !producerEnded, player === origin else { return }
+        producerEnded = true; producerMonitor?.cancel(); producerMonitor = nil
+        player = nil
+        let channel = outputChannel
+        DispatchQueue.global(qos:.utility).async { origin.stop(); channel?.endWriting() }
+    }
+    private typealias StateFunction = @convention(c) (UnsafeMutableRawPointer) -> Int32
+    private typealias PlayerPointer = @convention(c) (AnyObject,Selector) -> UnsafeMutableRawPointer?
+    private static let stateFunction: StateFunction? = {
+        guard let pointer = dlsym(UnsafeMutableRawPointer(bitPattern:-2),"libvlc_media_player_get_state") else { return nil }
+        return unsafeBitCast(pointer,to:StateFunction.self)
+    }()
+    // VLCKit's public state cache can be overwritten by ES-added notifications.
+    // The pinned library exposes this pointer; fall back safely if unavailable.
+    private func realState(_ player:VLCMediaPlayer) -> Int32? {
+        let selector = NSSelectorFromString("libVLCMediaPlayer")
+        guard let function = Self.stateFunction, player.responds(to:selector), let method = player.method(for:selector),
+              let pointer = unsafeBitCast(method,to:PlayerPointer.self)(player,selector) else { return nil }
+        return function(pointer)
     }
     private func observeLifecycle() {
         for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
@@ -249,7 +304,10 @@ enum EmbeddedMediaError: LocalizedError {
     }
     func refreshBackground() { updateBackground() }
 #if CAST_ENGINE_TESTING
-    private(set) var testingStopCompleted = true
+    private var testingVideoStopped = true
+    private var testingStoppedRepair: AudioRepairPipe?
+    var testingStopCompleted: Bool { testingVideoStopped && (testingStoppedRepair?.testingStopCompleted ?? true) }
+    func testingDeliveredBytes() async -> Int { await proxy?.testingDeliveredBytes() ?? 0 }
     var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
     var testingProducerPlaying: Bool { player?.isPlaying == true }
     var testingProducerState: String { player.map { String($0.state.rawValue) } ?? "nil" }

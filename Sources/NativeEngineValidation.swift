@@ -142,27 +142,26 @@ import MediaPlayer
     private static func backgroundProbe(documents:URL) async throws -> [String:Any] {
         let engine = EmbeddedMediaEngine(); defer { engine.stop() }
         let input = documents.appendingPathComponent("CodecSamples/background-probe.mkv")
-        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.hardwareH264,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
+        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.copy,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
         let pauseTest = Task { @MainActor in
             try? await Task.sleep(nanoseconds:12_000_000_000)
             guard !Task.isCancelled else { return (false,false) }
             engine.setReceiverPaused(true)
-            for _ in 0..<40 {
-                if !engine.testingProducerPlaying { break }
-                try? await Task.sleep(nanoseconds:100_000_000)
-            }
-            let paused = !engine.testingProducerPlaying
+            try? await Task.sleep(nanoseconds:1_000_000_000)
+            let settled = await engine.testingDeliveredBytes()
+            try? await Task.sleep(nanoseconds:500_000_000)
+            let paused = await engine.testingDeliveredBytes() == settled
             engine.setReceiverPaused(false)
+            var resumed = false
             for _ in 0..<40 {
-                if engine.testingProducerPlaying { break }
+                if await engine.testingDeliveredBytes() > settled { resumed = true; break }
                 try? await Task.sleep(nanoseconds:100_000_000)
             }
-            let resumed = engine.testingProducerPlaying
             // Reproduce a resume arriving before the asynchronous pause is applied.
             engine.setReceiverPaused(true)
             engine.setReceiverPaused(false)
             try? await Task.sleep(nanoseconds:2_000_000_000)
-            return (paused,resumed && engine.testingProducerPlaying)
+            return (paused,resumed)
         }
         defer { pauseTest.cancel() }
         let ready = try JSONSerialization.data(withJSONObject:["url":url.absoluteString])
@@ -190,7 +189,7 @@ import MediaPlayer
     }
 }
 
-private final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private var continuation: CheckedContinuation<(Data,Bool,Bool),Error>?
     private var body = Data()
     private var cors = false

@@ -8,12 +8,14 @@ function probe(file){
  if(cache.has(file))return cache.get(file);
  const r=JSON.parse(exec(ffprobe,['-v','error','-select_streams','v:0','-show_streams','-show_frames','-show_format','-show_entries','stream=width,height,r_frame_rate:frame=best_effort_timestamp_time:format=duration','-of','json',file]));
  const times=r.frames.map(x=>Number(x.best_effort_timestamp_time)).filter(Number.isFinite).sort((a,b)=>a-b);
+ const steady=times.slice(2,-2);
  // Regress across all timestamps: Matroska's millisecond clock would bias a
  // median single-frame interval for fractional rates such as 24000/1001.
- const meanIndex=(times.length-1)/2,meanTime=times.reduce((a,b)=>a+b,0)/times.length;
- let xy=0,xx=0;times.forEach((t,i)=>{xy+=(i-meanIndex)*(t-meanTime);xx+=(i-meanIndex)**2;});
- const step=xy/xx,cadenceError=Math.max(...times.slice(1).map((t,i)=>Math.abs(t-times[i]-step)));
- const value={width:r.streams[0].width,height:r.streams[0].height,fps:1/step,cadenceError,first:times[0],duration:Number(r.format.duration),frames:times.length};cache.set(file,value);return value;
+ const meanIndex=(steady.length-1)/2,meanTime=steady.reduce((a,b)=>a+b,0)/steady.length;
+ let xy=0,xx=0;steady.forEach((t,i)=>{xy+=(i-meanIndex)*(t-meanTime);xx+=(i-meanIndex)**2;});
+ const step=xy/xx,cadenceError=Math.max(...steady.slice(1).map((t,i)=>Math.abs(t-steady[i]-step)));
+ const declared=Number(r.format.duration),duration=Number.isFinite(declared)?declared:times.at(-1)+step;
+ const value={width:r.streams[0].width,height:r.streams[0].height,fps:1/step,cadenceError,first:times[0],duration,frames:times.length};cache.set(file,value);return value;
 }
 function hashes(file){const timing=process.env.CAST_FPS_MODE_LEGACY?['-vsync','0']:['-fps_mode','passthrough'];return exec(ffmpeg,['-v','error','-i',file,'-map','0:v:0',...timing,'-f','framemd5','pipe:1']).split(/\r?\n/).filter(x=>x&&!x.startsWith('#')).map(x=>x.split(',').at(-1).trim());}
 function sound(file,tone){

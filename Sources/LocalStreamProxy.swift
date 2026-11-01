@@ -120,6 +120,8 @@ final class LocalStreamProxy: @unchecked Sendable {
     private var pairs: [UUID:Pair] = [:]
     private var stopped = false
     private var producerEnded = false
+    private var paused = false
+    private var deliveredBytes = 0
     private func trace(_ message:String) {
 #if CAST_ENGINE_TESTING
         FileHandle.standardOutput.write(Data("Cast proxy \(Date().timeIntervalSince1970): \(message)\n".utf8))
@@ -140,6 +142,7 @@ final class LocalStreamProxy: @unchecked Sendable {
         var producer: NWConnection?
         var waiting = false
         var sending = false
+        var streaming = false
         var lastData = Date()
         init(_ client: NWConnection) { self.client = client }
     }
@@ -173,6 +176,17 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
     func stop() { queue.async { self.finish() } }
+    func setPaused(_ paused:Bool) {
+        queue.async {
+            self.paused = paused
+            if !paused {
+                for (id,pair) in self.pairs where pair.streaming && !pair.waiting && !pair.sending { self.pipe(id) }
+            }
+        }
+    }
+#if CAST_ENGINE_TESTING
+    func testingDeliveredBytes() async -> Int { await withCheckedContinuation { c in queue.async { c.resume(returning:self.deliveredBytes) } } }
+#endif
     /// Keep the validated initialization and first media bytes on the very
     /// connection that the receiver will consume, rather than probing and
     /// discarding the beginning of a short video.
@@ -379,6 +393,8 @@ final class LocalStreamProxy: @unchecked Sendable {
     }
     private func pipe(_ id: UUID) {
         guard let pair = pairs[id], let upstream = pair.producer else { return }
+        pair.streaming = true
+        guard !paused else { return }
         pair.waiting = true
         upstream.receive(minimumIncompleteLength:1,maximumLength:65_536) { [weak self] data,_,complete,error in
             guard let self, let pair = self.pairs[id] else { return }
@@ -386,6 +402,7 @@ final class LocalStreamProxy: @unchecked Sendable {
             if error != nil { self.close(id); return }
             pair.client.send(content:data,contentContext:complete ? .finalMessage : .defaultMessage,isComplete:complete,completion:.contentProcessed { error in
                 pair.sending = false
+                if error == nil { self.deliveredBytes += data?.count ?? 0 }
                 if error != nil || complete { self.close(id) } else { self.pipe(id) }
             })
         }

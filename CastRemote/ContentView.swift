@@ -95,7 +95,7 @@ struct ContentView: View {
                 Slider(value:Binding(get:{ min(max(0,cast.position),max(1,cast.duration)) },set:{ cast.position = $0 }),in:0...max(1,cast.duration),onEditingChanged:{ editing in
                     cast.userSeeking = editing
                     if !editing { cast.seek(to:cast.position) }
-                }).disabled(cast.duration <= 0 || cast.loading)
+                }).disabled(cast.duration <= 0)
                 HStack { Text(playbackTime(cast.position)); Spacer(); Text(playbackTime(cast.duration)) }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             HStack(spacing:36) {
@@ -105,7 +105,7 @@ struct ContentView: View {
                         .frame(width:70,height:70).background(Color.white,in:Circle())
                 }.accessibilityLabel(cast.playing ? "Pausa" : "Riprendi")
                 Button { cast.seek(to:cast.position+30) } label: { Image(systemName:"goforward.30").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Avanti di 30 secondi")
-            }.foregroundStyle(.white).buttonStyle(.plain).disabled(cast.loading)
+            }.foregroundStyle(.white).buttonStyle(.plain)
             HStack(spacing:12) {
                 Image(systemName:"speaker.fill").font(.caption2).foregroundStyle(.secondary)
                 Slider(value:$cast.volume,in:0...1,onEditingChanged:{ editing in

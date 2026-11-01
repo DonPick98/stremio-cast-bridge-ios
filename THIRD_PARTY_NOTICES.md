@@ -16,7 +16,7 @@ Cast Bridge is independent of VideoLAN. It does not redistribute VideoLAN brandi
 
 ## FFmpegKit Extended
 
-Selected TrueHD/MLP audio is decoded and converted to AAC by the LGPL base build of FFmpegKit Extended, because the pinned VideoLAN iOS distribution omits that decoder. Other selected video/subtitle packets are copied unchanged through a private loopback HTTP stream to the VLC pipeline.
+The LGPL base build of FFmpegKit Extended copies compatible original video packets into fragmented MP4 and selects or converts audio, including TrueHD/MLP omitted from the pinned VideoLAN distribution. Output uses a bounded local socket. Video conversion can receive selected video/audio/subtitle packets through a private Matroska loopback stream. All processing runs on the phone.
 
 - Copyright Akash Patel, FFmpeg authors and contributors.
 - License: LGPL 3.0 or later. Included texts: ThirdPartyLicenses/LGPL-3.0.txt and GPL-3.0.txt (referenced by LGPL).
