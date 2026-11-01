@@ -94,8 +94,7 @@ import Darwin
             for _ in 0..<150 {
                 try Task.checkCancellation()
                 if failed { throw EmbeddedMediaError.encoder }
-                var available:Int32 = 0
-                if keeper >= 0, Darwin.ioctl(keeper,UInt(FIONREAD),&available) == 0, available >= 512 { return selectedPath }
+                if keeper >= 0, CastFIFOAvailableBytes(keeper) >= 512 { return selectedPath }
                 try await Task.sleep(nanoseconds:100_000_000)
             }
             throw EmbeddedMediaError.timeout
