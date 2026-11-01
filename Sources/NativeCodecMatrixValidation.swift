@@ -28,6 +28,24 @@ import MobileVLCKit
                     let ext = mode == .softwareVP8 ? "webm" : "mp4"
                     let label = String(describing:mode)
                     let output = documents.appendingPathComponent("matrix-\(name)-\(label).\(ext)")
+                    if mode == .copy {
+                        let engine = EmbeddedMediaEngine(); defer { engine.stop() }
+                        do {
+                            let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:mode,audioID:Int(audio.key.dropFirst(4)),subtitleID:nil,style:SubtitleAppearance(),copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:original.audio.firstIndex(where:{$0.key == audio.key}) ?? 0,video:original.video,selfTest:true)
+                            let (body,_,eof) = try await NativeStreamCapture().read(url)
+                            guard eof else { throw EmbeddedMediaError.encoder }
+                            try body.write(to:output)
+                            let converted = try await EmbeddedMediaEngine.inspect(output)
+                            row["outputAudio"] = converted.audioCodecsDescription; row["outputVideo"] = converted.videoDescription
+                            row["outputChannels"] = converted.audio.first?.channels ?? 0; row["videoMode"] = label
+                            row["audioRepair"] = repairAudio; row["audioTracks"] = original.audio.count
+                            row["chosenAudio"] = audio.language; row["subtitleBurn"] = false
+                            row["passed"] = (converted.audio.first?.channels ?? 0) == 2; row["stage"] = "complete"
+                            let canonical = documents.appendingPathComponent("matrix-\(name).\(ext)")
+                            try? FileManager.default.removeItem(at:canonical); try FileManager.default.copyItem(at:output,to:canonical)
+                            break
+                        } catch { attempts.append(["mode":label,"error":String(describing:error)]); continue }
+                    }
                     let repair = AudioRepairPipe(); defer { repair.stop() }
                     let repaired = repairAudio ? try await repair.start(input:input,position:0,audioIndex:original.audio.firstIndex(where:{$0.key == audio.key}) ?? 0,subtitleIndex:subtitle.flatMap{s in original.subtitles.firstIndex(where:{$0.key == s.key})}) : input
                     let media = VLCMedia(url:repaired)

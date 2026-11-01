@@ -1,8 +1,8 @@
 import Foundation
 import Darwin
 
-/// Replaces only the selected unsupported audio with AAC. Video and the
-/// selected subtitle pass unchanged over loopback HTTP, never a movie file.
+/// Copies video packets and selects/normalizes audio. fMP4 goes directly to
+/// the bounded output socket; video conversion receives Matroska over loopback.
 @MainActor final class AudioRepairPipe {
     private static let initialized: Void = {
         ffmpeg_kit_initialize()
@@ -17,6 +17,7 @@ import Darwin
     private(set) var failed = false
     private(set) var finished = false
 #if CAST_ENGINE_TESTING
+    private(set) var testingStopCompleted = true
     var testingOutput: URL?
     private var diagnostics: URL?
     private func record(_ handle:UnsafeMutableRawPointer) {
@@ -29,12 +30,12 @@ import Darwin
     }
 #endif
 
-    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?) async throws -> URL {
+    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false) async throws -> URL {
         _ = Self.initialized
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
               audioIndex >= 0, position.isFinite, position >= 0 else { throw EmbeddedMediaError.encoder }
         let port = try EmbeddedMediaEngine.freeLoopbackPort()
-        let path = URL(string:"http://127.0.0.1:\(port)/\(UUID().uuidString).mkv")!
+        let path = outputFD.map { URL(string:"pipe:\($0)")! } ?? URL(string:"http://127.0.0.1:\(port)/\(UUID().uuidString).mkv")!
 #if CAST_ENGINE_TESTING
         let selectedPath = testingOutput ?? path
         let folder = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
@@ -47,6 +48,7 @@ import Darwin
 #if CAST_ENGINE_TESTING
         useHTTP = testingOutput == nil
 #endif
+        if outputFD != nil { useHTTP = false }
         url = selectedPath
         var args = ["-hide_banner","-nostdin","-loglevel","quiet","-y"]
 #if CAST_ENGINE_TESTING
@@ -62,9 +64,14 @@ import Darwin
         args += ["-map","0:v:0","-map","0:a:\(audioIndex)"]
         if let subtitleIndex { args += ["-map","0:s:\(subtitleIndex)","-c:s","copy"] }
         else { args += ["-sn"] }
-        args += ["-dn","-c:v","copy","-c:a","aac","-b:a","192k","-ac","2","-avoid_negative_ts","make_zero","-f","matroska","-live","1","-cluster_time_limit","500","-flush_packets","1"]
+        args += ["-dn","-c:v","copy"]
+        if copyAudio { args += ["-c:a","copy"] }
+        else { args += ["-c:a","aac","-b:a","192k","-ac","2"] }
+        args += ["-max_muxing_queue_size","2048","-avoid_negative_ts","make_zero"]
+        if outputFD != nil { args += ["-f","mp4","-movflags","frag_keyframe+empty_moov+default_base_moof","-flush_packets","1"] }
+        else { args += ["-f","matroska","-live","1","-cluster_time_limit","500","-flush_packets","1"] }
         if useHTTP { args += ["-listen","1"] }
-        args += [useHTTP ? selectedPath.absoluteString : selectedPath.path]
+        args += [outputFD.map { "pipe:\($0)" } ?? (useHTTP ? selectedPath.absoluteString : selectedPath.path)]
         let copies = args.map { strdup($0)! }
         defer { copies.forEach { free($0) } }
         var pointers = copies.map { UnsafePointer<CChar>($0) as UnsafePointer<CChar>? }
@@ -114,11 +121,17 @@ import Darwin
         if let handle {
 #if CAST_ENGINE_TESTING
             record(handle)
+            testingStopCompleted = false
 #endif
             ffmpeg_kit_session_cancel(handle)
             // The backend can wait for its worker to exit when releasing the
             // last handle. Never block the player/UI during a seek or stop.
-            DispatchQueue.global(qos:.utility).async { ffmpeg_kit_handle_release(handle) }
+            DispatchQueue.global(qos:.utility).async { [weak self] in
+                ffmpeg_kit_handle_release(handle)
+#if CAST_ENGINE_TESTING
+                Task { @MainActor [weak self] in self?.testingStopCompleted = true }
+#endif
+            }
         }
         handle = nil; url = nil
     }
