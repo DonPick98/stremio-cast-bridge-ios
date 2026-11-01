@@ -20,7 +20,7 @@ enum EmbeddedMediaError: LocalizedError {
 @MainActor final class EmbeddedMediaEngine: NSObject, VLCMediaPlayerDelegate {
     enum VideoMode: Equatable { case copy, ffmpegH264, hardwareH264, softwareVP8 }
     static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false) -> [VideoMode] {
-        let legacy = ["mp4v","mpeg4","divx","xvid","dx50","fmp4"].contains(video?.codec.lowercased() ?? "")
+        let legacy = ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "")
         if legacy && !burn && fallbackLevel < 2 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
         return fallbackLevel >= 2 ? [.softwareVP8] : (requiresVideo || fallbackLevel == 1) ? [.hardwareH264,.softwareVP8] : [.copy,.hardwareH264,.softwareVP8]
     }
@@ -153,7 +153,7 @@ enum EmbeddedMediaError: LocalizedError {
         let media = VLCMedia(url:producerInput)
         // Older MPEG-4/DivX streams may not have an iOS hardware decoder.
         // This affects decoding only; H.264 encoding can still use VideoToolbox.
-        if ["mp4v","mpeg4","divx","xvid","dx50","fmp4"].contains(video?.codec.lowercased() ?? "") { media.addOption(":avcodec-hw=none") }
+        if ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "") { media.addOption(":avcodec-hw=none") }
         if repairInput { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
         let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:video,access:"fd",target:String(channel.writer))
         media.addOption(":sout=\(chain)")
