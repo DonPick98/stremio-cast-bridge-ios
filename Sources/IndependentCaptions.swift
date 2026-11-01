@@ -128,7 +128,7 @@ enum ReceiverConfiguration {
         guard self.epoch==epoch,position.isFinite,position>=0,position<1e7,(duration<=0 || position<=duration+5),chosen != "none" else{return}
         self.position=position
         guard let snapshot else{if work==nil&&Date()>=failedUntil{prepare(at:position)};return}
-        if !snapshot.sourceComplete,position>=snapshot.coveredUntil-8,Date().timeIntervalSince(lastRestart)>2,work==nil{
+        if (position<snapshot.start || (!snapshot.sourceComplete && position>=snapshot.coveredUntil-8)),Date().timeIntervalSince(lastRestart)>2,work==nil{
             prepare(at:position)
         }
     }
@@ -193,7 +193,7 @@ enum ReceiverConfiguration {
             }
         }
     }
-    func retry(){failedUntil = .distantPast;work?.cancel();work=nil;extractor.stop();choice=UUID();prepare(at:position)}
+    func retry(){failedUntil = .distantPast;work?.cancel();work=nil;extractor.stop();catalogTask?.cancel();catalogTask=nil;choice=UUID();prepare(at:position)}
     private func keepAlive(_ active:Bool){
         if !active{helper?.stop();helper=nil;return}
         guard helper==nil else{return}

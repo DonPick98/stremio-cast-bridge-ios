@@ -28,10 +28,12 @@ class CaptionSession{
     this.cancel();
     const serial=this.serial;const abort=new AbortController();this.pending=abort;this.pendingURL=m.url;this.pendingTrack=m.track;this.desiredSelect=m;
     const updating=this.track===m.track;this.reply({version:1,type:'state',epoch:this.epoch,request:m.request,revision:m.revision,state:'pending'});
+    let timeout;
+    const expired=new Promise((_,reject)=>{timeout=setTimeout(()=>{reject(Error('caption_timeout'));abort.abort();},15000);});
     try{
-      const text=await this.fetchText(m.url,abort.signal);
+      const text=await Promise.race([this.fetchText(m.url,abort.signal),expired]);
       if(serial!==this.serial||this.epoch!==m.epoch)return false;
-      await this.presentation.prepare({text,format:m.format,track:m.track,fonts:m.fonts,updating,signal:abort.signal});
+      await Promise.race([this.presentation.prepare({text,format:m.format,track:m.track,fonts:m.fonts,updating,signal:abort.signal}),expired]);
       if(serial!==this.serial||this.epoch!==m.epoch)return false;
       const latest=this.desiredSelect||m;
       this.track=m.track;this.documentURL=m.url;this.rangeEnd=latest.rangeEnd;this.complete=latest.complete;this.pending=null;this.pendingURL=null;this.pendingTrack=null;
@@ -39,7 +41,7 @@ class CaptionSession{
     }catch(error){
       if(serial!==this.serial||this.epoch!==m.epoch||error?.name==='AbortError')return false;
       this.pending=null;this.pendingURL=null;this.pendingTrack=null;this.ack(this.desiredSelect||m,'unavailable');return false;
-    }
+    }finally{clearTimeout(timeout);}
   }
   tick(force=false){
     const relative=this.clock();if(!finite(relative,0,1e8)||!this.epoch)return;

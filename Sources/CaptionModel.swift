@@ -83,16 +83,16 @@ enum CaptionDocument {
     }
 }
 enum CaptionArguments {
-    static func extraction(input:String,track:Int,format:CaptionFormat,window:CaptionWindow,file:String,progressFD:Int32) -> [String] {
-        var args = ["-hide_banner","-nostdin","-loglevel","error","-nostats","-y","-progress","pipe:\(progressFD)"]
+    static func extraction(input:String,track:Int,format:CaptionFormat,window:CaptionWindow,file:String) -> [String] {
+        var args = ["-hide_banner","-nostdin","-loglevel","error","-nostats","-y"]
         if window.start > 0 { args += ["-ss",String(window.start)] }
-        // Input duration bounds every output, including sparse/empty subtitles.
-        args += ["-t",String(max(0.1,window.end-window.start)),"-copyts"]
+        // With copyts every output limit uses the original absolute clock.
+        args += ["-copyts"]
         if input.hasPrefix("https:") { args += ["-rw_timeout","5000000","-tls_verify","1"] }
-        args += ["-i",input,"-map","0:\(track)","-an","-vn","-dn","-c:s",format == .ass ? "ass" : "webvtt","-flush_packets","1","-f",format == .ass ? "ass" : "webvtt",file]
-        // Copy/discard audio supplies a media-time heartbeat even during long
-        // silences. Coverage never comes from the timestamp of the last cue.
-        args += ["-map","0:a:0","-vn","-sn","-dn","-c:a","copy","-f","null","/dev/null"]
+        args += ["-i",input,"-map","0:\(track)","-an","-vn","-dn","-c:s",format == .ass ? "ass" : "webvtt","-t",String(window.end),"-flush_packets","1","-f",format == .ass ? "ass" : "webvtt",file]
+        // A bounded copy/discard output walks sparse subtitle intervals to their
+        // end. Publish coverage only after the whole bounded job succeeds.
+        args += ["-map","0:a:0","-vn","-sn","-dn","-c:a","copy","-t",String(window.end),"-f","null","/dev/null"]
         return args
     }
 }

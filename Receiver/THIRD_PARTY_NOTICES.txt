@@ -4,7 +4,8 @@ Stremio video helpers: Smart Code OOD, MIT license.
 Source: https://github.com/Stremio/stremio-video/tree/7a7462bedfa51dc8303fbc4f59f16e03d0badb85/src/withHTMLSubtitles
 Vendored helpers: assRenderer, getContentRect, subtitlesParser, subtitlesRenderer,
 binarySearchUpperBound. Modification: use the supplied legacy worker when the
-browser cannot compile the WebAssembly module.
+browser cannot compile the WebAssembly module; explicitly flush Mozilla's
+complete-document WebVTT parser.
 
 MIT License
 Copyright (c) Smart Code OOD

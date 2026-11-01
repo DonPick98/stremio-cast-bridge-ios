@@ -5,6 +5,9 @@ import Foundation
         let root=documents.appendingPathComponent("CodecSamples"),input=root.appendingPathComponent("caption-hevc-eac3.mkv")
         let catalog=try await CaptionExtractor.catalog(input)
         guard catalog.tracks.count==13,catalog.tracks[0].isASS else{throw CaptionFailure.probe}
+        let fonts=try await CaptionExtractor.fonts(input,catalog:catalog)
+        let expectedFont=try Data(contentsOf:root.appendingPathComponent("caption-font.ttf"))
+        let fontPassed=fonts.count==1 && fonts[0].data==expectedFont
         var results:[[String:Any]]=[]
         let cases:[(String,URL,Int,CaptionFormat,Double,Double)]=[
             ("ass-zero",input,0,.ass,0,12.05),("ass-seek",input,0,.ass,7,12.05),
@@ -41,7 +44,7 @@ import Foundation
         var bad=URLComponents(url:stateURL,resolvingAgainstBaseURL:false)!;bad.queryItems=[URLQueryItem(name:"epoch",value:"wrong")]
         let(_,denied)=try await URLSession.shared.data(from:bad.url!)
         let gateway=(response as? HTTPURLResponse)?.statusCode==200 && body==Data("WEBVTT\n\n".utf8) && (response as? HTTPURLResponse)?.value(forHTTPHeaderField:"Access-Control-Allow-Origin")=="*" && (denied as? HTTPURLResponse)?.statusCode==410
-        return ["passed":results.count==6&&results.allSatisfy{$0["passed"] as? Bool==true}&&callbacks==0&&gateway,"windows":results,"cancelledCleanly":callbacks==0,"gateway":gateway]
+        return ["passed":results.count==6&&results.allSatisfy{$0["passed"] as? Bool==true}&&callbacks==0&&gateway&&fontPassed,"windows":results,"cancelledCleanly":callbacks==0,"gateway":gateway,"fontPreserved":fontPassed]
     }
 }
 #endif

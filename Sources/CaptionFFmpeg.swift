@@ -43,43 +43,8 @@ import Darwin
     }
 }
 
-final class CaptionProgress: @unchecked Sendable {
-    private let lock = NSLock(), queue = DispatchQueue(label:"app.castbridge.caption-progress")
-    private var source:DispatchSourceRead?
-    private var buffer = Data(), mediaTime:Double = 0
-    private let readFD:Int32
-    let writeFD:Int32
-    init() throws {
-        var pair:[Int32] = [-1,-1]
-        guard Darwin.socketpair(AF_UNIX,SOCK_STREAM,0,&pair) == 0 else { throw CaptionFailure.process }
-        readFD = pair[0]; writeFD = pair[1]; _ = fcntl(readFD,F_SETFL,O_NONBLOCK)
-        var flag:Int32 = 1; _ = setsockopt(writeFD,SOL_SOCKET,SO_NOSIGPIPE,&flag,socklen_t(MemoryLayout<Int32>.size))
-        let source = DispatchSource.makeReadSource(fileDescriptor:readFD,queue:queue); self.source = source
-        source.setEventHandler { [weak self] in self?.read() }
-        let reader = readFD; source.setCancelHandler { Darwin.close(reader) }; source.resume()
-    }
-    private func read() {
-        var bytes = [UInt8](repeating:0,count:4096)
-        while true {
-            let n = Darwin.read(readFD,&bytes,bytes.count); if n <= 0 { return }
-            buffer.append(contentsOf:bytes.prefix(n))
-            if buffer.count > 16384 { buffer.removeAll(keepingCapacity:true); continue }
-            while let end = buffer.firstIndex(of:10) {
-                let line = String(decoding:buffer[..<end],as:UTF8.self); buffer.removeSubrange(...end)
-                if line.hasPrefix("out_time_us="), let value = Double(line.dropFirst(12)), value.isFinite, value >= 0 {
-                    lock.lock(); mediaTime = max(mediaTime,value/1e6); lock.unlock()
-                }
-            }
-        }
-    }
-    var time:Double { lock.lock(); defer { lock.unlock() }; return mediaTime }
-    func stop(){queue.async { [self] in source?.cancel(); source = nil }}
-    deinit { Darwin.close(writeFD) }
-}
-
 @MainActor final class CaptionExtractor {
     private var process:CaptionProcess?
-    private var progress:CaptionProgress?
     private var task:Task<Void,Never>?
     private var directory:URL?
     private var generation = UUID()
@@ -117,8 +82,7 @@ final class CaptionProgress: @unchecked Sendable {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("CastCaption-"+token.uuidString)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true); self.directory = directory
         let file = directory.appendingPathComponent("text."+format.rawValue), window = CaptionWindow(position:position,duration:duration)
-        let progress = try CaptionProgress(); self.progress = progress
-        let process = try CaptionProcess(CaptionArguments.extraction(input:input.isFileURL ? input.path : input.absoluteString,track:track.index,format:format,window:window,file:file.path,progressFD:progress.writeFD))
+        let process = try CaptionProcess(CaptionArguments.extraction(input:input.isFileURL ? input.path : input.absoluteString,track:track.index,format:format,window:window,file:file.path))
         self.process = process
         task = Task {
             let deadline = Date().addingTimeInterval(25)
@@ -128,9 +92,9 @@ final class CaptionProgress: @unchecked Sendable {
                     if Date() >= deadline { throw CaptionFailure.timeout }
                     let done = process.finished
                     if done && !process.successful { throw CaptionFailure.process }
-                    let coverage = done ? window.end : min(window.end,max(window.start,progress.time))
+                    let coverage = done ? window.end : window.start
                     if let size = try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize, size > 2_097_152 { throw CaptionFailure.limit }
-                    if let bytes = try? Data(contentsOf:file), let body = try CaptionDocument.completePrefix(bytes,format:format),
+                    if done, let bytes = try? Data(contentsOf:file), let body = try CaptionDocument.completePrefix(format == .vtt ? bytes+Data([10]):bytes,format:format),
                        coverage >= min(window.end,position+1), body != previous || coverage-previousCoverage >= 5 || done {
                         previous = body; previousCoverage = coverage; published = true
                         onUpdate(CaptionSnapshot(data:body,format:format,start:window.start,coveredUntil:coverage,sourceComplete:done && duration > 0 && window.end >= duration-0.05,fonts:[]))
@@ -141,14 +105,14 @@ final class CaptionProgress: @unchecked Sendable {
             } catch is CancellationError { } catch {
                 if !Task.isCancelled && generation == token { onFailure(error as? CaptionFailure ?? .process) }
             }
-            if generation == token { self.process?.stop(); self.process = nil; self.progress?.stop(); self.progress = nil }
+            if generation == token { self.process?.stop(); self.process = nil }
         }
     }
     func stop() {
         generation = UUID(); task?.cancel(); task = nil
         let directory=self.directory;self.directory=nil
-        if let process {process.stop(keeping:progress,afterRelease:{if let directory{try? FileManager.default.removeItem(at:directory)}})}
+        if let process {process.stop(afterRelease:{if let directory{try? FileManager.default.removeItem(at:directory)}})}
         else if let directory{try? FileManager.default.removeItem(at:directory)}
-        process = nil; progress?.stop(); progress = nil
+        process = nil
     }
 }

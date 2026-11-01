@@ -9,9 +9,10 @@ import Foundation
         do{_=try catalog.selected(ordinal:0,vlcID:4,language:"ita",codec:"ssa");preconditionFailure("Wrong track accepted")}catch{}
         let window=CaptionWindow(position:100,duration:150)
         precondition(window.start==85&&window.end==150)
-        let args=CaptionArguments.extraction(input:"https://example.test/private",track:7,format:.ass,window:window,file:"/tmp/owned.ass",progressFD:19)
+        let args=CaptionArguments.extraction(input:"https://example.test/private",track:7,format:.ass,window:window,file:"/tmp/owned.ass")
         precondition(args.contains("-copyts")&&args.contains("0:7")&&args.contains("0:a:0"))
-        precondition(args.firstIndex(of:"-t")! < args.firstIndex(of:"-i")!)
+        precondition(args.firstIndex(of:"-t")! > args.firstIndex(of:"-i")!)
+        precondition(args.filter{$0=="-t"}.count==2)
         precondition(args.filter{$0=="-i"}.count==1)
         let silence=try CaptionDocument.completePrefix(Data("WEBVTT\n".utf8),format:.vtt)
         let prefix=try CaptionDocument.completePrefix(Data("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\ncomplete\n\n00:00:03.000 -->".utf8),format:.vtt)

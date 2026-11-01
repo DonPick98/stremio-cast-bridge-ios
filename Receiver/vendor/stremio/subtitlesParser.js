@@ -75,6 +75,8 @@ function parse(text) {
         };
 
         parser.parse(text);
+        // Mozilla vtt.js requires an explicit flush for complete documents.
+        parser.flush();
     });
 }
 

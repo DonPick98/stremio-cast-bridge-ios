@@ -9,7 +9,7 @@ class Presentation{
   async prepare({text,format,track,fonts,updating,signal}){
     const serial=++this.serial;
     if(format==='vtt'){
-      const cues=await parser.parse(text);
+      const cues=text.trim()==='WEBVTT'?{times:[]}:await parser.parse(text);
       if(signal.aborted||serial!==this.serial)return;
       if(this.ass){await this.ass.destroy();this.ass=null;}
       this.cues=cues;this.format='vtt';this.index=null;this.track=track;return;
@@ -18,11 +18,12 @@ class Presentation{
       if(!signal.aborted&&serial===this.serial){this.ass.setTrack(text);this.track=track;}return;
     }
     const next=createASS({containerElement:this.container});
+    const cancelled=()=>next.destroy();signal.addEventListener('abort',cancelled,{once:true});
     try{await next.load({id:track,fonts},text);
       if(signal.aborted||serial!==this.serial){await next.destroy();return;}
       const old=this.ass;this.ass=next;this.format='ass';this.cues=null;this.track=track;replace(this.overlay);
       if(old)await old.destroy();
-    }catch(error){await next.destroy();throw error;}
+    }catch(error){await next.destroy();throw error;}finally{signal.removeEventListener('abort',cancelled);}
   }
   setStyle(s){this.overlay.style.fontSize=`${Math.round(32*s.scale)}px`;this.overlay.style.color=s.color;
     this.overlay.style.fontFamily=s.font==='mono'?'monospace':s.font==='serif'?'serif':'Arial,sans-serif';

@@ -729,7 +729,8 @@ import UIKit
             info.metadata = metadata
             info.textTrackStyle = SubtitleAppearance.load().castStyle
             if independentCaptions.enabled{
-                independentCaptions.attach(castSession);syncIndependentCaptions()
+                independentCaptions.attach(castSession)
+                if captionIsIndependent{syncIndependentCaptions()}else{independentCaptions.clearSource()}
                 independentCaptions.bind(epoch:streamRequests.generation.uuidString,offset:urlOverride == nil ? 0:streamOffset)
                 info.customData=["bridge":independentCaptions.mediaData]
             }
@@ -984,7 +985,7 @@ import UIKit
         guard independentCaptions.enabled else{return false}
         if ["none","external","embedded"].contains(selectedSubtitle){return true}
         let codec=prepared?.subtitles.first(where:{$0.key==selectedSubtitle})?.codec.lowercased() ?? ""
-        return ["subt","srt","ssa","ass","text","utf8","wvtt","tx3g","stpp"].contains(codec)
+        return ["subt","srt","subrip","ssa","ass","text","utf8","wvtt","webvtt","tx3g","mov_text","stpp","ttml"].contains(codec)
     }
     private func syncIndependentCaptions(){
         guard captionIsIndependent,let prepared else{return}
