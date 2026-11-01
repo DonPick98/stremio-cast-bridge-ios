@@ -170,18 +170,18 @@ enum EmbeddedMediaError: LocalizedError {
                         self.initialResume = Task {
                             for _ in 0..<200 {
                                 guard !Task.isCancelled, self.running else { return }
-                                if player.state == .paused {
-#if CAST_ENGINE_TESTING
-                                    NativeEngineValidation.trace("native producer resume")
-#endif
-                                    player.play(); return
-                                }
                                 if player.state == .error { return }
-                                try? await Task.sleep(nanoseconds:50_000_000)
+                                // VLCKit's cached state can be overwritten by
+                                // ES-added/buffering events while input is paused.
+                                // PLAY is idempotent; retry until initialization
+                                // arrives instead of waiting on that cached state.
+                                player.play()
+                                try? await Task.sleep(nanoseconds:250_000_000)
                             }
                         }
                     }
                 })},onCancel:{bridge.stop()})
+                initialResume?.cancel(); initialResume = nil
                 updateBackground()
                 streamURL = url; startedStream = true
                 return url
