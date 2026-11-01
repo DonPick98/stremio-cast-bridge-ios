@@ -44,3 +44,7 @@ cases.push({name:'embedded_text',filename:subtitle,burn:true,selectAlternate:fal
 fs.writeFileSync(path.join(root,'manifest.json'),JSON.stringify(cases,null,2));
 run(['-stream_loop','-1','-i',base,...tone,'-t','1200','-map','0:v','-map','1:a','-c:v','copy','-c:a','ac3','-ac','2',path.join(root,'background-probe.mkv')]);
 console.log(`Generated ${cases.length} synthetic codec cases`);
+for(const [name,size,rate] of [['1080-23976','1920x1080','24000/1001'],['25','320x180','25'],['2997','320x180','30000/1001'],['720-60','1280x720','60']]){
+ run(['-f','lavfi','-i',`testsrc2=size=${size}:rate=${rate}`,...tone,'-t','4','-c:v','libx264','-preset','veryfast','-crf','23','-threads','2','-g',String(Math.round(rate.split('/').map(Number).reduce((a,b)=>a/b))),'-c:a','ac3','-ac','2',path.join(root,`quality-${name}.mkv`)]);
+}
+run(['-f','lavfi','-i','testsrc2=size=320x180:rate=24',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','12','-map','0:v','-map','1:a','-map','2:a','-c:v','libx264','-preset','ultrafast','-threads','2','-g','48','-c:a:0','truehd','-strict','-2','-c:a:1','aac','-ac','2','-metadata:s:a:0','language=eng','-metadata:s:a:1','language=ita',path.join(root,'quality-seek.mkv')]);

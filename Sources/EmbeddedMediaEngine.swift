@@ -71,7 +71,8 @@ enum EmbeddedMediaError: LocalizedError {
         let rawProfile = (video[VLCMediaTracksInformationCodecProfile] as? NSNumber)?.intValue ?? 0
         let profile = rawProfile >= 0 ? rawProfile & 255 : 0
         let level = (video[VLCMediaTracksInformationCodecLevel] as? NSNumber)?.intValue ?? 0
-        let videoSafe = codec(video) == "h264" && profile <= 100 && (level == 0 || level <= 42) && w > 0 && h > 0 && w <= 1920 && h <= 1080 && fps > 0 && (fps <= 30 || (h <= 720 && fps <= 60))
+        let format = VideoFormat(codec:codec(video),width:w,height:h,frameRate:fps,bitrate:(video[VLCMediaTracksInformationBitrate] as? NSNumber)?.intValue ?? 0,profile:profile,level:level)
+        let videoSafe = !format.requiresConversion && w > 0 && h > 0 && fps > 0
         let firstAudio = tracks.first(where:{$0[VLCMediaTracksInformationType] as? String == VLCMediaTracksInformationTypeAudio}) ?? [:]
         let channels = (firstAudio[VLCMediaTracksInformationAudioChannelsNumber] as? NSNumber)?.intValue ?? 0
         let audioSafe = audio.count == 1 && ["aac","mp3"].contains(audio[0].codec) && channels > 0 && channels <= 2
@@ -81,24 +82,25 @@ enum EmbeddedMediaError: LocalizedError {
         let type = ["mp4","m4v","mov"].contains(url.pathExtension.lowercased()) ? "video/mp4" : "video/x-matroska"
         let direct = type == "video/mp4" && videoSafe && profile > 0 && audioSafe
         let duration = Double(media.length.intValue)/1000
-        return RDPreparedMedia.native(audio:audio,subtitles:readTracks(VLCMediaTracksInformationTypeText),defaultAudio:selected.key,url:url,contentType:type,direct:direct,videoConversion:!videoSafe,description:"\(codec(video).uppercased()) · \(w)×\(h)",duration:duration)
+        return RDPreparedMedia.native(audio:audio,subtitles:readTracks(VLCMediaTracksInformationTypeText),defaultAudio:selected.key,url:url,contentType:type,direct:direct,videoConversion:format.requiresConversion,description:"\(codec(video).uppercased()) · \(format.label)",duration:duration,video:format)
     }
 
-    static func outputChain(videoMode:VideoMode,copyAudio:Bool = false,burn:Bool = false,access:String,target:String) -> String {
+    static func outputChain(videoMode:VideoMode,copyAudio:Bool = false,burn:Bool = false,video:VideoFormat? = nil,access:String,target:String) -> String {
         let webm = videoMode == .softwareVP8
         var conversion = webm ? "acodec=vorb,ab=192,channels=2" : copyAudio ? "" : "acodec=mp4a,ab=192,channels=2"
         func append(_ value: String) { conversion += (conversion.isEmpty ? "" : ",") + value }
         switch videoMode {
         case .copy: break
-        case .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=6000,maxwidth=1920,maxheight=1080,fps=30")
-        case .softwareVP8: append("vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=5000,maxwidth=1920,maxheight=1080,fps=30")
+        case .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=\(video?.conversionBitrate ?? 10000),maxwidth=1920,maxheight=1080")
+        case .softwareVP8: append("vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=\(video?.conversionBitrate ?? 6000),maxwidth=1920,maxheight=1080")
         }
+        if videoMode != .copy, let rate = video?.conversionFrameRate { append("fps=\(Int(rate))") }
         if burn { append("soverlay") }
         let mux = webm ? "avformat{mux=webm,options={live=1},reset-ts}" : "avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof},reset-ts}"
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], selfTest:Bool = false) async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], video:VideoFormat? = nil, selfTest:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         offset = start.isFinite ? max(0,start) : 0
         let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
@@ -119,12 +121,12 @@ enum EmbeddedMediaError: LocalizedError {
         }
         let media = VLCMedia(url:producerInput)
         if repairAudio { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
-        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,access:"fd",target:String(channel.writer))
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,video:video,access:"fd",target:String(channel.writer))
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
         media.addOption(":no-sout-keep")
         media.addOption(":sout-mux-caching=4000")
-        if !repairAudio { media.addOption(":start-time=\(offset)") }
+        if !repairAudio { media.addOption(":start-time=\(offset)"); media.addOption(":no-input-fast-seek") }
         media.addOption(":network-caching=1500")
         if let audioID, !repairAudio { media.addOption(":audio-track-id=\(audioID)") }
         if let subtitleID {

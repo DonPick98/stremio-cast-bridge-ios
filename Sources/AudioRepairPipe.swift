@@ -54,7 +54,12 @@ import Darwin
 #endif
         if position > 0 { args += ["-ss",String(position)] }
         if !input.isFileURL { args += ["-rw_timeout","15000000","-tls_verify","1"] }
-        args += ["-i",input.isFileURL ? input.path : input.absoluteString,"-map","0:v:0","-map","0:a:\(audioIndex)"]
+        args += ["-i",input.isFileURL ? input.path : input.absoluteString]
+        // Input seeking retains video packets from the preceding keyframe.
+        // Discard negative preroll before rebasing, or an audio change can
+        // replay seconds before the requested point and shift its timeline.
+        if position > 0 { args += ["-ss","0"] }
+        args += ["-map","0:v:0","-map","0:a:\(audioIndex)"]
         if let subtitleIndex { args += ["-map","0:s:\(subtitleIndex)","-c:s","copy"] }
         else { args += ["-sn"] }
         args += ["-dn","-c:v","copy","-c:a","aac","-b:a","192k","-ac","2","-avoid_negative_ts","make_zero","-f","matroska","-live","1","-cluster_time_limit","500","-flush_packets","1"]

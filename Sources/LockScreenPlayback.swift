@@ -5,7 +5,7 @@ import AVFAudio
 import MobileVLCKit
 
 /// The system media card provides the draggable Lock Screen/Control Center
-/// scrubber. ActivityKit remains a separate, synchronized status surface.
+/// scrubber. It is the only playback surface on the Lock Screen.
 @MainActor final class LockScreenPlayback {
     var handler: ((String) async -> Bool)?
     private(set) var active = false

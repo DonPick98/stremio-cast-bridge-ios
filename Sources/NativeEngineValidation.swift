@@ -94,6 +94,10 @@ import MediaPlayer
             }
             result["gateway"] = gatewayResults
             result["passed"] = (result["passed"] as? Bool == true) && gatewayResults.allSatisfy{$0["passed"] as? Bool == true}
+            trace("quality and seek regressions")
+            let quality = await qualityProbe(documents:documents)
+            result["quality"] = quality
+            result["passed"] = (result["passed"] as? Bool == true) && quality.count == 8 && quality.allSatisfy{$0["passed"] as? Bool == true}
             trace("codec matrix")
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
@@ -106,6 +110,34 @@ import MediaPlayer
             }
         } catch { result["passed"] = false; result["error"] = "Native codec probe failed: \(error.localizedDescription)" }
         if let data = try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report,options:.atomic) }
+    }
+    private static func qualityProbe(documents:URL) async -> [[String:Any]] {
+        let cases:[(String,String,EmbeddedMediaEngine.VideoMode,Double,Int)] = [
+            ("copy1080","1080-23976",.copy,0,0),("h2641080","1080-23976",.hardwareH264,0,0),
+            ("h26425","25",.hardwareH264,0,0),("h2642997","2997",.hardwareH264,0,0),
+            ("vp82997","2997",.softwareVP8,0,0),("h26472060","720-60",.hardwareH264,0,0),
+            ("seekTrueHD","seek",.copy,5.5,0),("seekAAC","seek",.copy,5.5,1)
+        ]
+        var rows:[[String:Any]] = []
+        for (name,fixture,mode,offset,audioIndex) in cases {
+            let engine = EmbeddedMediaEngine(); defer { engine.stop() }
+            do {
+                let input = documents.appendingPathComponent("CodecSamples/quality-\(fixture).mkv")
+                let original = try await EmbeddedMediaEngine.inspect(input)
+                let audio = original.audio[audioIndex], repair = AudioRepairPipe.required(audio.codec)
+                let id = Int(audio.key.dropFirst(4))
+                let copyAudio = audio.codec == "aac" && (audio.channels ?? 0) <= 2
+                let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:offset,videoMode:mode,audioID:id,subtitleID:nil,style:SubtitleAppearance(),copyAudio:copyAudio,repairAudio:repair,audioIndex:audioIndex,video:original.video,selfTest:true)
+                let (body,_,eof) = try await NativeStreamCapture().read(url)
+                let suffix = mode == .softwareVP8 ? "webm" : "mp4"
+                let file = "quality-output-\(name).\(suffix)"
+                try body.write(to:documents.appendingPathComponent(file))
+                let source = "quality-input-\(fixture).mkv"
+                if !FileManager.default.fileExists(atPath:documents.appendingPathComponent(source).path) { try FileManager.default.copyItem(at:input,to:documents.appendingPathComponent(source)) }
+                rows.append(["name":name,"file":file,"source":source,"offset":offset,"copyVideo":mode == .copy,"tone":audioIndex == 1 ? 440 : 880,"duration":max(0,original.duration-offset),"passed":eof && body.count > 4096])
+            } catch { rows.append(["name":name,"passed":false,"error":error.localizedDescription]) }
+        }
+        return rows
     }
     private static func backgroundProbe(documents:URL) async throws -> [String:Any] {
         let engine = EmbeddedMediaEngine(); defer { engine.stop() }
@@ -167,7 +199,7 @@ private final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unch
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             let config = URLSessionConfiguration.ephemeral
-            config.timeoutIntervalForResource = 12; config.timeoutIntervalForRequest = 12
+            config.timeoutIntervalForResource = 40; config.timeoutIntervalForRequest = 20
             let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
             let session = URLSession(configuration:config,delegate:self,delegateQueue:queue)
             self.session = session
@@ -180,8 +212,8 @@ private final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unch
         completionHandler(cors ? .allow : .cancel)
     }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        body.append(data.prefix(max(0,1_048_576-body.count)))
-        if body.count >= 1_048_576 { dataTask.cancel() }
+        body.append(data.prefix(max(0,33_554_432-body.count)))
+        if body.count >= 33_554_432 { dataTask.cancel() }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let c = continuation; continuation = nil

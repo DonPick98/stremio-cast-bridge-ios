@@ -23,6 +23,8 @@ jobs:
 
       - name: Test resolver without personal credentials
         run: |
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-regressions"
+          "$RUNNER_TEMP/playback-regressions"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/playback-preferences-tests"
