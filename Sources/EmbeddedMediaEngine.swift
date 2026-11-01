@@ -196,7 +196,18 @@ enum EmbeddedMediaError: LocalizedError {
         let state = origin.state
         Task { @MainActor [weak self, weak origin] in
             guard let self, let origin, self.player === origin else { return }
-            if state == .ended { self.producerEnded = true; self.outputChannel?.endWriting() }
+            if state == .ended && !self.producerEnded {
+                self.producerEnded = true
+                // libVLC retains the sout muxer after input EOF. Stop the player
+                // while the output is still writable so its trailer is flushed.
+                // Only then close our descriptor and let the socket deliver EOF.
+                self.player = nil
+                let channel = self.outputChannel
+                DispatchQueue.global(qos:.utility).async {
+                    origin.stop()
+                    channel?.endWriting()
+                }
+            }
             else if self.running && state == .error { self.onFailure?() }
         }
     }
