@@ -42,5 +42,5 @@ fs.writeFileSync(path.join(root,'captions.srt'),'1\n00:00:00,000 --> 00:00:01,80
 run(['-i',base,...tone,'-i',path.join(root,'captions.srt'),'-t','6','-map','0:v','-map','1:a','-map','2:s','-c:v','copy','-c:a','ac3','-ac','2','-c:s','srt','-metadata:s:s:0','language=eng',path.join(root,subtitle)]);
 cases.push({name:'embedded_text',filename:subtitle,burn:true,selectAlternate:false});
 fs.writeFileSync(path.join(root,'manifest.json'),JSON.stringify(cases,null,2));
-run(['-stream_loop','-1','-i',base,...tone,'-t','120','-map','0:v','-map','1:a','-c:v','copy','-c:a','ac3','-ac','2',path.join(root,'background-probe.mkv')]);
+run(['-stream_loop','-1','-i',base,...tone,'-t','1200','-map','0:v','-map','1:a','-c:v','copy','-c:a','ac3','-ac','2',path.join(root,'background-probe.mkv')]);
 console.log(`Generated ${cases.length} synthetic codec cases`);

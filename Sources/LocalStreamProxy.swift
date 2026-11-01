@@ -1,7 +1,107 @@
 import Foundation
 import Network
+import Darwin
 
 enum LocalStreamError: Error { case address, listener, request, upstream, initialization }
+
+/// An anonymous socket pair retains every encoder packet. Unlike VLC's live
+/// HTTP circular buffer, it cannot skip an initial GOP or overwrite a slow reader.
+final class MediaOutputChannel: @unchecked Sendable {
+    private let queue = DispatchQueue(label:"app.castbridge.media-output")
+    private let reader:Int32
+    let writer:Int32
+    private var listener:NWListener?
+    private var client:NWConnection?
+    private var source:DispatchSourceRead?
+    private var suspended = false
+    private var stopped = false
+    private var opening:CheckedContinuation<Void,Error>?
+    init() throws {
+        var pair:[Int32] = [-1,-1]
+        guard Darwin.socketpair(AF_UNIX,SOCK_STREAM,0,&pair) == 0 else { throw LocalStreamError.listener }
+        reader = pair[0]; writer = pair[1]
+        _ = fcntl(reader,F_SETFL,O_NONBLOCK)
+        var flag:Int32 = 1
+        _ = setsockopt(writer,SOL_SOCKET,SO_NOSIGPIPE,&flag,socklen_t(MemoryLayout<Int32>.size))
+    }
+    deinit { Darwin.close(writer) }
+    func start(port:UInt16,path:String,type:String) async throws {
+        try await withCheckedThrowingContinuation { (c:CheckedContinuation<Void,Error>) in
+            queue.async {
+                self.opening = c
+                do {
+                    let params = NWParameters.tcp
+                    params.requiredLocalEndpoint = .hostPort(host:"127.0.0.1",port:NWEndpoint.Port(rawValue:port)!)
+                    let listener = try NWListener(using:params); self.listener = listener
+                    listener.stateUpdateHandler = { [weak self] state in
+                        guard let self, !self.stopped else { return }
+                        if case .ready = state { let c = self.opening; self.opening = nil; c?.resume() }
+                        else if case .failed = state { self.finish() }
+                    }
+                    listener.newConnectionHandler = { [weak self] connection in
+                        guard let self, !self.stopped, self.client == nil else { connection.cancel(); return }
+                        self.client = connection
+                        connection.stateUpdateHandler = { [weak self] state in if case .failed = state { self?.finish() } }
+                        connection.start(queue:self.queue)
+                        self.request(connection,path:path,type:type,buffer:Data())
+                    }
+                    listener.start(queue:self.queue)
+                    self.queue.asyncAfter(deadline:.now()+8) { if self.opening != nil { self.finish() } }
+                } catch { self.finish() }
+            }
+        }
+    }
+    private func request(_ client:NWConnection,path:String,type:String,buffer:Data) {
+        client.receive(minimumIncompleteLength:1,maximumLength:4096) { [weak self] data,_,complete,error in
+            guard let self, !self.stopped else { return }
+            var buffer = buffer; if let data { buffer.append(data) }
+            do {
+                if let method = try LocalStreamProxy.method(buffer,path:path), method == "GET" {
+                    let header = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\nConnection: close\r\n\r\n".utf8)
+                    client.send(content:header,completion:.contentProcessed { [weak self] error in
+                        guard let self, !self.stopped else { return }
+                        if error != nil { self.finish(); return }
+                        let source = DispatchSource.makeReadSource(fileDescriptor:self.reader,queue:self.queue)
+                        self.source = source
+                        source.setEventHandler { [weak self] in self?.pump() }
+                        let fd = self.reader; source.setCancelHandler { Darwin.close(fd) }
+                        source.resume()
+                    })
+                } else if complete || error != nil { self.finish() }
+                else { self.request(client,path:path,type:type,buffer:buffer) }
+            } catch { self.finish() }
+        }
+    }
+    private func pump() {
+        guard !stopped, !suspended, let source, let client else { return }
+        source.suspend(); suspended = true
+        var bytes = [UInt8](repeating:0,count:16_384)
+        let count = Darwin.read(reader,&bytes,16_384)
+        if count > 0 {
+            client.send(content:Data(bytes.prefix(count)),completion:.contentProcessed { [weak self] error in
+                guard let self, !self.stopped else { return }
+                if error != nil { self.finish() }
+                else { self.suspended = false; self.source?.resume() }
+            })
+        } else if count == 0 {
+            client.send(content:nil,contentContext:.finalMessage,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.finish() })
+        } else if errno == EAGAIN || errno == EINTR { suspended = false; source.resume() }
+        else { finish() }
+    }
+    func endWriting() { queue.async { _ = Darwin.shutdown(self.writer,SHUT_WR) } }
+    func stop() { queue.async { self.finish() } }
+    private func finish() {
+        guard !stopped else { return }; stopped = true
+        let c = opening; opening = nil; c?.resume(throwing:LocalStreamError.listener)
+        listener?.stateUpdateHandler = nil; listener?.newConnectionHandler = nil; listener?.cancel(); listener = nil
+        client?.stateUpdateHandler = nil; client?.cancel(); client = nil
+        // Shutdown also unblocks VLC's duplicated writer before it is released.
+        _ = Darwin.shutdown(reader,SHUT_RDWR)
+        if let source { if suspended { suspended = false; source.resume() }; source.cancel(); self.source = nil }
+        else { Darwin.close(reader) }
+        _ = Darwin.shutdown(writer,SHUT_RDWR)
+    }
+}
 
 /// Exact-token, selected-device-only HTTP bridge. It adds the CORS headers Cast
 /// needs for external subtitles and applies TCP backpressure to the local encoder.
@@ -222,6 +322,11 @@ final class LocalStreamProxy: @unchecked Sendable {
     }
     private func connectProducer(_ id: UUID, method: String) {
         guard let pair = pairs[id], let port = NWEndpoint.Port(rawValue:producerPort) else { close(id); return }
+        if method == "HEAD" {
+            let header = Data("HTTP/1.1 200 OK\r\n\(Self.cors)Content-Type: \(contentType)\r\nAccept-Ranges: none\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8)
+            pair.client.send(content:header,contentContext:.finalMessage,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.close(id) })
+            return
+        }
         if let stream = warm, stream.ready {
             trace("warm transfer header=\(stream.header.count) body=\(stream.body.count)")
             if method == "HEAD" {

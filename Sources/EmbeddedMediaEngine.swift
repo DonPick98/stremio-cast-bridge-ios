@@ -22,7 +22,8 @@ enum EmbeddedMediaError: LocalizedError {
         fallbackLevel >= 2 ? [.softwareVP8] : (requiresVideo || fallbackLevel == 1) ? [.hardwareH264,.softwareVP8] : [.copy,.hardwareH264,.softwareVP8]
     }
     private var player: VLCMediaPlayer?
-    private var initialResume: Task<Void,Never>?
+    private var outputChannel: MediaOutputChannel?
+    private var producerEnded = false
     private var audioRepair: AudioRepairPipe?
     private var proxy: LocalStreamProxy?
     private var backgroundPlayer: VLCMediaPlayer?
@@ -107,6 +108,8 @@ enum EmbeddedMediaError: LocalizedError {
         let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType,captions:rebased)
         proxy = bridge
         let url = try await bridge.start()
+        let channel = try MediaOutputChannel(); outputChannel = channel
+        try await channel.start(port:port,path:bridge.path,type:contentType)
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
         var producerInput = input
@@ -116,17 +119,13 @@ enum EmbeddedMediaError: LocalizedError {
         }
         let media = VLCMedia(url:producerInput)
         if repairAudio { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
-        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,access:"http",target:"127.0.0.1:\(port)\(bridge.path)")
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,access:"fd",target:String(channel.writer))
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
-        media.addOption(":sout-keep")
-        media.addOption(":start-paused")
+        media.addOption(":no-sout-keep")
         media.addOption(":sout-mux-caching=4000")
         if !repairAudio { media.addOption(":start-time=\(offset)") }
-        // Start paused without pre-reading a full GOP before HTTP joins.
-        // The mux and receiver still maintain their playback buffers.
-        media.addOption(":network-caching=0")
-        media.addOption(":file-caching=0")
+        media.addOption(":network-caching=1500")
         if let audioID, !repairAudio { media.addOption(":audio-track-id=\(audioID)") }
         if let subtitleID {
             media.addOption(repairAudio ? ":sub-track=0" : ":sub-track-id=\(subtitleID)")
@@ -146,42 +145,21 @@ enum EmbeddedMediaError: LocalizedError {
         }
 #endif
         self.player = player
-        running = true
+        running = true; producerEnded = false
         observeLifecycle()
 #if CAST_ENGINE_TESTING
         NativeEngineValidation.trace("native audio session start")
 #endif
         updateBackground()
 #if CAST_ENGINE_TESTING
-        NativeEngineValidation.trace("native producer start paused")
+        NativeEngineValidation.trace("native producer start on socket")
 #endif
         player.delegate = self; player.media = media; player.play()
         for _ in 0..<1400 {
             try Task.checkCancellation()
             if player.state == .error || audioRepair?.failed == true { stop(); throw EmbeddedMediaError.encoder }
             do {
-                try await withTaskCancellationHandler(operation:{try await bridge.prepare(onHeaders:{ [weak self, weak player] in
-                    Task { @MainActor in
-                        guard let self, let player else { return }
-#if CAST_ENGINE_TESTING
-                        NativeEngineValidation.trace("native reader connected")
-#endif
-                        self.initialResume?.cancel()
-                        self.initialResume = Task {
-                            for _ in 0..<200 {
-                                guard !Task.isCancelled, self.running else { return }
-                                if player.state == .error { return }
-                                // VLCKit's cached state can be overwritten by
-                                // ES-added/buffering events while input is paused.
-                                // PLAY is idempotent; retry until initialization
-                                // arrives instead of waiting on that cached state.
-                                player.play()
-                                try? await Task.sleep(nanoseconds:250_000_000)
-                            }
-                        }
-                    }
-                })},onCancel:{bridge.stop()})
-                initialResume?.cancel(); initialResume = nil
+                try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()})
                 updateBackground()
                 streamURL = url; startedStream = true
                 return url
@@ -192,8 +170,9 @@ enum EmbeddedMediaError: LocalizedError {
         stop(); throw EmbeddedMediaError.timeout
     }
     func stop() {
-        running = false; startedStream = false; onFailure = nil
-        initialResume?.cancel(); initialResume = nil
+        running = false; startedStream = false; onFailure = nil; producerEnded = true
+        let channel = outputChannel; outputChannel = nil
+        channel?.stop()
         backgroundPlayer?.stop(); backgroundPlayer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
@@ -205,6 +184,7 @@ enum EmbeddedMediaError: LocalizedError {
 #endif
             DispatchQueue.global(qos:.utility).async { [weak self] in
                 old.stop()
+                withExtendedLifetime(channel) {}
 #if CAST_ENGINE_TESTING
                 Task { @MainActor [weak self] in self?.testingStopCompleted = true }
 #endif
@@ -212,14 +192,16 @@ enum EmbeddedMediaError: LocalizedError {
         }
     }
     nonisolated func mediaPlayerStateChanged(_ aNotification: Notification) {
-        Task { @MainActor [weak self] in
-            guard let self, let player = self.player else { return }
-            if player.state == .ended || (self.startedStream && player.state == .stopped) { self.proxy?.producerDidEnd() }
-            else if self.running && player.state == .error { self.onFailure?() }
+        guard let origin = aNotification.object as? VLCMediaPlayer else { return }
+        let state = origin.state
+        Task { @MainActor [weak self, weak origin] in
+            guard let self, let origin, self.player === origin else { return }
+            if state == .ended || (self.startedStream && state == .stopped) { self.producerEnded = true; self.outputChannel?.endWriting(); self.proxy?.producerDidEnd() }
+            else if self.running && state == .error { self.onFailure?() }
         }
     }
     func setReceiverPaused(_ paused: Bool) {
-        guard running, let player else { return }
+        guard running, !producerEnded, let player else { return }
         if paused { player.pause() }
         else if !player.isPlaying { player.play() }
     }
