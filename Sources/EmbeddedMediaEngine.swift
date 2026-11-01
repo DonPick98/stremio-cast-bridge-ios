@@ -5,21 +5,24 @@ import UIKit
 import Darwin
 
 enum EmbeddedMediaError: LocalizedError {
-    case metadata, address, encoder, timeout
+    case metadata, address, encoder, output, timeout
     var errorDescription: String? {
         switch self {
         case .metadata: return "Il motore integrato non riesce a leggere le tracce di questa sorgente."
         case .address: return "L’iPhone deve essere sulla stessa rete locale del Chromecast."
-        case .encoder: return "Il motore integrato non è riuscito a convertire questo formato."
+        case .encoder: return "Non riesco a preparare il video di questa sorgente (CB203)."
+        case .output: return "Il flusso generato non è riproducibile (CB204)."
         case .timeout: return "Il motore integrato non ha preparato il flusso entro il tempo previsto."
         }
     }
 }
 
 @MainActor final class EmbeddedMediaEngine: NSObject, VLCMediaPlayerDelegate {
-    enum VideoMode: Equatable { case copy, hardwareH264, softwareVP8 }
-    static func modes(requiresVideo:Bool,fallbackLevel:Int = 0) -> [VideoMode] {
-        fallbackLevel >= 2 ? [.softwareVP8] : (requiresVideo || fallbackLevel == 1) ? [.hardwareH264,.softwareVP8] : [.copy,.hardwareH264,.softwareVP8]
+    enum VideoMode: Equatable { case copy, ffmpegH264, hardwareH264, softwareVP8 }
+    static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false) -> [VideoMode] {
+        let legacy = ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "")
+        if legacy && !burn && fallbackLevel < 2 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
+        return fallbackLevel >= 2 ? [.softwareVP8] : (requiresVideo || fallbackLevel == 1) ? [.hardwareH264,.softwareVP8] : [.copy,.hardwareH264,.softwareVP8]
     }
     private var player: VLCMediaPlayer?
     private var outputChannel: MediaOutputChannel?
@@ -93,7 +96,7 @@ enum EmbeddedMediaError: LocalizedError {
         func append(_ value: String) { conversion += (conversion.isEmpty ? "" : ",") + value }
         switch videoMode {
         case .copy: break
-        case .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=\(video?.conversionBitrate ?? 10000),maxwidth=1920,maxheight=1080")
+        case .ffmpegH264, .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=\(video?.conversionBitrate ?? 10000),maxwidth=1920,maxheight=1080")
         case .softwareVP8: append("vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=\(video?.conversionBitrate ?? 6000),maxwidth=1920,maxheight=1080")
         }
         if videoMode != .copy, let rate = video?.conversionFrameRate { append("fps=\(Int(rate))") }
@@ -105,6 +108,7 @@ enum EmbeddedMediaError: LocalizedError {
     func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], video:VideoFormat? = nil, selfTest:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         offset = start.isFinite ? max(0,start) : 0
+        PlaybackDiagnostics.record(.producer,["phase":"start","mode":String(describing:videoMode),"offset":PlaybackDiagnostics.number(offset),"burn":String(subtitleID != nil),"copyAudio":String(copyAudio)])
         let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
         let port = try Self.freeLoopbackPort()
         contentType = videoMode == .softwareVP8 ? "video/webm" : "video/mp4"
@@ -116,17 +120,18 @@ enum EmbeddedMediaError: LocalizedError {
         try await channel.start(port:port,path:bridge.path,type:contentType)
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
-        if videoMode == .copy && subtitleID == nil {
+        if (videoMode == .copy || videoMode == .ffmpegH264) && subtitleID == nil {
             // VLC's H.264 packetizer can drop/reorder B frames on remux. FFmpeg
             // copies every original packet and normalizes the selected audio.
             directRemux = true; running = true; producerEnded = false
             observeLifecycle(); updateBackground()
             let repair = AudioRepairPipe(); audioRepair = repair
-            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio)
+            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:videoMode == .ffmpegH264 ? video : nil)
             producerMonitor = Task { [weak self] in
                 while !Task.isCancelled {
                     guard let self, self.running else { return }
                     if repair.finished {
+                        PlaybackDiagnostics.record(.producer,["phase":"finished","result":repair.failed ? "error" : "success"])
                         if repair.failed { self.onFailure?() }
                         self.producerEnded = true; channel.endWriting(); return
                     }
@@ -134,7 +139,7 @@ enum EmbeddedMediaError: LocalizedError {
                 }
             }
             do { try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()}) }
-            catch { stop(); throw EmbeddedMediaError.encoder }
+            catch { let failure:EmbeddedMediaError = repair.failed ? .encoder : .output; stop(); throw failure }
             try Task.checkCancellation()
             streamURL = url; startedStream = true
             return url
@@ -146,6 +151,9 @@ enum EmbeddedMediaError: LocalizedError {
             producerInput = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
         }
         let media = VLCMedia(url:producerInput)
+        // Older MPEG-4/DivX streams may not have an iOS hardware decoder.
+        // This affects decoding only; H.264 encoding can still use VideoToolbox.
+        if ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "") { media.addOption(":avcodec-hw=none") }
         if repairInput { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
         let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:video,access:"fd",target:String(channel.writer))
         media.addOption(":sout=\(chain)")
@@ -188,6 +196,7 @@ enum EmbeddedMediaError: LocalizedError {
                 guard let self, let player, self.player === player else { return }
                 if self.realState(player) == 6 { self.finishProducer(player); return }
                 if self.realState(player) == 7 {
+                    PlaybackDiagnostics.record(.error,["phase":"vlc","code":"state7"])
                     if self.streamURL == nil { self.proxy?.stop() } else { self.onFailure?() }
                     return
                 }
@@ -203,12 +212,13 @@ enum EmbeddedMediaError: LocalizedError {
                 streamURL = url; startedStream = true
                 return url
             } catch LocalStreamError.upstream { try Task.checkCancellation() }
-            catch { stop(); throw EmbeddedMediaError.encoder }
+            catch { stop(); throw EmbeddedMediaError.output }
             try await Task.sleep(nanoseconds:5_000_000)
         }
         stop(); throw EmbeddedMediaError.timeout
     }
     func stop() {
+        PlaybackDiagnostics.record(.producer,["phase":"stop"])
         running = false; startedStream = false; onFailure = nil; producerEnded = true
         producerMonitor?.cancel(); producerMonitor = nil
         let channel = outputChannel; outputChannel = nil
@@ -308,6 +318,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var testingStoppedRepair: AudioRepairPipe?
     var testingStopCompleted: Bool { testingVideoStopped && (testingStoppedRepair?.testingStopCompleted ?? true) }
     func testingDeliveredBytes() async -> Int { await proxy?.testingDeliveredBytes() ?? 0 }
+    func testingPauseDrained() async -> Bool { await proxy?.testingPauseDrained() ?? false }
     var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
     var testingProducerPlaying: Bool { player?.isPlaying == true }
     var testingProducerState: String { player.map { String($0.state.rawValue) } ?? "nil" }

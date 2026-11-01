@@ -97,12 +97,12 @@ import MediaPlayer
             trace("quality and seek regressions")
             let quality = await qualityProbe(documents:documents)
             result["quality"] = quality
-            result["passed"] = (result["passed"] as? Bool == true) && quality.count == 8 && quality.allSatisfy{$0["passed"] as? Bool == true}
+            result["passed"] = (result["passed"] as? Bool == true) && quality.count == 10 && quality.allSatisfy{$0["passed"] as? Bool == true}
             trace("codec matrix")
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
                 result["matrix"] = matrix
-                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 25 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 28 && matrix.allSatisfy { $0["passed"] as? Bool == true }
                 trace("background conversion")
                 let background = try await backgroundProbe(documents:documents)
                 result["background"] = background
@@ -116,7 +116,8 @@ import MediaPlayer
             ("copy1080","1080-23976",.copy,0,0),("h2641080","1080-23976",.hardwareH264,0,0),
             ("h26425","25",.hardwareH264,0,0),("h2642997","2997",.hardwareH264,0,0),
             ("vp82997","2997",.softwareVP8,0,0),("h26472060","720-60",.hardwareH264,0,0),
-            ("seekTrueHD","seek",.copy,5.5,0),("seekAAC","seek",.copy,5.5,1)
+            ("seekTrueHD","seek",.copy,5.5,0),("seekAAC","seek",.copy,5.5,1),
+            ("legacyASP","legacy-asp",.ffmpegH264,0,0),("legacyASPSeek","legacy-asp",.ffmpegH264,3.25,1)
         ]
         var rows:[[String:Any]] = []
         for (name,fixture,mode,offset,audioIndex) in cases {
@@ -147,10 +148,16 @@ import MediaPlayer
             try? await Task.sleep(nanoseconds:12_000_000_000)
             guard !Task.isCancelled else { return (false,false) }
             engine.setReceiverPaused(true)
-            try? await Task.sleep(nanoseconds:1_000_000_000)
+            // A TCP send already in flight can complete after pause. Wait for
+            // that actual operation to drain before measuring the plateau.
+            var drained = false
+            for _ in 0..<100 {
+                if await engine.testingPauseDrained() { drained = true; break }
+                try? await Task.sleep(nanoseconds:100_000_000)
+            }
             let settled = await engine.testingDeliveredBytes()
             try? await Task.sleep(nanoseconds:500_000_000)
-            let paused = await engine.testingDeliveredBytes() == settled
+            let paused = await engine.testingDeliveredBytes() == settled && drained
             engine.setReceiverPaused(false)
             var resumed = false
             for _ in 0..<40 {

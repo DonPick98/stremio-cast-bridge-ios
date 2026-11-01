@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum CastPalette {
     static let background = Color(red:0.045,green:0.052,blue:0.065)
@@ -10,6 +11,7 @@ struct ContentView: View {
     @EnvironmentObject private var cast: CastController
     @State private var showTrackOptions = false
     @State private var showSubtitleAppearance = false
+    @State private var diagnosticsCopied = false
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -37,6 +39,11 @@ struct ContentView: View {
             .sheet(isPresented:$cast.showSetup) { AddonSetupView().environmentObject(cast) }
             .sheet(isPresented:$showTrackOptions) { TrackOptionsView().environmentObject(cast) }
             .sheet(isPresented:$showSubtitleAppearance) { SubtitleAppearanceView().environmentObject(cast) }
+            .alert("Diagnostica copiata",isPresented:$diagnosticsCopied) {
+                Button("OK",role:.cancel) { }
+            } message: {
+                Text("Incollala nella chat con Codex. Contiene gli ultimi 10 minuti, senza link personali o credenziali.")
+            }
     }
     private var header: some View {
         HStack(spacing:12) {
@@ -48,6 +55,11 @@ struct ContentView: View {
                 }
             }
             Spacer()
+            Button {
+                cast.copyDiagnostics(); diagnosticsCopied = true
+            } label: {
+                Image(systemName:"terminal").font(.system(size:17)).frame(width:44,height:44).background(.white.opacity(0.045),in:Circle())
+            }.foregroundStyle(.white).accessibilityLabel("Codex: copia diagnostica")
             Menu {
                 Button { showSubtitleAppearance = true } label: { Label("Aspetto sottotitoli",systemImage:"textformat.size") }
                 Button { cast.showSetup = true } label: { Label("Configura sorgenti",systemImage:"link") }
