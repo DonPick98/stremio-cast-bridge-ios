@@ -3,11 +3,13 @@ import http from 'node:http';
 const ready=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const url=new URL(ready.url);
 if(url.hostname!=='127.0.0.1'||url.protocol!=='http:')throw new Error('Unexpected test endpoint');
-const began=Date.now();let bytes=0,done=false;
-function finish(){if(done)return;done=true;const tmp=process.argv[3]+'.tmp';fs.writeFileSync(tmp,JSON.stringify({bytes,seconds:(Date.now()-began)/1000}));fs.renameSync(tmp,process.argv[3]);}
+const began=Date.now();let bytes=0,done=false,connected=false,status=0,errorCode='',first=0,last=0,lateBytes=0;
+function finish(){if(done)return;done=true;const tmp=process.argv[3]+'.tmp';fs.writeFileSync(tmp,JSON.stringify({bytes,seconds:(Date.now()-began)/1000,connected,status,errorCode,dataSpan:first?(last-first)/1000:0,lateBytes}));fs.renameSync(tmp,process.argv[3]);}
 const request=http.get(url,response=>{
- response.on('data',chunk=>{bytes+=chunk.length;});
- response.on('end',finish);response.on('error',finish);
+ status=response.statusCode;
+ response.on('data',chunk=>{bytes+=chunk.length;const now=Date.now();if(!first)first=now;last=now;if(now-began>=10000)lateBytes+=chunk.length;});
+ response.on('end',finish);response.on('error',e=>{errorCode=e.code||'response';finish();});
 });
-request.on('error',finish);
+request.on('socket',socket=>socket.once('connect',()=>{connected=true;}));
+request.on('error',e=>{errorCode=e.code||'request';finish();});
 setTimeout(()=>{finish();request.destroy();},15000);

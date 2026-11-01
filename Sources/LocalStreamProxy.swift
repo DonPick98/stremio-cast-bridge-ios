@@ -18,6 +18,11 @@ final class LocalStreamProxy: @unchecked Sendable {
     private var pairs: [UUID:Pair] = [:]
     private var stopped = false
     private var producerEnded = false
+    private func trace(_ message:String) {
+#if CAST_ENGINE_TESTING
+        print("Cast proxy \(Date().timeIntervalSince1970): \(message)")
+#endif
+    }
     private var preparing: CheckedContinuation<Void,Error>?
     private var warm: Warm?
     private final class Warm {
@@ -145,6 +150,7 @@ final class LocalStreamProxy: @unchecked Sendable {
         pair.client.cancel(); pair.producer?.cancel()
     }
     private func accept(_ client: NWConnection) {
+        trace("accept \(client.endpoint)")
         guard !stopped, pairs.count < 8, case .hostPort(let host,_) = client.endpoint,
               String(describing:host).components(separatedBy:"%")[0] == peer else { client.cancel(); return }
         let id = UUID(); pairs[id] = Pair(client)
@@ -174,6 +180,7 @@ final class LocalStreamProxy: @unchecked Sendable {
             do {
                 let captionPaths = self.captions.keys.map { "/\(self.token)/subtitle-\($0).vtt" }
                 if let method = try Self.method(received,path:self.path,additionalPaths:captionPaths) {
+                    self.trace("request \(method), warm=\(self.warm?.ready == true)")
                     if method == "OPTIONS" {
                         let reply = "HTTP/1.1 204 No Content\r\n\(Self.cors)Content-Length: 0\r\nConnection: close\r\n\r\n"
                         pair.client.send(content:Data(reply.utf8),completion:.contentProcessed { _ in self.close(id) })
@@ -215,6 +222,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     private func connectProducer(_ id: UUID, method: String) {
         guard let pair = pairs[id], let port = NWEndpoint.Port(rawValue:producerPort) else { close(id); return }
         if let stream = warm, stream.ready {
+            trace("warm transfer header=\(stream.header.count) body=\(stream.body.count)")
             if method == "HEAD" {
                 pair.client.send(content:stream.header,contentContext:.finalMessage,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.close(id) })
                 return
@@ -224,6 +232,7 @@ final class LocalStreamProxy: @unchecked Sendable {
             stream.connection.stateUpdateHandler = { [weak self] state in if case .failed = state { self?.close(id) } }
             pair.client.send(content:stream.header+stream.body,contentContext:stream.complete ? .finalMessage : .defaultMessage,isComplete:true,completion:.contentProcessed { [weak self] error in
                 guard let self else { return }
+                self.trace("warm send done error=\(String(describing:error))")
                 if error != nil || stream.complete { self.close(id) } else { self.pipe(id) }
             })
             return

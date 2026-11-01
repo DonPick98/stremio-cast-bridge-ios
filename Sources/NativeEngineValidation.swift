@@ -109,7 +109,9 @@ import UIKit
         let helper = engine.testingBackgroundHelperPlaying
         let bytes = metrics["bytes"] as? Int ?? 0
         let seconds = metrics["seconds"] as? Double ?? 0
-        return ["passed":offscreen && helper && bytes > 4096 && seconds >= 10,"offscreen":offscreen,"audioHelperPlaying":helper,"bytesReadExternally":bytes,"seconds":seconds]
+        let span = metrics["dataSpan"] as? Double ?? 0
+        let lateBytes = metrics["lateBytes"] as? Int ?? 0
+        return ["passed":offscreen && helper && bytes > 4096 && seconds >= 10 && span >= 10 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":engine.testingProducerState,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
     }
 }
 

@@ -179,7 +179,7 @@ enum EmbeddedMediaError: LocalizedError {
         else if !paused && player.state == .paused { player.play() }
     }
     private func observeLifecycle() {
-        for name in [UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
+        for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
             observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
                 Task { @MainActor in self?.updateBackground() }
             })
@@ -187,21 +187,28 @@ enum EmbeddedMediaError: LocalizedError {
     }
     private func updateBackground() {
         guard running else { return }
-        if UIApplication.shared.applicationState == .background {
+        if UIApplication.shared.applicationState != .active {
             // Same remote-playback mechanism used by the official VLC iOS app.
             // Its lifetime is restricted to an active local Cast pipeline.
-            try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
+            if AVAudioSession.sharedInstance().category != .playback || AVAudioSession.sharedInstance().mode != .moviePlayback {
+                try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
+            }
             try? AVAudioSession.sharedInstance().setActive(true)
             if backgroundPlayer == nil {
                 let helper = VLCMediaPlayer(options:["--quiet","--demux=rawaud","--rawaud-channels=2","--rawaud-samplerate=8000"])
+#if CAST_ENGINE_TESTING
+                let folder = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
+                NativeEngineValidation.log(helper,to:folder.appendingPathComponent("gateway-background-helper.log"))
+#endif
                 helper.media = VLCMedia(path:"/dev/zero"); backgroundPlayer = helper
             }
-            backgroundPlayer?.play()
+            if backgroundPlayer?.isPlaying != true { backgroundPlayer?.play() }
         } else { backgroundPlayer?.stop() }
     }
     func refreshBackground() { updateBackground() }
 #if CAST_ENGINE_TESTING
     var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
+    var testingProducerState: String { String(describing:player?.state) }
 #endif
     private static func freeLoopbackPort() throws -> UInt16 {
         let fd = Darwin.socket(AF_INET,SOCK_STREAM,0); guard fd >= 0 else { throw EmbeddedMediaError.address }; defer { Darwin.close(fd) }
