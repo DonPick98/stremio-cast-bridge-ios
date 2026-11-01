@@ -471,6 +471,7 @@ import UIKit
                 selectedQuality = result.availableQualities.contains(.high) ? .high : (result.availableQualities.first ?? .high)
                 compatibilityMode = false
                 selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage)
+                restoreSubtitleDelay()
                 busy = false
                 if result.duration > 0 {
                     duration = result.duration
