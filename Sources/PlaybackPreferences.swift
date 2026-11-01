@@ -17,7 +17,6 @@ enum PlaybackPreferences {
         let saved = defaults.string(forKey:"cast.preferred.subtitle")
         if saved == "none" || (saved == nil && handoff == "off") { return "none" }
         let wanted = language(saved ?? handoff ?? "en")
-        if external && wanted == language(handoff ?? "en") { return "external" }
         if let track = tracks.first(where:{language($0.language) == wanted}) { return track.key }
         return external && wanted == language(handoff ?? "en") ? "external" : "none"
     }
@@ -41,3 +40,4 @@ enum MediaDisplayTitle {
         return text.isEmpty ? "Video da Stremio" : text+suffix
     }
 }
+

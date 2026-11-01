@@ -45,6 +45,17 @@ cases.push({name:'embedded_text',filename:subtitle,burn:true,selectAlternate:fal
 // Exercise the actual streaming gateway, including a non-keyframe seek.
 run(['-f','lavfi','-i','testsrc2=size=720x480:rate=30000/1001',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-i',path.join(root,'captions.srt'),'-t','12','-map','0:v','-map','1:a','-map','2:a','-map','3:s','-c:v','mpeg4','-q:v','4','-bf','2','-flags','+qpel+mv4','-g','60','-threads','2','-c:a:0','libmp3lame','-c:a:1','ac3','-ac','2','-c:s','srt','-metadata:s:a:0','language=eng','-metadata:s:a:1','language=ita','-metadata:s:s:0','language=eng',path.join(root,'quality-legacy-asp.mkv')]);
 for(const [name,burn,start,selectAlternate] of [['legacy_asp',false,0,false],['legacy_asp_subtitles',true,0,false],['legacy_asp_seek',false,3.25,true],['legacy_asp_subtitles_seek',true,3.25,false]]) cases.push({name,filename:'quality-legacy-asp.mkv',burn,start,selectAlternate,native:true});
+// The first subtitle is deliberately wrong and always visible. The selected
+// second subtitle appears only at source 6-9 s, after a non-keyframe seek.
+// Black frames allow the verifier to prove actual rendered text and timing,
+// independently of a successful video decode or a transient PLAYING status.
+fs.writeFileSync(path.join(root,'wrong.srt'),'1\n00:00:00,000 --> 00:00:12,000\nWRONG TRACK\n');
+fs.writeFileSync(path.join(root,'seek.srt'),'1\n00:00:06,000 --> 00:00:09,000\nEMBEDDED CAPTION AFTER SEEK\n');
+for(const codec of ['srt','ass']){
+ const filename=`caption-${codec}-seek.mkv`;
+ run(['-f','lavfi','-i','color=black:size=640x360:rate=24',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-i',path.join(root,'wrong.srt'),'-i',path.join(root,'seek.srt'),'-t','12','-map','0:v','-map','1:a','-map','2:a','-map','3:s','-map','4:s','-c:v','libx264','-pix_fmt','yuv420p','-preset','ultrafast','-g','48','-threads','2','-c:a','aac','-ac','2','-c:s',codec,'-metadata:s:a:0','language=eng','-metadata:s:a:1','language=ita','-metadata:s:s:0','language=eng','-metadata:s:s:1','language=ita',path.join(root,filename)]);
+ cases.push({name:`caption_${codec}_seek`,filename,burn:true,start:3.25,selectAlternate:true,selectLastSubtitle:true});
+}
 fs.writeFileSync(path.join(root,'manifest.json'),JSON.stringify(cases,null,2));
 run(['-stream_loop','-1','-i',base,...tone,'-t','1200','-map','0:v','-map','1:a','-c:v','copy','-c:a','ac3','-ac','2',path.join(root,'background-probe.mkv')]);
 console.log(`Generated ${cases.length} synthetic codec cases`);
@@ -52,3 +63,4 @@ for(const [name,size,rate] of [['1080-23976','1920x1080','24000/1001'],['25','32
  run(['-f','lavfi','-i',`testsrc2=size=${size}:rate=${rate}`,...tone,'-t','4','-c:v','libx264','-preset','veryfast','-crf','23','-threads','2','-g',String(Math.round(rate.split('/').map(Number).reduce((a,b)=>a/b))),'-c:a','ac3','-ac','2',path.join(root,`quality-${name}.mkv`)]);
 }
 run(['-f','lavfi','-i','testsrc2=size=320x180:rate=24',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','12','-map','0:v','-map','1:a','-map','2:a','-c:v','libx264','-preset','ultrafast','-threads','2','-g','48','-c:a:0','truehd','-strict','-2','-c:a:1','aac','-ac','2','-metadata:s:a:0','language=eng','-metadata:s:a:1','language=ita',path.join(root,'quality-seek.mkv')]);
+

@@ -13,7 +13,7 @@ function sound(file){
  return {ok:p.status===0,samples:n,frequency:n?changes*8000/(2*n):0,rms:n?Math.sqrt(energy/n)/32768:0};
 }
 const reference=sound(process.argv[3]);
-const files=report.matrix.map(r=>({name:r.name,file:`matrix-${r.name}.${r.videoMode==='softwareVP8'?'webm':'mp4'}`,frames:r.name.startsWith('legacy_')&&r.name.endsWith('_seek')?260:r.name.startsWith('legacy_')?359:144,samples:r.name.startsWith('legacy_')&&r.name.endsWith('_seek')?68000:r.name.startsWith('legacy_')?93000:38000,tone:['multiple_audio','legacy_asp_seek'].includes(r.name)?440:880}));
+const files=report.matrix.map(r=>({name:r.name,file:`matrix-${r.name}.${r.videoMode==='softwareVP8'?'webm':'mp4'}`,frames:r.name.startsWith('caption_')?210:r.name.startsWith('legacy_')&&r.name.endsWith('_seek')?260:r.name.startsWith('legacy_')?359:144,samples:r.name.startsWith('caption_')?68000:r.name.startsWith('legacy_')&&r.name.endsWith('_seek')?68000:r.name.startsWith('legacy_')?93000:38000,tone:['multiple_audio','legacy_asp_seek','caption_srt_seek','caption_ass_seek'].includes(r.name)?440:880}));
 report.gateway.forEach((r,i)=>files.push({name:`gateway-${i}`,file:`gateway-${i}.${r.mode==='softwareVP8'?'webm':'mp4'}`,frames:i===3?144:96,samples:i===3?38000:28000,tone:i===3?880:reference.frequency}));
 const rows=files.map(item=>{
  const file=path.join(root,item.file),audio=sound(file);
@@ -21,7 +21,16 @@ const rows=files.map(item=>{
  const frames=Number([...video.stdout.toString().matchAll(/^frame=(\d+)/gm)].at(-1)?.[1]||0);
  return {name:item.name,frames,expectedFrames:item.frames,...audio,videoError:video.status===0?'':video.stderr.toString().slice(-2000),passed:audio.ok&&video.status===0&&audio.samples>=item.samples&&audio.rms>0.01&&Math.abs(audio.frequency-item.tone)<20&&frames>=item.frames*0.9};
 });
-const result={passed:report.passed&&!report.error&&report.background?.passed===true&&report.captionSync?.passed===true&&rows.length===34&&rows.every(r=>r.passed),rows};
+const captionRows=files.filter(r=>r.name.startsWith('caption_')).map(item=>{
+ const checks=[1,4,7].map(time=>{
+  const p=run(['-ss',String(time),'-i',path.join(root,item.file),'-map','0:v:0','-frames:v','1','-vf','crop=iw:ih/2:0:ih/2,format=gray','-f','rawvideo','pipe:1']);
+  const bright=p.stdout.reduce((n,v)=>n+(v>160?1:0),0);
+  return {time,bright,passed:p.status===0&&p.stdout.length>10000&&(time===4?bright>60:bright<10)};
+ });
+ return {name:item.name,checks,passed:checks.every(c=>c.passed)};
+});
+const result={passed:report.passed&&!report.error&&report.background?.passed===true&&report.captionSync?.passed===true&&rows.length===36&&rows.every(r=>r.passed)&&captionRows.length===2&&captionRows.every(r=>r.passed),rows,captionRows};
 fs.writeFileSync(path.join(root,'decoded-output-check.json'),JSON.stringify(result,null,2));
 console.log(JSON.stringify(result));
 if(!result.passed)process.exitCode=1;
+

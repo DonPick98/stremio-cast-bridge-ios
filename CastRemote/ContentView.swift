@@ -24,6 +24,11 @@ struct ContentView: View {
                     if let issue = cast.playbackIssue {
                         Label(issue,systemImage:"exclamationmark.circle").font(.subheadline).foregroundStyle(.orange).fixedSize(horizontal:false,vertical:true).castCard()
                     }
+                    if let warning = cast.subtitlePlaybackWarning {
+                        Button { showTrackOptions = true } label: {
+                            Label(warning,systemImage:"captions.bubble").font(.subheadline).foregroundStyle(.orange).multilineTextAlignment(.leading).fixedSize(horizontal:false,vertical:true).castCard()
+                        }.buttonStyle(.plain)
+                    }
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
                     else { emptyState }
@@ -203,12 +208,12 @@ private struct TrackOptionsView: View {
                         Picker("Audio",selection:$cast.selectedAudio) { ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) } }.disabled(cast.loading).onChange(of:cast.selectedAudio) { _ in cast.tracksChanged(audio:true) }
                     } header: { Text("Audio") }
                     Section("Sottotitoli") {
-                        Picker("Traccia",selection:$cast.selectedSubtitle) {
+                        Picker("Traccia",selection:Binding(get:{cast.selectedSubtitle},set:{cast.selectSubtitle($0)})) {
                             Text("Disattivati").tag("none")
                             if cast.externalSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · esterni").tag("external") }
                             if cast.hasExtractedCaption { Text(cast.embeddedSubtitleLabel).tag("embedded") }
                             ForEach(media.subtitles) { Text(trackLabel($0,in:media.subtitles) + " · nel file").tag($0.key) }
-                        }.disabled(cast.loading).onChange(of:cast.selectedSubtitle) { _ in cast.tracksChanged(audio:false) }
+                        }.disabled(cast.loading)
                         Button { showAppearance = true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
                         Button { showOnline = true } label: { Label("Scegli da Stremio e OpenSubtitles",systemImage:"captions.bubble") }
                         if cast.subtitleDownloadBusy { HStack { ProgressView(); Text("Preparo i sottotitoli…").font(.footnote) } }
@@ -378,3 +383,4 @@ private func playbackTime(_ seconds: Double) -> String {
     let n = Int(seconds)
     return n >= 3600 ? String(format:"%d:%02d:%02d",n/3600,(n/60)%60,n%60) : String(format:"%d:%02d",n/60,n%60)
 }
+

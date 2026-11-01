@@ -165,7 +165,13 @@ enum EmbeddedMediaError: LocalizedError {
         // Older MPEG-4/DivX streams may not have an iOS hardware decoder.
         // This affects decoding only; H.264 encoding can still use VideoToolbox.
         if ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "") { media.addOption(":avcodec-hw=none") }
-        if repairInput { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
+        if repairInput {
+            // VLC 3's avformat demux does not map FFmpeg SUBRIP/ASS subtitles
+            // (it exposes them as undf). Preserve the Matroska subtitle codec,
+            // private data and timestamps with VLC's native demux for overlays.
+            media.addOption(subtitleID == nil ? ":demux=avformat" : ":demux=mkv")
+            media.addOption(":stream-filter=cache_read")
+        }
         let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:video,access:"fd",target:String(channel.writer))
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
@@ -358,3 +364,4 @@ enum EmbeddedMediaError: LocalizedError {
         let ip = String(cString:buffer); guard CastWire.localIPv4(ip) else { throw EmbeddedMediaError.address }; return ip
     }
 }
+
