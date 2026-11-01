@@ -123,7 +123,10 @@ enum EmbeddedMediaError: LocalizedError {
         media.addOption(":start-paused")
         media.addOption(":sout-mux-caching=4000")
         if !repairAudio { media.addOption(":start-time=\(offset)") }
-        media.addOption(":network-caching=1500")
+        // Start paused without pre-reading a full GOP before HTTP joins.
+        // The mux and receiver still maintain their playback buffers.
+        media.addOption(":network-caching=0")
+        media.addOption(":file-caching=0")
         if let audioID, !repairAudio { media.addOption(":audio-track-id=\(audioID)") }
         if let subtitleID {
             media.addOption(repairAudio ? ":sub-track=0" : ":sub-track-id=\(subtitleID)")
