@@ -11,6 +11,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Boot simulator while building
+        run: |
+          device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid)})')
+          xcrun simctl boot "$device" || true
       - name: Typecheck stream header validator
         run: swiftc -typecheck Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift
       - name: Install media engines
@@ -43,7 +47,7 @@ jobs:
           mkdir -p "$data/Documents"
           cp Tests/CodecSamples/h264-ac3.mkv "$data/Documents/"
           cp -R "$RUNNER_TEMP/codec-matrix" "$data/Documents/CodecSamples"
-          SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch "$device" app.example.castbridge
+          SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch --stdout="$data/Documents/stdio.log" --stderr="$data/Documents/stdio-error.log" "$device" app.example.castbridge
           mkdir -p native-engine-report
           background_tested=0
           for i in $(seq 1 600); do
@@ -57,6 +61,8 @@ jobs:
               test ! -f "$data/Documents/converted.mp4" || cp "$data/Documents/converted.mp4" native-engine-report/
               find "$data/Documents" -name 'gateway-*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'matrix-*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'repair-*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'stdio*' -exec cp '{}' native-engine-report/ \;
               if test -f "$data/Documents/matrix-embedded_text.mp4"; then ffmpeg -hide_banner -loglevel error -ss 0.5 -i "$data/Documents/matrix-embedded_text.mp4" -frames:v 1 native-engine-report/subtitle-frame.png; fi
               node -e 'const r=require("./native-engine-report/engine-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
               exit 0

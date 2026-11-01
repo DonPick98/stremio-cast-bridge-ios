@@ -1,7 +1,7 @@
 import Foundation
 import Network
 
-enum LocalStreamError: Error { case address, listener, request, upstream }
+enum LocalStreamError: Error { case address, listener, request, upstream, initialization }
 
 /// Exact-token, selected-device-only HTTP bridge. It adds the CORS headers Cast
 /// needs for external subtitles and applies TCP backpressure to the local encoder.
@@ -20,7 +20,6 @@ final class LocalStreamProxy: @unchecked Sendable {
     private var producerEnded = false
     private var preparing: CheckedContinuation<Void,Error>?
     private var warm: Warm?
-    private var onConsumer: (@Sendable () -> Void)?
     private final class Warm {
         let connection: NWConnection
         var header = Data()
@@ -67,7 +66,6 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
     func stop() { queue.async { self.finish() } }
-    func onNextConsumer(_ handler:@escaping @Sendable () -> Void) { queue.async { self.onConsumer = handler } }
     /// Keep the validated initialization and first media bytes on the very
     /// connection that the receiver will consume, rather than probing and
     /// discarding the beginning of a short video.
@@ -79,22 +77,22 @@ final class LocalStreamProxy: @unchecked Sendable {
                 let stream = Warm(NWConnection(host:"127.0.0.1",port:port,using:.tcp))
                 self.warm = stream
                 stream.connection.stateUpdateHandler = { [weak self] state in
-                    guard let self else { return }
+                    guard let self, self.warm === stream else { return }
                     if case .ready = state {
                         let request = "GET \(self.path) HTTP/1.1\r\nHost: 127.0.0.1:\(self.producerPort)\r\nConnection: close\r\n\r\n"
                         stream.connection.send(content:Data(request.utf8),completion:.contentProcessed { error in
                             if error != nil { self.failPreparation() } else { self.readWarmHeader(stream,buffer:Data()) }
                         })
-                    } else if case .failed = state { self.failPreparation() }
+                    } else if case .failed = state { self.failPreparation(error:.upstream) }
                 }
                 stream.connection.start(queue:self.queue)
                 self.queue.asyncAfter(deadline:.now()+15) { if self.preparing != nil { self.failPreparation() } }
             }
         }
     }
-    private func failPreparation() {
+    private func failPreparation(error:LocalStreamError = .initialization) {
         warm?.connection.stateUpdateHandler = nil; warm?.connection.cancel(); warm = nil
-        let c = preparing; preparing = nil; c?.resume(throwing:LocalStreamError.upstream)
+        let c = preparing; preparing = nil; c?.resume(throwing:error)
     }
     private func readWarmHeader(_ stream:Warm,buffer:Data) {
         stream.connection.receive(minimumIncompleteLength:1,maximumLength:65_536) { [weak self] data,_,complete,error in
@@ -134,7 +132,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     }
     private func finish() {
         stopped = true
-        onConsumer = nil; failPreparation()
+        failPreparation()
         listener?.stateUpdateHandler = nil; listener?.newConnectionHandler = nil
         listener?.cancel(); listener = nil
         let c = opening; opening = nil; c?.resume(throwing:LocalStreamError.listener)
@@ -224,7 +222,6 @@ final class LocalStreamProxy: @unchecked Sendable {
             warm = nil; stream.connection.stateUpdateHandler = nil
             pair.producer = stream.connection
             stream.connection.stateUpdateHandler = { [weak self] state in if case .failed = state { self?.close(id) } }
-            onConsumer?(); onConsumer = nil
             pair.client.send(content:stream.header+stream.body,contentContext:stream.complete ? .finalMessage : .defaultMessage,isComplete:true,completion:.contentProcessed { [weak self] error in
                 guard let self else { return }
                 if error != nil || stream.complete { self.close(id) } else { self.pipe(id) }

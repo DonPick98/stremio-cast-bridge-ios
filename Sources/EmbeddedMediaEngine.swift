@@ -114,7 +114,7 @@ enum EmbeddedMediaError: LocalizedError {
             producerInput = try repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
         }
         let media = VLCMedia(url:producerInput)
-        if repairAudio { media.addOption(":demux=mkv") }
+        if repairAudio { media.addOption(":demux=mkv"); media.addOption(":stream-filter=cache_read") }
         let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,access:"http",target:"127.0.0.1:\(port)\(bridge.path)")
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
@@ -144,25 +144,15 @@ enum EmbeddedMediaError: LocalizedError {
         running = true
         observeLifecycle(); updateBackground()
         player.delegate = self; player.media = media; player.play()
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 1; config.timeoutIntervalForResource = 1
-        let session = URLSession(configuration:config)
-        defer { session.invalidateAndCancel() }
-        guard let upstream = URL(string:"http://127.0.0.1:\(port)\(bridge.path)") else { throw EmbeddedMediaError.address }
         for _ in 0..<35 {
             try Task.checkCancellation()
             if player.state == .error || audioRepair?.failed == true { stop(); throw EmbeddedMediaError.encoder }
-            var request = URLRequest(url:upstream); request.httpMethod = "HEAD"
-            if let (_,response) = try? await session.data(for:request), (response as? HTTPURLResponse)?.statusCode == 200 {
-                do { try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()}) }
-                catch { stop(); throw EmbeddedMediaError.encoder }
-                if player.state == .playing { player.pause() }
-                bridge.onNextConsumer { [weak self] in
-                    Task { @MainActor in if self?.player?.state == .paused { self?.player?.play() } }
-                }
+            do {
+                try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()})
                 streamURL = url; startedStream = true
                 return url
-            }
+            } catch LocalStreamError.upstream { try Task.checkCancellation() }
+            catch { stop(); throw EmbeddedMediaError.encoder }
             try await Task.sleep(nanoseconds:200_000_000)
         }
         stop(); throw EmbeddedMediaError.timeout

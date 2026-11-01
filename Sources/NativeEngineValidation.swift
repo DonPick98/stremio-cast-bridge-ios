@@ -18,6 +18,16 @@ import UIKit
         let output = documents.appendingPathComponent("converted.mp4")
         var result: [String:Any] = ["passed":false]
         do {
+            let repair = AudioRepairPipe()
+            let repairedFile = documents.appendingPathComponent("repair-direct.mkv")
+            repair.testingOutput = repairedFile
+            do {
+                _ = try repair.start(input:documents.appendingPathComponent("CodecSamples/truehd.mkv"),position:0,audioIndex:0,subtitleIndex:nil)
+                for _ in 0..<300 { if repair.finished { break }; try await Task.sleep(nanoseconds:100_000_000) }
+                let checked = try await EmbeddedMediaEngine.inspect(repairedFile)
+                result["decoder"] = ["passed":!repair.failed && repair.finished,"audio":checked.audioCodecsDescription,"video":checked.videoDescription]
+            } catch { result["decoder"] = ["passed":false,"error":error.localizedDescription] }
+            repair.stop()
             let source = VLCMedia(url:input)
             source.addOption(":sout=#transcode{acodec=mp4a,ab=192,channels=2}:std{access=file,mux=avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof}},dst=\(output.path)}")
             source.addOption(":no-sout-all")

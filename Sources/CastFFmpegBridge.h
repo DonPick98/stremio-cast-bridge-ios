@@ -12,4 +12,8 @@ int64_t ffmpeg_kit_session_get_return_code(void *session);
 void ffmpeg_kit_handle_release(void *session);
 void ffmpeg_kit_set_session_history_size(int64_t size);
 void ffmpeg_kit_config_set_log_level(int level);
+char *ffmpeg_kit_session_get_output(void *session);
+char *session_get_debug_log(void *session);
+void session_enable_debug_log(void *session);
+void ffmpeg_kit_free(void *pointer);
 #endif
