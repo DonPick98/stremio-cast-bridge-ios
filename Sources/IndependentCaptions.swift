@@ -135,6 +135,7 @@ enum ReceiverConfiguration {
     private func prepare(at position:Double){
         guard enabled,chosen != "none",let input,let gateway,work==nil,Date()>=failedUntil else{return}
         let token=choice,selected=chosen,key=self.key;lastRestart=Date()
+        PlaybackDiagnostics.record(.tracks,["phase":"caption_request","subtitle":selected,"position":PlaybackDiagnostics.number(position)])
         work=Task{
             do{
                 if selected == "external"{
@@ -152,6 +153,7 @@ enum ReceiverConfiguration {
                 let catalog=try await catalogTask!.value
                 try Task.checkCancellation();guard choice==token else{return}
                 let track=try catalog.selected(ordinal:ordinal,vlcID:Int(selected.dropFirst(4)),language:native.language,codec:native.codec)
+                PlaybackDiagnostics.record(.tracks,["phase":"caption_mapped","subtitle":selected,"codec":track.codec,"tracks":String(catalog.tracks.count)])
                 let format:CaptionFormat=track.isASS&&ReceiverConfiguration.preserveASS && !fallbackVTT ? .ass:.vtt
                 if format == .ass,fontSource != source{
                     let fonts=(try? await CaptionExtractor.fonts(input,catalog:catalog)) ?? []
@@ -178,6 +180,7 @@ enum ReceiverConfiguration {
             if let previous=snapshotURL,snapshot?.data==value.data,snapshot?.format==value.format{url=previous}
             else{url=try await gateway.publish(value.data,format:value.format)}
             guard choice==token,serial==publishSerial else{return};snapshot=value;snapshotURL=url;publishState();onStatus?(false,nil)
+            PlaybackDiagnostics.record(.tracks,["phase":"caption_ready","mode":value.format.rawValue,"position":PlaybackDiagnostics.number(value.start),"duration":PlaybackDiagnostics.number(value.coveredUntil),"bytes":String(value.data.count)])
         }catch{if choice==token{onStatus?(false,"Il testo non è disponibile. Il video continua.")}}
     }
     private func receive(_ message:[String:Any]){
@@ -186,6 +189,7 @@ enum ReceiverConfiguration {
         guard message["epoch"] as? String==epoch else{return}
         if message["type"] as? String == "need",message["track"] as? String==trackID,let time=message["position"] as? Double{requested(epoch:epoch,position:time)}
         if message["type"] as? String == "state",message["track"] as? String==trackID,let state=message["state"] as? String,let received=message["revision"] as? Int,received>=visibleRevision{
+            if received>visibleRevision{PlaybackDiagnostics.record(.tracks,["phase":"caption_receiver","status":state,"subtitle":chosen])}
             visibleRevision=received
             if state == "unavailable"{
                 if snapshot?.format == .ass && !fallbackVTT{fallbackVTT=true;choice=UUID();extractor.stop();work?.cancel();work=nil;prepare(at:position)}

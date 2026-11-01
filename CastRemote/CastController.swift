@@ -1043,7 +1043,7 @@ import UIKit
             try? await Task.sleep(nanoseconds:400_000_000)
             guard !Task.isCancelled else { return }
             trackApplyTask = nil
-            if !audio,captionIsIndependent{syncIndependentCaptions();return}
+            if !audio,captionIsIndependent,(nativeSelection?.subtitle == nil || nativeSelection?.subtitle == "none"){syncIndependentCaptions();return}
             guard !Task.isCancelled, hasLoaded, !loading else { return }
             load(preservePosition:true)
         }
