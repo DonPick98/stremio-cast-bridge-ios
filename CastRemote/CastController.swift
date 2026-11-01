@@ -81,16 +81,21 @@ import UIKit
     private var commandRequest: GCKRequest?
     private var commandContinuation: CheckedContinuation<Bool, Never>?
     private var commandTimeout: Task<Void, Never>?
+    private let lockScreen = LockScreenPlayback()
+    private var lastDevice: GCKDevice?
+    private var reconnectTask: Task<Void,Never>?
+    private var trackApplyTask: Task<Void,Never>?
+    private var wantsPlayback = false
+    var displayTitle: String { MediaDisplayTitle.clean(selectedSource?.filename ?? selectedSource?.descriptionText.components(separatedBy:.newlines).first ?? "Video da Stremio") }
+    var deviceName: String { castSession?.device.friendlyName ?? lastDevice?.friendlyName ?? "Chromecast" }
 
     override init() {
         super.init()
         activity = Activity<CastActivityAttributes>.activities.first
         positionKey = UserDefaults.standard.string(forKey: "cast.session.positionKey")
         if let positionKey { lastGoodPosition = UserDefaults.standard.double(forKey: positionKey) }
-        CastActivityCommands.handler = { [weak self] command in
-            guard let self else { return false }
-            return await self.performActivityCommand(command)
-        }
+        CastActivityCommands.handler = { [weak self] command in await self?.handleCommand(command) ?? false }
+        lockScreen.handler = { [weak self] command in await self?.handleCommand(command) ?? false }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.updateStatus() }
         }
@@ -123,26 +128,43 @@ import UIKit
             observedClient?.remove(self); observedClient = client; client?.add(self)
         }
         client?.requestStatus()
+        if let device = castSession?.device { lastDevice = device }
         updateStatus()
+        if connected && wantsPlayback && prepared != nil && !busy && !loading && !hasLoaded && !loadPending { load() }
     }
     func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager: GCKSessionManager, didResumeSession session: GCKSession) { refreshConnection() }
+    func sessionManager(_ manager:GCKSessionManager,didSuspend session:GCKSession,withReason reason:GCKConnectionSuspendReason) {
+        guard wantsPlayback else { return }
+        connected = false; message = "Ricollego i controlli alla TV…"
+        reconnectControls()
+    }
     func sessionManager(_ manager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) {
+        if error != nil && wantsPlayback && (hasLoaded || localProcessing) {
+            connected = false; finishCommand(false)
+            message = "Ricollego i controlli alla TV…"
+            reconnectControls(); return
+        }
+        wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil; lockScreen.clear()
         streamCheckTask?.cancel(); checkingStream = false; loading = false
         capturePosition(); stopLocalProcessing(); connected = false; playing = false; finishCommand(false)
     }
     func remoteMediaClient(_ client: GCKRemoteMediaClient, didUpdate mediaStatus: GCKMediaStatus?) { updateStatus() }
     private func updateStatus() {
-        guard UIApplication.shared.applicationState == .active || localProcessing else { return }
+        guard UIApplication.shared.applicationState == .active || localProcessing || lockScreen.active else { return }
         connected = GCKCastContext.sharedInstance().sessionManager.hasConnectedCastSession()
-        guard let session = castSession, let client = session.remoteMediaClient else { playing = false; updateActivity(status: "Apri l’app per riconnettere Chromecast"); return }
+        guard let session = castSession, let client = session.remoteMediaClient, connected else {
+            if wantsPlayback { reconnectControls(); updateActivity(status:"Ricollego i controlli…") }
+            return
+        }
+        reconnectTask?.cancel(); reconnectTask = nil
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         deviceMuted = session.currentDeviceMuted
         if let status = client.mediaStatus {
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
             guard ownsCurrentMedia else {
-                if localProcessing && hasLoaded && !loadPending && !checkingStream { stopLocalProcessing(); hasLoaded = false; message = "La TV sta riproducendo un altro contenuto." }
+                if hasLoaded && !loadPending && !checkingStream { stopLocalProcessing(); hasLoaded = false; wantsPlayback = false; lockScreen.clear(); message = "La TV sta riproducendo un altro contenuto." }
                 playing = false; return
             }
             if checkingStream && status.playerState == .idle {
@@ -167,6 +189,7 @@ import UIKit
             duration = d.isFinite && d > 0 ? d : 0
             let currentLoad = !loadPending || loadAccepted
             if (status.playerState == .playing || status.playerState == .paused) && currentLoad {
+                hasLoaded = true; wantsPlayback = true
                 if loadPending { loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = true }
                 if !checkingStream { message = playing ? "In riproduzione sulla TV." : "In pausa sulla TV." }
                 updateActivity(status: playing ? "In riproduzione" : "In pausa")
@@ -183,6 +206,7 @@ import UIKit
                 message = "La riproduzione si è interrotta. Riprova: la posizione è conservata."
                 updateActivity(status: "Errore: apri l’app per riprovare")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .finished {
+                wantsPlayback = false; lockScreen.clear()
                 loadPending = false; loading = false; loadTimeout?.cancel()
                 message = "Riproduzione terminata."
                 if let positionKey { UserDefaults.standard.removeObject(forKey: positionKey) }
@@ -191,10 +215,24 @@ import UIKit
                 updateActivity(status: "Riproduzione terminata")
                 lastGoodPosition = 0
             } else if status.playerState == .idle && currentLoad && status.idleReason == .cancelled {
+                wantsPlayback = false; lockScreen.clear()
                 loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = false
                 stopLocalProcessing(); message = "Riproduzione interrotta."
                 updateActivity(status:"Riproduzione interrotta")
             }
+        }
+    }
+    private func reconnectControls() {
+        guard reconnectTask == nil, wantsPlayback, let device = lastDevice else { return }
+        reconnectTask = Task { [weak self] in
+            for delay in [1,2,4,8,12] {
+                try? await Task.sleep(nanoseconds:UInt64(delay)*1_000_000_000)
+                guard !Task.isCancelled, let self, self.wantsPlayback else { return }
+                let manager = GCKCastContext.sharedInstance().sessionManager
+                if manager.hasConnectedCastSession() { self.refreshConnection(); return }
+                if manager.connectionState != .connecting { _ = manager.startSession(with:device) }
+            }
+            self?.reconnectTask = nil
         }
     }
     private func prepareDirectControls() {
@@ -294,6 +332,7 @@ import UIKit
     }
     func choose(_ source: AddonStream) {
         resetPlayback()
+        wantsPlayback = true
         work?.cancel(); subtitleFile = nil; embeddedSubtitleURL = nil; selectedSource = source; prepared = nil; originalURL = nil; hasLoaded = false; lastGoodPosition = 0
         guard let handoff else { message = "Riapri la sorgente da Stremio."; return }
         let identity = handoff.provider + "|" + source.identity
@@ -333,12 +372,13 @@ import UIKit
                 }
                 try Task.checkCancellation()
                 guard !result.audio.isEmpty else { throw BridgeError.cannotResolve }
-                prepared = result; selectedAudio = result.defaultAudioKey
+                prepared = result; selectedAudio = PlaybackPreferences.audio(result.audio,fallback:result.defaultAudioKey)
                 selectedQuality = result.availableQualities.contains(.high) ? .high : (result.availableQualities.first ?? .high)
                 compatibilityMode = false
-                selectedSubtitle = handoff.subtitleLanguage == "off" ? "none" : (externalSubtitleURL != nil ? "external" : "none")
+                selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage)
                 busy = false
-                message = "Video pronto. Collega il Chromecast e premi Riproduci sulla TV."
+                message = "Video pronto. Collega la TV per iniziare."
+                if connected && wantsPlayback { load() }
             } catch is CancellationError { } catch {
                 if Task.isCancelled { return }
                 busy = false
@@ -358,6 +398,7 @@ import UIKit
         }
     }
     func load(preservePosition: Bool = false) {
+        wantsPlayback = true
         startPlayback(requestedPosition:nil,autoplay:hasLoaded ? playing : true)
     }
     private func startPlayback(requestedPosition: Double?, autoplay: Bool) {
@@ -390,7 +431,7 @@ import UIKit
                 guard let self else { return }
                 var captions: [Int:String] = [:]
                 for (id,url) in [(1,selection.external),(2,selection.extracted)] {
-                    if let url, let text = await self.readCaption(url) { captions[id] = text }
+                    if id == requiredCaption, let url, let text = await self.readCaption(url) { captions[id] = text }
                     try Task.checkCancellation()
                 }
                 if let requiredCaption, captions[requiredCaption] == nil {
@@ -471,7 +512,7 @@ import UIKit
             info.streamType = .buffered
             info.contentType = contentTypeOverride ?? prepared.directContentType
             let metadata = GCKMediaMetadata(metadataType:.movie)
-            metadata.setString(selectedSource?.filename ?? "Stremio", forKey:kGCKMetadataKeyTitle)
+            metadata.setString(displayTitle, forKey:kGCKMetadataKeyTitle)
             info.metadata = metadata
             info.textTrackStyle = SubtitleAppearance.load().castStyle
             let load = GCKMediaLoadRequestDataBuilder()
@@ -575,7 +616,21 @@ import UIKit
            url.path.hasPrefix("/api/bridge/subtitle/"), url.pathExtension == "vtt" { return url }
         return nil
     }
-    func togglePlayback() { guard let client, ownsCurrentMedia, !loadPending, !loading else { return }; if !hasLoaded { load(); return }; if playing { client.pause() } else { client.play() } }
+    func togglePlayback() { Task { _ = await handleCommand("toggle") } }
+    func tracksChanged(audio:Bool) {
+        guard let prepared, !busy else { return }
+        if audio { PlaybackPreferences.remember(audio:prepared.audio.first(where:{$0.key == selectedAudio}),subtitle:nil) }
+        else {
+            let language = selectedSubtitle == "none" ? "none" : ["external","embedded"].contains(selectedSubtitle) ? handoff?.subtitleLanguage : prepared.subtitles.first(where:{$0.key == selectedSubtitle})?.language
+            PlaybackPreferences.remember(audio:nil,subtitle:language)
+        }
+        trackApplyTask?.cancel()
+        trackApplyTask = Task {
+            try? await Task.sleep(nanoseconds:400_000_000)
+            guard !Task.isCancelled, hasLoaded, !loading else { return }
+            load(preservePosition:true)
+        }
+    }
     func applySubtitleAppearance() {
         subtitleStyleWork?.cancel()
         subtitleStyleWork = Task {
@@ -633,7 +688,26 @@ import UIKit
             updateActivity(status: "Apri l’app per riprovare")
         }
     }
+    private func handleCommand(_ command:String) async -> Bool {
+        let canUseDirect = !localProcessing || ["toggle","play","pause","stop"].contains(command)
+        if canUseDirect && (UIApplication.shared.applicationState != .active || !connected) {
+            if await directCommand(command) { return true }
+        }
+        if await performActivityCommand(command) { return true }
+        return canUseDirect ? await directCommand(command) : false
+    }
+    private func directCommand(_ command:String) async -> Bool {
+        let success = await CastDirectControl.perform(command,offset:streamOffset,originalDuration:localProcessing ? duration : nil) { [weak self] position,duration,playing in
+            guard let self else { return }
+            self.position = position; self.lastGoodPosition = position; self.duration = duration; self.playing = playing
+            self.nativeEngine?.setReceiverPaused(!playing)
+            self.updateActivity(status:playing ? "In riproduzione" : "In pausa")
+        }
+        if success && command == "stop" { resetPlayback(); hasLoaded = false; playing = false; message = "Riproduzione interrotta." }
+        return success
+    }
     private func performActivityCommand(_ command: String) async -> Bool {
+        if client == nil || !connected { reconnectControls() }
         for _ in 0..<20 {
             if client != nil { break }
             try? await Task.sleep(nanoseconds: 250_000_000)
@@ -644,6 +718,9 @@ import UIKit
         }
         let request: GCKRequest
         switch command {
+        case "play": request = client.play()
+        case "pause": request = client.pause()
+        case "stop": stopPlayback(); return true
         case "toggle": request = client.mediaStatus?.playerState == .playing ? client.pause() : client.play()
         case let value where value == "back" || value == "forward" || value.hasPrefix("seek:"):
             let current = client.approximateStreamPosition() + streamOffset
@@ -677,6 +754,8 @@ import UIKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil
+        trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear()
         streamCheckTask?.cancel(); streamCheckTask = nil; checkingStream = false; playbackIssue = nil
         subtitleStyleWork?.cancel()
         directCaptureTask?.cancel(); directCaptureKey = nil; CastDirectControl.clear()
@@ -701,6 +780,9 @@ import UIKit
         }
     }
     private func updateActivity(status: String) {
+        if wantsPlayback && (hasLoaded || loadPending || localProcessing) {
+            lockScreen.update(title:displayTitle,device:deviceName,position:lastGoodPosition,duration:duration,playing:playing,loading:loading,local:localProcessing)
+        }
         guard hasLoaded || loadPending || activity != nil else { return }
         let stateKey = "\(status)|\(Int(lastGoodPosition / 10))|\(Int(duration))"
         let age = Date().timeIntervalSince(lastActivityUpdate)
@@ -708,7 +790,7 @@ import UIKit
         lastActivityState = stateKey; lastActivityUpdate = Date()
         let state = CastActivityAttributes.ContentState(status: status, playing: playing, position: lastGoodPosition, duration: duration, updatedAt: Date())
         if activity == nil, ActivityAuthorizationInfo().areActivitiesEnabled {
-            let attributes = CastActivityAttributes(title: selectedSource?.filename ?? "Stremio")
+            let attributes = CastActivityAttributes(title: displayTitle)
             if #available(iOS 16.2, *) { activity = try? Activity.request(attributes: attributes, content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(60)), pushType: nil) }
             else { activity = try? Activity.request(attributes: attributes, contentState: state, pushType: nil) }
         } else if let activity {

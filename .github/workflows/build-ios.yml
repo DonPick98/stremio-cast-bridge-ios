@@ -25,6 +25,8 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/playback-preferences-tests"
+          "$RUNNER_TEMP/playback-preferences-tests"
           swiftc -parse-as-library Sources/SubtitleAppearance.swift CastRemote/BridgeClient.swift Tests/HandoffTests.swift -o "$RUNNER_TEMP/handoff-tests"
           "$RUNNER_TEMP/handoff-tests"
           swiftc -parse-as-library Sources/CastWire.swift Sources/SubtitleAppearance.swift Tests/ControlPreferencesTests.swift -o "$RUNNER_TEMP/control-tests"

@@ -21,10 +21,8 @@ struct CastActivityAttributes: ActivityAttributes {
     static var usesLocalStream = false
     static func send(_ command: String) async -> Bool {
 #if !CAST_WIDGET
-        if usesLocalStream { return await handler?(command) ?? false }
-        if UIApplication.shared.applicationState != .active {
-            return await CastDirectControl.perform(command)
-        }
+        if let handler { return await handler(command) }
+        if usesLocalStream { return false }
 #endif
         for _ in 0..<20 {
             if let handler {

@@ -116,7 +116,7 @@ final class CastCommandSocket: @unchecked Sendable {
         UserDefaults.standard.set(data,forKey:key)
     }
     static func clear() { UserDefaults.standard.removeObject(forKey:key) }
-    static func perform(_ command: String) async -> Bool {
+    static func perform(_ command: String,offset:Double = 0,originalDuration:Double? = nil,onStatus:((Double,Double,Bool)->Void)? = nil) async -> Bool {
         guard !busy, let data = UserDefaults.standard.data(forKey:key),
               let ctx = try? JSONDecoder().decode(Context.self,from:data), Date().timeIntervalSince(ctx.storedAt) < 86400 else { return false }
         busy = true; defer { busy = false }
@@ -136,13 +136,15 @@ final class CastCommandSocket: @unchecked Sendable {
             let duration = (media["duration"] as? NSNumber)?.doubleValue ?? 0
             var body: [String:Any] = ["mediaSessionId":session]
             if command == "toggle" { body["type"] = mediaStatus["playerState"] as? String == "PLAYING" ? "PAUSE" : "PLAY" }
+            else if ["play","pause","stop"].contains(command) { body["type"] = command.uppercased() }
             else if let target = CastWire.seekTarget(command,current:current,duration:duration) { body["type"] = "SEEK"; body["currentTime"] = target }
             else { return false }
             let result = try await socket.request(body,namespace:CastWire.media,destination:transport)
             guard result["type"] as? String == "MEDIA_STATUS", let actual = (result["status"] as? [[String:Any]])?.first else { return false }
-            let actualPosition = (actual["currentTime"] as? NSNumber)?.doubleValue ?? current
-            let actualDuration = ((actual["media"] as? [String:Any])?["duration"] as? NSNumber)?.doubleValue ?? duration
+            let actualPosition = ((actual["currentTime"] as? NSNumber)?.doubleValue ?? current) + offset
+            let actualDuration = originalDuration ?? (((actual["media"] as? [String:Any])?["duration"] as? NSNumber)?.doubleValue ?? duration)
             let playing = actual["playerState"] as? String == "PLAYING"
+            onStatus?(actualPosition,actualDuration,playing)
             for activity in Activity<CastActivityAttributes>.activities {
                 let state = CastActivityAttributes.ContentState(status:playing ? "In riproduzione" : "In pausa",playing:playing,position:actualPosition,duration:actualDuration,updatedAt:Date())
                 if #available(iOS 16.2, *) { await activity.update(ActivityContent(state:state,staleDate:Date().addingTimeInterval(60))) }
@@ -153,4 +155,3 @@ final class CastCommandSocket: @unchecked Sendable {
         } catch { return false }
     }
 }
-
