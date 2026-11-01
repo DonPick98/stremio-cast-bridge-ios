@@ -148,10 +148,16 @@ import MediaPlayer
             try? await Task.sleep(nanoseconds:12_000_000_000)
             guard !Task.isCancelled else { return (false,false) }
             engine.setReceiverPaused(true)
-            try? await Task.sleep(nanoseconds:1_000_000_000)
+            // A TCP send already in flight can complete after pause. Wait for
+            // that actual operation to drain before measuring the plateau.
+            var drained = false
+            for _ in 0..<100 {
+                if await engine.testingPauseDrained() { drained = true; break }
+                try? await Task.sleep(nanoseconds:100_000_000)
+            }
             let settled = await engine.testingDeliveredBytes()
             try? await Task.sleep(nanoseconds:500_000_000)
-            let paused = await engine.testingDeliveredBytes() == settled
+            let paused = await engine.testingDeliveredBytes() == settled && drained
             engine.setReceiverPaused(false)
             var resumed = false
             for _ in 0..<40 {

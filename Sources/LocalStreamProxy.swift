@@ -186,6 +186,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     }
 #if CAST_ENGINE_TESTING
     func testingDeliveredBytes() async -> Int { await withCheckedContinuation { c in queue.async { c.resume(returning:self.deliveredBytes) } } }
+    func testingPauseDrained() async -> Bool { await withCheckedContinuation { c in queue.async { c.resume(returning:self.paused && !self.pairs.isEmpty && self.pairs.values.allSatisfy{ !$0.waiting && !$0.sending }) } } }
 #endif
     /// Keep the validated initialization and first media bytes on the very
     /// connection that the receiver will consume, rather than probing and

@@ -186,7 +186,7 @@ import UIKit
             PlaybackDiagnostics.shared.changed("receiver",event:.cast,["status":String(status.playerState.rawValue),"idle":String(status.idleReason.rawValue),"owned":String(ownsCurrentMedia),"pending":String(loadPending),"local":String(localProcessing)])
             if Date().timeIntervalSince(lastDiagnosticSnapshot) >= 15 {
                 lastDiagnosticSnapshot = Date()
-                PlaybackDiagnostics.record(.snapshot,["position":PlaybackDiagnostics.number(position),"offset":PlaybackDiagnostics.number(streamOffset),"duration":PlaybackDiagnostics.number(duration),"target":PlaybackDiagnostics.number(timeline.target ?? -1)])
+                PlaybackDiagnostics.record(.snapshot,["position":PlaybackDiagnostics.number(position),"reported":PlaybackDiagnostics.number(client.approximateStreamPosition()+streamOffset),"offset":PlaybackDiagnostics.number(streamOffset),"duration":PlaybackDiagnostics.number(duration),"target":PlaybackDiagnostics.number(timeline.target ?? -1)])
             }
             // This status still belongs to the stream being replaced. Keep the
             // requested position, autoplay intent and any new preparation intact.
@@ -448,6 +448,14 @@ import UIKit
             } catch is CancellationError { } catch {
                 if Task.isCancelled || !sourceRequests.accepts(sourceToken) { return }
                 PlaybackDiagnostics.record(.error,["phase":"resolve","kind":String(describing:type(of:error)),"code":String((error as NSError).code)])
+                if let rd = error as? RDResolverError {
+                    switch rd {
+                    case .apiFailure(let status,let code,_): PlaybackDiagnostics.record(.error,["phase":"debrid","status":String(status),"code":code.map{String($0)} ?? "none"])
+                    case .http(let status): PlaybackDiagnostics.record(.error,["phase":"debrid","status":String(status)])
+                    case .rateLimited(let seconds): PlaybackDiagnostics.record(.error,["phase":"debrid","status":"429","seconds":String(seconds)])
+                    default: break
+                    }
+                }
                 busy = false
                 message = (error as? RDResolverError)?.localizedDescription ?? (error as? BridgeError)?.localizedDescription ?? "Non riesco a leggere le tracce di questo file. Scegli un’altra sorgente."
             }

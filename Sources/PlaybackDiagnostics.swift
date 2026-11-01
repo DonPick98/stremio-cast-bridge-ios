@@ -16,7 +16,7 @@ import Foundation
     private var entries:[Entry] = []
     private var flushTask:Task<Void,Never>?
     private var changes:[String:String] = [:]
-    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build"]
+    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build"]
 
     init(retention:TimeInterval = 600,limit:Int = 600,file:URL? = nil,clock:@escaping () -> Date = Date.init) {
         self.retention = retention; self.limit = limit; self.file = file; self.clock = clock
@@ -74,5 +74,5 @@ import Foundation
 @MainActor enum PlaybackDiagnostics {
     static let shared = DiagnosticRecorder(file:FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask).first?.appendingPathComponent("CastBridge/playback-diagnostics.json"))
     static func record(_ event:DiagnosticRecorder.Event,_ fields:[String:String] = [:]) { shared.record(event,fields) }
-    static func number(_ value:Double) -> String { value.isFinite ? String(format:"%.3f",value) : "unknown" }
+    static func number(_ value:Double) -> String { value.isFinite ? String(format:"%.3f",locale:Locale(identifier:"en_US_POSIX"),value) : "unknown" }
 }

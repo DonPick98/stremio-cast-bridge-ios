@@ -318,6 +318,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var testingStoppedRepair: AudioRepairPipe?
     var testingStopCompleted: Bool { testingVideoStopped && (testingStoppedRepair?.testingStopCompleted ?? true) }
     func testingDeliveredBytes() async -> Int { await proxy?.testingDeliveredBytes() ?? 0 }
+    func testingPauseDrained() async -> Bool { await proxy?.testingPauseDrained() ?? false }
     var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
     var testingProducerPlaying: Bool { player?.isPlaying == true }
     var testingProducerState: String { player.map { String($0.state.rawValue) } ?? "nil" }
