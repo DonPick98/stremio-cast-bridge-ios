@@ -64,6 +64,7 @@ jobs:
               find "$data/Documents" -name 'repair-*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'stdio*' -exec cp '{}' native-engine-report/ \;
               if test -f "$data/Documents/matrix-embedded_text.mp4"; then ffmpeg -hide_banner -loglevel error -ss 0.5 -i "$data/Documents/matrix-embedded_text.mp4" -frames:v 1 native-engine-report/subtitle-frame.png; fi
+              node Tests/verify-decoded-media.mjs native-engine-report Tests/CodecSamples/h264-ac3.mkv
               node -e 'const r=require("./native-engine-report/engine-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
               exit 0
             fi

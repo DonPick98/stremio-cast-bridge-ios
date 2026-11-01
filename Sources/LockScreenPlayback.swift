@@ -85,6 +85,7 @@ import MobileVLCKit
     }
     private func updateBackground() {
         guard active, !local else { helper?.stop(); helper = nil; return }
+        if helper?.isPlaying == true { return }
         try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         if helper == nil { let player = VLCMediaPlayer(options:["--demux=rawaud"]); player.media = VLCMedia(path:"/dev/zero"); helper = player }

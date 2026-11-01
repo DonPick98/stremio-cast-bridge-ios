@@ -641,12 +641,14 @@ import UIKit
         }
     }
     func seek(to value: Double) {
-        guard let client, ownsCurrentMedia, !loadPending, !loading, value.isFinite else { return }
+        guard hasLoaded, !loadPending, !loading, value.isFinite else { return }
         let target = min(duration > 0 ? max(0,duration-(localProcessing ? 1 : 0)) : value,max(0,value))
-        if localProcessing { startPlayback(requestedPosition:target,autoplay:playing); return }
-        let opts = GCKMediaSeekOptions(); opts.interval = target; client.seek(with:opts)
+        Task { _ = await handleCommand("seek:\(target)") }
     }
     func stopPlayback() {
+        Task { if !(await handleCommand("stop")) { endPlayback() } }
+    }
+    private func endPlayback() {
         if ownsCurrentMedia { client?.stop() }
         resetPlayback(); hasLoaded = false; playing = false; message = "Riproduzione interrotta."
     }
@@ -720,7 +722,7 @@ import UIKit
         switch command {
         case "play": request = client.play()
         case "pause": request = client.pause()
-        case "stop": stopPlayback(); return true
+        case "stop": endPlayback(); return true
         case "toggle": request = client.mediaStatus?.playerState == .playing ? client.pause() : client.play()
         case let value where value == "back" || value == "forward" || value.hasPrefix("seek:"):
             let current = client.approximateStreamPosition() + streamOffset
