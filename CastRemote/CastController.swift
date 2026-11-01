@@ -701,7 +701,8 @@ import UIKit
                 let center = nativeEngine?.captionWindow.center ?? 0
                 let delay = id >= 10000 ? center+Double(id%10000-10)/2 : center
                 let name = SubtitleLanguage.name(language) + (urlOverride == nil ? "" : String(format:" · %+.1f s",delay))
-                if let track = GCKMediaTrack(identifier:id,contentIdentifier:url.absoluteString,contentType:"text/vtt",type:.text,textSubtype:.subtitles,name:name,languageCode:SubtitleLanguage.code(language),customData:nil) { textTracks.append(track) }
+                if urlOverride != nil || url.pathExtension.lowercased() == "vtt",
+                   let track = GCKMediaTrack(identifier:id,contentIdentifier:url.absoluteString,contentType:"text/vtt",type:.text,textSubtype:.subtitles,name:name,languageCode:SubtitleLanguage.code(language),customData:nil) { textTracks.append(track) }
             }
             info.mediaTracks = textTracks
             let kind = selectedSubtitle == "external" ? 1 : selectedSubtitle == "embedded" ? 2 : nil
@@ -789,7 +790,13 @@ import UIKit
     var embeddedSubtitleLabel:String { SubtitleLanguage.name(extractedCaptionLanguage) + " · dal file" }
     var hasExtractedCaption:Bool { embeddedSubtitleURL != nil || extractedCaptionText != nil }
     var selectedOnlineSubtitleID:String? { selectedOnlineSubtitle?.id }
-    private var subtitleIdentity:String { selectedSubtitle == "embedded" ? extractedCaptionKey : selectedOnlineSubtitle?.id ?? "source" }
+    private var subtitleIdentity:String {
+        if selectedSubtitle == "none" { return "none" }
+        if selectedSubtitle == "embedded" { return "embedded:"+extractedCaptionKey }
+        if selectedSubtitle.hasPrefix("vlc_") { return selectedSubtitle }
+        if let chosen = selectedOnlineSubtitle { return "online:"+chosen.id+":"+SubtitleLanguage.code(chosen.lang) }
+        return externalSubtitleURL.map{"source:"+String(contentDigest($0.absoluteString).prefix(24))} ?? "source"
+    }
     private var subtitlePreferenceKey:String? {
         guard let handoff, let source = selectedSource else { return nil }
         return "cast.subtitle.delay." + contentDigest(handoff.type+"|"+handoff.id+"|"+source.identity+"|"+selectedSubtitle+"|"+subtitleIdentity)
