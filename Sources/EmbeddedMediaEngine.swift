@@ -21,7 +21,18 @@ enum EmbeddedMediaError: LocalizedError {
     enum VideoMode: Equatable { case copy, ffmpegH264, hardwareH264, softwareVP8 }
     static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false) -> [VideoMode] {
         let legacy = ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "")
-        if legacy && !burn && fallbackLevel < 2 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
+        // The pinned LGPL FFmpeg build lacks a working software AV1 decoder
+        // on this platform; VLC's bundled decoder handles this source instead.
+        if ["av01","av1"].contains(video?.codec.lowercased() ?? ""){
+            return fallbackLevel >= 2 ? [.softwareVP8]:[.hardwareH264,.softwareVP8]
+        }
+        // Keep the packet-copy path first for compatible video. When conversion
+        // is needed, FFmpeg preserves the source timestamps/frame cadence and
+        // drains the encoder before ending the output. VLC remains a fallback.
+        if !burn && fallbackLevel < 2 {
+            if legacy || requiresVideo || fallbackLevel == 1 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
+            return [.copy,.ffmpegH264,.hardwareH264,.softwareVP8]
+        }
         return fallbackLevel >= 2 ? [.softwareVP8] : (requiresVideo || fallbackLevel == 1) ? [.hardwareH264,.softwareVP8] : [.copy,.hardwareH264,.softwareVP8]
     }
     private var player: VLCMediaPlayer?
@@ -157,7 +168,11 @@ enum EmbeddedMediaError: LocalizedError {
             return url
         }
         var producerInput = input
-        let repairInput = repairAudio || offset > 0
+        // Overlays need the same selected-track/AAC input at time zero as
+        // after a seek. Otherwise EAC3/FLAC + ASS starts on an entirely
+        // different decoder path and may fail before a Cast LOAD is sent.
+        let repairInput = repairAudio || offset > 0 || subtitleID != nil
+        PlaybackDiagnostics.record(.producer,["phase":"input","kind":repairInput ? "normalized" : "original","audio":String(audioIndex),"subtitle":subtitleIndex.map{String($0)} ?? "none"])
         if repairInput {
             let repair = AudioRepairPipe(); audioRepair = repair
             producerInput = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
@@ -235,7 +250,10 @@ enum EmbeddedMediaError: LocalizedError {
                 streamURL = url; startedStream = true
                 return url
             } catch LocalStreamError.upstream { try Task.checkCancellation() }
-            catch { stop(); throw EmbeddedMediaError.output }
+            catch {
+                PlaybackDiagnostics.record(.error,["phase":"output_readiness","kind":String(describing:type(of:error)),"code":(error as? LocalStreamError).map{String(describing:$0)} ?? String((error as NSError).code),"status":realState(player).map{String($0)} ?? "unknown"])
+                stop(); throw EmbeddedMediaError.output
+            }
             try await Task.sleep(nanoseconds:5_000_000)
         }
         stop(); throw EmbeddedMediaError.timeout
@@ -357,7 +375,7 @@ enum EmbeddedMediaError: LocalizedError {
         let status = withUnsafeMutablePointer(to:&addr) { $0.withMemoryRebound(to:sockaddr.self,capacity:1) { getsockname(fd,$0,&size) } }
         guard status == 0 else { throw EmbeddedMediaError.address }; return UInt16(bigEndian:addr.sin_port)
     }
-    private static func localAddress(to peer:String) throws -> String {
+    static func localAddress(to peer:String) throws -> String {
         let fd = Darwin.socket(AF_INET,SOCK_DGRAM,0); guard fd >= 0 else { throw EmbeddedMediaError.address }; defer { Darwin.close(fd) }
         var addr = sockaddr_in(); addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); addr.sin_family = sa_family_t(AF_INET); addr.sin_port = UInt16(8009).bigEndian
         guard inet_pton(AF_INET,peer,&addr.sin_addr) == 1 else { throw EmbeddedMediaError.address }

@@ -97,6 +97,9 @@ import MediaPlayer
             let captionSync = try await captionProbe(documents:documents,input:input)
             result["captionSync"] = captionSync
             result["passed"] = (result["passed"] as? Bool == true) && (captionSync["passed"] as? Bool == true)
+            let independent = try await CaptionIntegrationValidation.run(documents:documents)
+            result["independentCaptions"] = independent
+            result["passed"] = (result["passed"] as? Bool == true) && (independent["passed"] as? Bool == true)
             trace("quality and seek regressions")
             let quality = await qualityProbe(documents:documents)
             result["quality"] = quality
@@ -105,7 +108,7 @@ import MediaPlayer
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
                 result["matrix"] = matrix
-                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 31 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 33 && matrix.allSatisfy { $0["passed"] as? Bool == true }
                 trace("background conversion")
                 let background = try await backgroundProbe(documents:documents)
                 result["background"] = background

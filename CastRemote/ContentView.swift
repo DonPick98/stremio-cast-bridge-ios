@@ -216,8 +216,14 @@ private struct TrackOptionsView: View {
                         }.disabled(cast.loading)
                         Button { showAppearance = true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
                         Button { showOnline = true } label: { Label("Scegli da Stremio e OpenSubtitles",systemImage:"captions.bubble") }
+                        if cast.supportsOriginalSubtitleStyle,media.subtitles.contains(where:{["ssa","ass"].contains($0.codec.lowercased())}){
+                            Toggle("Mantieni lo stile originale della traccia",isOn:Binding(get:{cast.preservesOriginalSubtitleStyle},set:{cast.setOriginalSubtitleStyle($0)}))
+                        }
                         if cast.subtitleDownloadBusy { HStack { ProgressView(); Text("Preparo i sottotitoli…").font(.footnote) } }
-                        if let issue = cast.subtitleIssue { Text(issue).font(.footnote).foregroundStyle(.orange) }
+                        if let issue = cast.subtitleIssue {
+                            Text(issue).font(.footnote).foregroundStyle(.orange)
+                            Button("Riprova sottotitoli"){cast.retryIndependentCaptions()}
+                        }
                         if media.subtitles.isEmpty { Text("Nessuna traccia incorporata rilevata.").font(.footnote).foregroundStyle(.secondary) }
                     }
                     if cast.selectedSubtitle != "none" {
@@ -383,4 +389,5 @@ private func playbackTime(_ seconds: Double) -> String {
     let n = Int(seconds)
     return n >= 3600 ? String(format:"%d:%02d:%02d",n/3600,(n/60)%60,n%60) : String(format:"%d:%02d",n/60,n%60)
 }
+
 

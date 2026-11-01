@@ -26,3 +26,8 @@ The LGPL base build of FFmpegKit Extended copies compatible original video packe
 - The pinned build declares CONFIG_GPL=0, CONFIG_NONFREE=0, CONFIG_TRUEHD_DECODER=1, CONFIG_AAC_ENCODER=1 and CONFIG_SECURETRANSPORT=1.
 
 The dependency is dynamically linked. To relink a modified version, build the same base LGPL variant from the supplied upstream scripts, replace the archive in ThirdParty/CastFFmpegKit.podspec, run pod install and rebuild this app from source. CastFFmpegBridge.h declares only the public C ABI needed by this integration; no library binary is modified.
+
+
+## Independent caption receiver
+
+Receiver/vendor/stremio contains MIT-licensed parsing/rendering code from Stremio/stremio-video at 7a7462bedfa51dc8303fbc4f59f16e03d0badb85 (Smart Code OOD). The receiver uses vtt.js 0.13.0 (Mozilla, Apache 2.0) and @stremio/libass-wasm 4.2.7 (libass and dependency licenses). Full notices and upstream sources are in Receiver/THIRD_PARTY_NOTICES.txt and deployment licenses/. No Stremio application ID or service credentials are reused.

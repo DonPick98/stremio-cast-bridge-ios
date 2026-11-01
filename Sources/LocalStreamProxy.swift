@@ -409,3 +409,4 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
 }
+

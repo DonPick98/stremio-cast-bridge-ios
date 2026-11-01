@@ -50,3 +50,4 @@ enum SubtitleDocument {
         _ = try WebVTTTimeline.rebased(result,offset:0); return result
     }
 }
+

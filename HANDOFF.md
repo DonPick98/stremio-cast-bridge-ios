@@ -1,3 +1,68 @@
+# Technical checkpoint: Cast Bridge 0.7.0 (17) - FREE receiver
+
+## Current user decision
+
+Use Google's Default Media Receiver (CC1AD845). The delivered app requires no
+Google Cast developer registration, payment, new receiver hosting or Sites change.
+The optional Receiver/ experiment is inactive with the default build configuration;
+do not make its registration or publication a prerequisite for this release.
+
+## Validated source and artifact
+
+Application source: 3347dd93738202e7de6b163dc5684ff130010582.
+Production build: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41359477925
+Native integration: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41359477933
+Unsigned IPA SHA256: bc98bd6521ae53c5baccd7d14297b9a8db32e7527937caecd373f0ebdb151f69.
+The actual IPA plist was checked: 0.7.0, build17, receiverCC1AD845, matching Bonjour,
+background audio mode, icon, ffmpegkit framework and activity extension.
+
+## Free subtitle route
+
+Embedded text tracks are selected using FFprobe's actual stream index with codec/
+language validation, then exported by the pinned FFmpeg library to complete WebVTT.
+Extraction is cancellable, has a 120-second deadline and a 1 MiB output limit, and
+uses the existing remote-playback audio mechanism while preparing in background.
+Six complete documents can be cached for the current source; changing source
+invalidates workers and cache. Never pass a bounded 90-second window to the
+standard receiver as though it were a complete movie subtitle.
+
+The movie can start/continue while text is prepared. Pending/failed text does not
+trigger a subtitle burn or stop video. An extraction failure stays a subtitle
+error with retry/alternative subtitle choices. Actual bitmap tracks retain the
+compatibility overlay path and its recovery.
+
+Attaching a new, unregistered text track can require one video LOAD at the retained
+position. Previously registered off/on and fine delay variants use active track IDs.
+Arbitrary-language changes with zero reload are not guaranteed by the free route.
+ASS/SSA becomes standard text; original ASS styling is hidden in the free UI.
+Appearance and synchronization preferences remain persistent. Source-provided
+subtitles and the existing Stremio/OpenSubtitles catalogue remain available.
+
+Non-overlay conversions prefer FFmpeg/VideoToolbox to retain timestamps and frame
+cadence; compatible video still uses packet copy. AV1 uses VLC because the pinned
+FFmpeg build did not deliver valid decoded AV1 video on the tested platform.
+Do not treat a successful process exit or metadata alone as valid video.
+
+## Completed checks and acceptance gap
+
+Both workflows succeeded. The native report passed 33 codec cases, five gateway
+scenarios, 38 independently decoded A/V outputs, four timed caption-pixel checks
+and ten strict video-quality/audio/seek checks. VP8 and AV1 each delivered 144/144
+expected frames. Six ASS/WebVTT windows, two complete-document exports including a
+late cue beyond 90 seconds, attached font bytes, cancellation and caption gateway
+checks passed. The offscreen transfer/pause/resume/cleanup probe passed (65.08s).
+Receiver experiment also has 14 Node tests and real browser rendering evidence,
+but it is not part of the selected free activation path.
+
+The new IPA has not yet been validated on the user's physical iPhone/Chromecast or
+with that phone locked. The earlier physical standard-receiver tests do not prove
+the new sender UI or private sources. Do not interrupt a movie for synthetic tests.
+Use the local >_ diagnostics after actual failures; never commit personal source
+manifests, Real-Debrid URLs/tokens, certificates or profiles.
+
+---
+## Historical 0.6.4 checkpoint (superseded where it conflicts with the above)
+
 # Technical checkpoint: Cast Bridge 0.6.4 (14)
 
 ## Source and validation

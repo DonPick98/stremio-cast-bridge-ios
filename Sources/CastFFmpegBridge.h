@@ -16,4 +16,11 @@ char *ffmpeg_kit_session_get_output(void *session);
 char *session_get_debug_log(void *session);
 void session_enable_debug_log(void *session);
 void ffmpeg_kit_free(void *pointer);
+int64_t ffmpeg_kit_session_get_session_id(void *session);
+void *media_information_create_session_from_argv(int argc, const char **argv);
+void media_information_session_execute_async(void *session, int64_t timeout);
+void *media_information_session_get_media_information(void *session);
+char *media_information_get_all_properties_json(void *information);
+void ffprobe_kit_cancel_session(int64_t session_id);
 #endif
+

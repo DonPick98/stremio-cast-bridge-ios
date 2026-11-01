@@ -56,7 +56,19 @@ for(const codec of ['srt','ass']){
  run(['-f','lavfi','-i','color=black:size=640x360:rate=24',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-i',path.join(root,'wrong.srt'),'-i',path.join(root,'seek.srt'),'-t','12','-map','0:v','-map','1:a','-map','2:a','-map','3:s','-map','4:s','-c:v','libx264','-pix_fmt','yuv420p','-preset','ultrafast','-g','48','-threads','2','-c:a','aac','-ac','2','-c:s',codec,'-metadata:s:a:0','language=eng','-metadata:s:a:1','language=ita','-metadata:s:s:0','language=eng','-metadata:s:s:1','language=ita',path.join(root,filename)]);
  cases.push({name:`caption_${codec}_seek`,filename,burn:true,start:3.25,selectAlternate:true,selectLastSubtitle:true});
 }
+// Startup versus seek: HEVC 10-bit 1080p, FLAC/EAC3/AAC/AAC, 13 ASS tracks.
+// Select the second audio (440 Hz EAC3) and the first, correctly timed caption.
+const animeMaps=['-map','0:v',...Array.from({length:4},(_,i)=>['-map',`${i+1}:a`]).flat(),'-map','5:s',...Array.from({length:12},()=>['-map','6:s']).flat()];
+run(['-f','lavfi','-i','color=black:size=1920x1080:rate=24000/1001',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-f','lavfi','-i','sine=frequency=660:sample_rate=48000','-f','lavfi','-i','sine=frequency=550:sample_rate=48000','-i',path.join(root,'seek.srt'),'-i',path.join(root,'wrong.srt'),'-t','12',...animeMaps,'-c:v','libx265','-pix_fmt','yuv420p10le','-preset','ultrafast','-x265-params','pools=2:frame-threads=2:log-level=error','-threads','2','-g','48','-c:a:0','flac','-c:a:1','eac3','-c:a:2','aac','-c:a:3','aac','-ac','2','-c:s','ass','-metadata:s:a:0','language=jpn','-metadata:s:a:1','language=eng','-metadata:s:s:0','language=eng',path.join(root,'caption-hevc-eac3.mkv')]);
+for(const [name,start] of [['caption_hevc_eac3_start',0],['caption_hevc_eac3_seek',3.25]]) cases.push({name,filename:'caption-hevc-eac3.mkv',burn:true,start,audioIndex:1});
+const font='/System/Library/Fonts/Supplemental/Arial.ttf';
+if(!fs.existsSync(font))throw new Error('Synthetic caption font fixture is required');
+fs.copyFileSync(font,path.join(root,'caption-font.ttf'));
+run(['-i',path.join(root,'caption-hevc-eac3.mkv'),'-map','0','-c','copy','-attach',font,'-metadata:s:t:0','filename=caption-font.ttf','-metadata:s:t:0','mimetype=application/x-truetype-font',path.join(root,'caption-with-font.mkv')]);
+fs.renameSync(path.join(root,'caption-with-font.mkv'),path.join(root,'caption-hevc-eac3.mkv'));
 fs.writeFileSync(path.join(root,'manifest.json'),JSON.stringify(cases,null,2));
+fs.writeFileSync(path.join(root,'late.srt'),'1\n00:01:40,000 --> 00:01:45,000\nLATE CAPTION\n');
+run(['-f','lavfi','-i','color=black:size=160x90:rate=1',...tone,'-i',path.join(root,'late.srt'),'-t','150','-map','0:v','-map','1:a','-map','2:s','-c:v','libx264','-preset','ultrafast','-g','1','-threads','2','-c:a','aac','-c:s','srt',path.join(root,'caption-late.mkv')]);
 run(['-stream_loop','-1','-i',base,...tone,'-t','1200','-map','0:v','-map','1:a','-c:v','copy','-c:a','ac3','-ac','2',path.join(root,'background-probe.mkv')]);
 console.log(`Generated ${cases.length} synthetic codec cases`);
 for(const [name,size,rate] of [['1080-23976','1920x1080','24000/1001'],['25','320x180','25'],['2997','320x180','30000/1001'],['720-60','1280x720','60']]){
