@@ -184,7 +184,8 @@ struct ContentView: View {
     }
     private func subtitleSummary(_ media: RDPreparedMedia) -> String {
         if cast.selectedSubtitle == "none" { return "Sottotitoli disattivati" }
-        if ["external","embedded"].contains(cast.selectedSubtitle) { return cast.externalSubtitleLabel }
+        if cast.selectedSubtitle == "embedded" { return cast.embeddedSubtitleLabel }
+        if cast.selectedSubtitle == "external" { return cast.externalSubtitleLabel }
         return media.subtitles.first(where:{$0.key == cast.selectedSubtitle}).map(trackLanguage) ?? "Sottotitoli"
     }
 }
@@ -193,6 +194,7 @@ private struct TrackOptionsView: View {
     @EnvironmentObject private var cast: CastController
     @Environment(\.dismiss) private var dismiss
     @State private var showAppearance = false
+    @State private var showOnline = false
     var body: some View {
         NavigationStack {
             Form {
@@ -204,11 +206,20 @@ private struct TrackOptionsView: View {
                         Picker("Traccia",selection:$cast.selectedSubtitle) {
                             Text("Disattivati").tag("none")
                             if cast.externalSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · esterni").tag("external") }
-                            if cast.embeddedSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · dal file").tag("embedded") }
+                            if cast.hasExtractedCaption { Text(cast.embeddedSubtitleLabel).tag("embedded") }
                             ForEach(media.subtitles) { Text(trackLabel($0,in:media.subtitles) + " · nel file").tag($0.key) }
                         }.disabled(cast.loading).onChange(of:cast.selectedSubtitle) { _ in cast.tracksChanged(audio:false) }
                         Button { showAppearance = true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
+                        Button { showOnline = true } label: { Label("Scegli da Stremio e OpenSubtitles",systemImage:"captions.bubble") }
+                        if cast.subtitleDownloadBusy { HStack { ProgressView(); Text("Preparo i sottotitoli…").font(.footnote) } }
+                        if let issue = cast.subtitleIssue { Text(issue).font(.footnote).foregroundStyle(.orange) }
                         if media.subtitles.isEmpty { Text("Nessuna traccia incorporata rilevata.").font(.footnote).foregroundStyle(.secondary) }
+                    }
+                    if cast.selectedSubtitle != "none" {
+                        Section("Sincronizzazione") {
+                            SubtitleSyncControls()
+                            if cast.loading { Button("Disattiva sottotitoli e riprendi") { cast.disableSubtitlesAndResume() } }
+                        }
                     }
                     Section {
                         Label("Formato automatico",systemImage:"wand.and.stars")
@@ -236,7 +247,79 @@ private struct TrackOptionsView: View {
                     }
                 }
                 .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Chiudi") { dismiss() } } }
-        }.preferredColorScheme(.dark).tint(CastPalette.accent).sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
+        }.preferredColorScheme(.dark).tint(CastPalette.accent)
+            .sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
+            .sheet(isPresented:$showOnline) { SubtitleBrowserView().environmentObject(cast) }
+    }
+}
+
+private struct SubtitleSyncControls:View {
+    @EnvironmentObject private var cast:CastController
+    @State private var draft:Double = 0
+    @State private var editing = false
+    var body:some View {
+        VStack(spacing:14) {
+            HStack {
+                Button("−0,5 s") { cast.changeSubtitleDelay(cast.subtitleDelay-0.5) }.accessibilityLabel("Anticipa di mezzo secondo")
+                Spacer()
+                Text(String(format:"%+.1f s",locale:Locale.current,editing ? draft : cast.subtitleDelay)).monospacedDigit()
+                Spacer()
+                Button("+0,5 s") { cast.changeSubtitleDelay(cast.subtitleDelay+0.5) }.accessibilityLabel("Ritarda di mezzo secondo")
+            }.buttonStyle(.borderless)
+            Slider(value:$draft,in:-300...300,step:0.5,onEditingChanged:{ active in editing = active; if !active { cast.changeSubtitleDelay(draft) } })
+            HStack { Button("−5 s") { cast.changeSubtitleDelay(cast.subtitleDelay-5) }; Spacer(); Button("Azzera") { cast.changeSubtitleDelay(0) }; Spacer(); Button("+5 s") { cast.changeSubtitleDelay(cast.subtitleDelay+5) } }.buttonStyle(.borderless)
+            Text("Se il testo arriva dopo la voce, anticipalo con −. Se arriva prima, ritardalo con +. La regolazione resta salvata per questo file e sottotitolo.").font(.footnote).foregroundStyle(.secondary)
+        }.onAppear { draft = cast.subtitleDelay }.onChange(of:cast.subtitleDelay) { value in if !editing { draft = value } }
+    }
+}
+
+private struct SubtitleBrowserView:View {
+    @EnvironmentObject private var cast:CastController
+    @Environment(\.dismiss) private var dismiss
+    @State private var language = "en"
+    @State private var query = ""
+    @State private var chosenID:String?
+    private var languages:[String] { Array(Set(["it","en",cast.defaultSubtitleLanguage]+(cast.onlineSubtitles+cast.sourceSubtitleOptions).map{SubtitleLanguage.code($0.lang)})).filter{!["none","off"].contains($0)}.sorted { SubtitleLanguage.name($0) < SubtitleLanguage.name($1) } }
+    private func visible(_ values:[OnlineSubtitle]) -> [OnlineSubtitle] { values.filter{SubtitleLanguage.code($0.lang) == language && (query.isEmpty || ($0.title+" "+$0.detail).localizedCaseInsensitiveContains(query))} }
+    var body:some View {
+        NavigationStack {
+            List {
+                Section {
+                    Picker("Lingua",selection:$language) { ForEach(languages,id:\.self) { Text(SubtitleLanguage.name($0)).tag($0) } }
+                    if let media = cast.prepared { Text("Il tuo video · "+media.videoDescription).font(.footnote).foregroundStyle(.secondary) }
+                }
+                if !visible(cast.sourceSubtitleOptions).isEmpty {
+                    Section("Forniti dalla sorgente Stremio") { ForEach(visible(cast.sourceSubtitleOptions)) { subtitleRow($0) } }
+                }
+                Section {
+                    if cast.subtitleSearchBusy { HStack { ProgressView(); Text("Cerco le versioni disponibili…") } }
+                    if let issue = cast.subtitleIssue { Text(issue).font(.footnote).foregroundStyle(.orange) }
+                    ForEach(visible(cast.onlineSubtitles)) { subtitleRow($0) }
+                    if !cast.subtitleSearchBusy && visible(cast.onlineSubtitles).isEmpty { Text("Nessuna versione in questa lingua. Prova un’altra lingua o aggiorna l’elenco.").font(.footnote).foregroundStyle(.secondary) }
+                } header: { Text("OpenSubtitles") } footer: { Text("Lo stesso add-on ufficiale usato da Stremio. Controlla il nome della versione; edizioni diverse possono avere tempi diversi.") }
+            }.navigationTitle("Scegli sottotitoli").navigationBarTitleDisplayMode(.inline)
+                .searchable(text:$query,prompt:"Cerca versione o gruppo")
+                .toolbar {
+                    ToolbarItem(placement:.cancellationAction) { Button("Chiudi") { dismiss() } }
+                    ToolbarItem(placement:.primaryAction) { Button { cast.searchSubtitles(refresh:true) } label: { Image(systemName:"arrow.clockwise") }.disabled(cast.subtitleSearchBusy) }
+                }
+                .task { let wanted = cast.defaultSubtitleLanguage; language = ["none","off"].contains(wanted) ? "en" : wanted; cast.searchSubtitles() }
+                .onChange(of:cast.selectedOnlineSubtitleID) { id in if id == chosenID { dismiss() } }
+                .onChange(of:cast.subtitleDownloadBusy) { active in if !active, chosenID != nil, cast.selectedOnlineSubtitleID == chosenID, cast.subtitleIssue == nil { dismiss() } }
+        }.preferredColorScheme(.dark).tint(CastPalette.accent)
+    }
+    private func subtitleRow(_ subtitle:OnlineSubtitle) -> some View {
+        Button { chosenID = subtitle.id; cast.pickSubtitle(subtitle) } label: {
+            HStack(spacing:12) {
+                VStack(alignment:.leading,spacing:5) {
+                    Text(subtitle.title).font(.subheadline).foregroundStyle(.primary).lineLimit(3)
+                    if !subtitle.detail.isEmpty { Text(subtitle.detail).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+                }
+                Spacer(minLength:0)
+                if cast.subtitleDownloadBusy && chosenID == subtitle.id { ProgressView() }
+                else if cast.selectedOnlineSubtitleID == subtitle.id { Image(systemName:"checkmark").foregroundStyle(CastPalette.accent) }
+            }.padding(.vertical,5)
+        }.buttonStyle(.plain)
     }
 }
 

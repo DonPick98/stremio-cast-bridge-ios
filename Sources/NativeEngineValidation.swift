@@ -94,6 +94,9 @@ import MediaPlayer
             }
             result["gateway"] = gatewayResults
             result["passed"] = (result["passed"] as? Bool == true) && gatewayResults.allSatisfy{$0["passed"] as? Bool == true}
+            let captionSync = try await captionProbe(documents:documents,input:input)
+            result["captionSync"] = captionSync
+            result["passed"] = (result["passed"] as? Bool == true) && (captionSync["passed"] as? Bool == true)
             trace("quality and seek regressions")
             let quality = await qualityProbe(documents:documents)
             result["quality"] = quality
@@ -102,7 +105,7 @@ import MediaPlayer
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
                 result["matrix"] = matrix
-                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 28 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 29 && matrix.allSatisfy { $0["passed"] as? Bool == true }
                 trace("background conversion")
                 let background = try await backgroundProbe(documents:documents)
                 result["background"] = background
@@ -110,6 +113,21 @@ import MediaPlayer
             }
         } catch { result["passed"] = false; result["error"] = "Native codec probe failed: \(error.localizedDescription)" }
         if let data = try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report,options:.atomic) }
+    }
+    private static func captionProbe(documents:URL,input:URL) async throws -> [String:Any] {
+        let engine = EmbeddedMediaEngine(); defer { engine.stop() }
+        let caption = "WEBVTT\n\n00:00:04.000 --> 00:00:06.000\nCaption sync sample\n\n"
+        let stream = try await engine.start(input:input,deviceIP:"127.0.0.1",start:1.25,videoMode:.copy,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),captions:[1:caption],subtitleDelay:30,selfTest:true)
+        var checks:[[String:Any]] = []
+        for (delay,expected) in [(30.0,"00:00:32.750"),(30.5,"00:00:33.250"),(29.5,"00:00:32.250")] {
+            guard let id = engine.captionID(kind:1,delay:delay), let url = engine.captionURLs[id] else { throw EmbeddedMediaError.encoder }
+            let (data,response) = try await URLSession.shared.data(from:url)
+            let text = String(decoding:data,as:UTF8.self)
+            checks.append(["delay":delay,"id":id,"passed":(response as? HTTPURLResponse)?.statusCode == 200 && text.contains(expected) && text.contains("Caption sync sample")])
+        }
+        let (body,_,eof) = try await NativeStreamCapture().read(stream)
+        let passed = engine.captionURLs.count == 21 && checks.allSatisfy{$0["passed"] as? Bool == true} && eof && body.count > 4096
+        return ["passed":passed,"variants":engine.captionURLs.count,"checks":checks,"videoPreserved":eof && body.count > 4096]
     }
     private static func qualityProbe(documents:URL) async -> [[String:Any]] {
         let cases:[(String,String,EmbeddedMediaEngine.VideoMode,Double,Int)] = [

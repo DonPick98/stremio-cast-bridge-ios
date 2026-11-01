@@ -3,6 +3,14 @@ import Foundation
 @main struct PlaybackRegressions {
     static func main() {
         let episode = PlaybackContent(type:"series",id:"tt1234567:1:1")
+        precondition(PlaybackResume.validated(4600.572,duration:2915) == 0)
+        precondition(PlaybackResume.validated(2914,duration:2915) == 0)
+        precondition(PlaybackResume.validated(422.058,duration:2915) == 422.058)
+        precondition(PlaybackResume.validated(.nan,duration:2915) == 0)
+        precondition(!PlaybackReadiness.progressed(actual:21.664,start:21.660,paused:false))
+        precondition(!PlaybackReadiness.progressed(actual:.nan,start:21.660,paused:false))
+        precondition(PlaybackReadiness.progressed(actual:22,start:21.660,paused:false))
+        precondition(PlaybackReadiness.progressed(actual:21.660,start:21.660,paused:true))
         precondition(episode.positionKey == PlaybackContent(type:"series",id:"tt1234567:1:1").positionKey)
         precondition(episode.positionKey != PlaybackContent(type:"series",id:"tt1234567:1:2").positionKey)
         precondition(episode.positionKey != PlaybackContent(type:"movie",id:"tt1234567").positionKey)

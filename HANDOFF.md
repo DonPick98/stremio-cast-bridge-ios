@@ -1,31 +1,37 @@
-# Technical checkpoint: Cast Bridge 0.6.2 (12)
+# Technical checkpoint: Cast Bridge 0.6.3 (13)
 
-## Current application
+## Source and validation
 
-Validated media-engine source: 7edf7fa7b6ba925b2c813e931093b2a81e2ffc07. The main release additionally includes a display-only guard for unknown resolution.
-Production build: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41327486735
-Native validation: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41327486801
+Validated media-engine source: f7eae139a3f06266f9597a6266ca08967ac486e3.
+Native integration: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41338472674
+Initial production compile and regression tests: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41338472694
 
-The terminal icon beside Settings copies local playback diagnostics for the preceding ten minutes, bounded to 600 events. The cache survives an app restart and prunes expired entries. Numeric errors, source/stream revisions, codec/dimensions/cadence, selected track keys, preparation attempts, producer exit, receiver state, requested positions and receiver-reported positions help distinguish source, conversion and Cast failures. Real-Debrid HTTP status and API code are recorded without response bodies. The clipboard item is local-only and expires after one hour. Nothing is sent automatically. URLs, credentials, titles, caption text and raw third-party error descriptions must never be logged.
+The main release adds controller request-order guards, preservation of delay during text extraction, a text-only fallback selection guard, explicit timing names and numeric raw receiver position in diagnostics. These changes leave the validated media engine and timestamp transformation unchanged; the main production workflow compiles and runs the resolver, subtitle catalogue, timing, resume, indexed-extraction and privacy-related parser checks.
 
-Legacy MPEG-4 ASP, MPEG-2 and WMV2 can use FFmpeg software decoding and H.264 VideoToolbox encoding directly into the bounded output socket. VLC H.264 and VP8 remain fallback attempts. Burned subtitles use VLC; software decoding is explicitly selected for legacy MPEG-4 input. SD input is not upscaled and fractional cadence is retained. A new source or failed preparation clears the previous stream's quality description.
+The native suite passes 29 actual-gateway codec cases, five gateway scenarios and ten strict video-quality/audio/seek cases, with 34 decoded baseline outputs. A new burned-text case starts at a non-keyframe seek position. Caption integration verifies 21 timing variants, actual HTTP cue timestamps after a seek, half-second delay changes and retained video EOF. The offscreen transfer probe also checks real delivery pause/resume and worker shutdown.
 
-The existing revision-based source/stream state, queued latest seek, retained play/pause intention and canonical film/episode resume key are unchanged. Compatible H.264 remains packet-copied through FFmpeg, avoiding VLC packetizer B-frame loss. The system media card remains the only Lock Screen playback surface; old ActivityKit cards are closed when opening the app.
+A guarded physical classic Chromecast test loads one video with 21 text tracks, switches +0.5/-0.5/zero using EDIT_TRACKS_INFO, confirms active track IDs and advancing playback without replacing the media session or reloading video, then restores the idle screen. The receiver prefetches all caption variants, so total memory and download size are bounded by the text limit and the 21-track window.
 
-## Validation
+## OpenSubtitles and Stremio
 
-The codec matrix captures the actual EmbeddedMediaEngine gateway for all 28 cases and waits for natural EOF. Five gateway scenarios and ten strict dimensions/cadence/audio/seek audits add up to 43 media outputs. A MPEG-4 ASP fixture at 720x480 and 30000/1001 fps includes B frames, quarter-pixel motion, two audio tracks and SRT. Tests cover normal playback, burned subtitles and non-keyframe seek with alternate audio. Original H.264 1080p frame hashes are checked for identity.
+SubtitleCatalog uses the same official opensubtitles-v3.strem.io add-on as Stremio, through the documented subtitles resource. It includes the exact content ID and optional filename, byte size and OpenSubtitles hash. The hash uses two validated 64 KiB ranges; it never downloads the movie merely to identify subtitles. Results retain language, subtitle filename, release and optional FPS. Exact episode names are ranked above conflicting episode/pilot names. FPS similarity is a hint, never an automatic speed conversion.
 
-The 65-second offscreen transfer probe checks delivered-byte pause/resume, a rapid pause/play pair, the audio helper and actual worker cancellation. Pause measurement waits for in-flight network operations to drain, then requires a stable delivered-byte count and subsequent resumed delivery.
+Source-provided external tracks appear alongside online results. The app retains embedded-track discovery. It can unwrap a Stremio localhost subtitle-conversion URL only to its HTTPS upstream and performs its own bounded text conversion. It cannot read a subtitle selection already made in a separate Stremio player unless the source/handoff supplies that information.
 
-Diagnostic tests cover URL exclusion, deduplication, history bounds, expiry and restoration. Production packaging is checked for matching app/extension version, arm64, icon assets, required frameworks and absence of validation markers.
+SubtitleDocument handles SRT, ASS text and WebVTT with size limits and encoding checks. WebVTTTimeline applies delay and the original-media seek offset exactly once, clips elapsed cues and shifts inline timestamps. External caption text is served only to the selected receiver by the existing private gateway.
 
-Three MPEG-4 outputs from the iOS engine were additionally played on a physical classic Chromecast using a guarded PC relay. Normal video, subtitle overlay and alternate-audio seek output all reached progressing PLAYING state. The receiver was restored to its idle screen. These checks are distinct from iPhone UI and locked-screen acceptance.
+## Timing and state
 
-## Delivery and remaining acceptance
+The UI offers half-second steps, five-second steps, reset and a coarse slider up to +/-300 seconds. The delay is saved per film/episode, source and caption. SubtitleWindow provides 21 immutable half-second track variants within +/-5 seconds of its center, allowing fine changes through active track IDs. Coarse changes outside that window coalesce before rebuilding the stream at the retained position. Burned overlays use VLC's subtitle delay API.
 
-The release artifact must have matching app/extension version 0.6.2 (12). Regenerate its SHA256 for each build; the user-facing release notes contain the delivered file's hash.
+Requests arriving during subtitle acknowledgements retain queued seeks. Latest choices and timing are applied after acknowledgements; stale downloads and source generations cannot publish into later selections. Failed subtitle changes do not overwrite the last functioning source while downloading an alternative.
 
-The exact privately sourced file reported by the user has not been acquired or tested. Synthetic success does not prove that file is readable or that every device can convert every stream in real time. Use the new copied diagnostic report if the same source still fails. Installation, the copy-button flow and full locked-phone playback remain physical iPhone acceptance checks. Keep the phone powered on and on the receiver network during local conversion; force-quitting stops the local producer.
+Supported indexed MKV text tracks are extracted by the exact selected subtitle ordinal with a 12-second preparation deadline. Unsupported compression, missing indexes, graphical subtitles and incomplete cue metadata can require the overlay fallback. Indexed extraction is best effort and is not a guarantee of complete captions for arbitrary MKV files.
 
-No credentials or personal media URLs belong in source control, diagnostics or handoffs. See THIRD_PARTY_NOTICES.md for pinned upstream libraries and relinking instructions.
+Out-of-range or completed saved positions restart instead of clamping playback to the final second. Unscoped old per-file resume keys are not migrated into a new content identity. Actual raw receiver time must advance before an autoplay LOAD is considered started; paused loads do not require movement. Persistent overlay buffering triggers explicit recovery without the failed subtitle. Other persistent local buffering has a bounded retry and a visible error rather than endless automatic reloads.
+
+## Diagnostics and acceptance
+
+The local ten-minute diagnostic report still excludes credentials, URLs, titles and subtitle content. New events include track codecs, catalogue/download stages and the requested delay. Numeric raw receiver position is recorded separately from the estimated position.
+
+Physical iPhone UI, long locked-screen playback and synchronization of privately sourced content remain user acceptance checks. The protocol test does not certify the exact private video or subtitle release. Keep the phone powered and on the receiver network for local serving/conversion. See THIRD_PARTY_NOTICES.md for pinned LGPL media dependencies and relinking information.

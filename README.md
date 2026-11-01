@@ -1,4 +1,4 @@
-# Cast Bridge iOS 0.6.2
+# Cast Bridge iOS 0.6.3
 
 iOS sender for Stremio video sources and Google Cast receivers. The app reads media tracks with MobileVLCKit and chooses direct playback, remuxing or local conversion automatically.
 
@@ -18,12 +18,20 @@ When local conversion is active, the phone must remain powered on and connected 
 
 Subtitle text can be rendered into locally converted video. External WebVTT is served through the selected-device-only gateway and retimed after seeks. Graphic subtitles and styled ASS tracks can retain their source appearance.
 
+## Subtitles
+
+The in-app browser uses the [official Stremio OpenSubtitles v3 add-on](https://github.com/Stremio/stremio-official-addons/blob/master/index.json). It lists releases and languages, alongside subtitle URLs supplied by the selected Stremio source. Requests include the content identity, filename and file size when available; a bounded pair of 64 KiB range reads can add the OpenSubtitles file hash. No separate API key is required by this integration. This does not read the active selection or installed add-ons from another Stremio application.
+
+HTTPS subtitle downloads accept bounded UTF-8, UTF-16 and legacy text encodings, normalize SRT/ASS to WebVTT and remain local. Fine timing changes use immutable half-second WebVTT track variants without reloading video. Larger adjustments rebuild at the preserved point. Delay is stored per content, source and subtitle; appearance preferences remain global.
+
+Selecting a supported indexed MKV text track first attempts separate extraction of the exact subtitle ordinal, avoiding video conversion solely for text overlays. Extraction remains bounded and best effort; unsupported or unindexed tracks use the existing overlay path. A stalled overlay is stopped and playback resumes without that failed track with an explicit status message. Startup is only confirmed after actual receiver media time advances, so a transient PLAYING acknowledgement does not cancel recovery.
+
 ## Build
 
 Use CastRemote.xcworkspace, scheme CastRemote, Release and iphoneos. CocoaPods pins all media dependencies. GitHub Actions produces an unsigned IPA with the app icon, Live Activity extension and license texts. Install with a compatible signing tool such as SideStore.
 
 Production builds must leave CAST_ENGINE_VALIDATION empty. CAST_ENGINE_TESTING enables the synthetic simulator validation only.
 
-The separate validation workflow covers 28 synthetic codec combinations through the actual playback gateway, five gateway cases, ten resolution/cadence/seek cases and 65 seconds of continuous network transfer in background with pause/resume and cancellation. The copied 1080p test compares every decoded frame with its source. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
+The separate validation workflow covers 29 synthetic codec combinations through the actual playback gateway, five gateway cases, ten resolution/cadence/seek cases and 65 seconds of continuous network transfer in background with pause/resume and cancellation. The copied 1080p test compares every decoded frame with its source. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
 
 See [HANDOFF.md](HANDOFF.md) for technical validation status, [BUILD-WINDOWS.md](BUILD-WINDOWS.md) for build steps and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licenses and upstream sources.

@@ -13,6 +13,8 @@ import Foundation
         let it = try await MkvSubtitleExtractor.extract(read:reader,language:"it")
         precondition(it.contains("Ciao\nmondo"))
         precondition(!it.contains("Default"))
+        let chosen = try await MkvSubtitleExtractor.extract(read:reader,language:"en",subtitleOrdinal:1)
+        precondition(chosen.contains("Ciao\nmondo"),"The selected track ordinal must win over a language fallback")
         do { _ = try MkvSubtitleExtractor.vint([0],0); fatalError("Invalid EBML accepted") } catch SubtitleError.malformed {}
         do { _ = try MkvSubtitleExtractor.header([0x1a]); fatalError("Truncated EBML accepted") } catch SubtitleError.malformed {}
         do { _ = try MkvSubtitleExtractor.clean("not an ASS packet",codec:"S_TEXT/ASS"); fatalError("Invalid ASS accepted") } catch SubtitleError.malformed {}

@@ -33,6 +33,13 @@ enum EmbeddedMediaError: LocalizedError {
     private var observers: [NSObjectProtocol] = []
     private(set) var streamURL: URL?
     private(set) var captionURLs: [Int:URL] = [:]
+    private(set) var captionWindow = SubtitleWindow(center:0)
+    func captionID(kind:Int,delay:Double) -> Int? {
+        guard let id = captionWindow.identifier(kind:kind,delay:delay), captionURLs[id] != nil else { return nil }; return id
+    }
+    func setBurnedSubtitleDelay(_ delay:Double) {
+        player?.currentVideoSubTitleDelay = Int(SubtitleWindow.normalized(delay)*1_000_000)
+    }
     private(set) var contentType = "video/mp4"
     private(set) var offset: Double = 0
     private(set) var running = false
@@ -105,14 +112,18 @@ enum EmbeddedMediaError: LocalizedError {
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], video:VideoFormat? = nil, selfTest:Bool = false) async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         offset = start.isFinite ? max(0,start) : 0
         PlaybackDiagnostics.record(.producer,["phase":"start","mode":String(describing:videoMode),"offset":PlaybackDiagnostics.number(offset),"burn":String(subtitleID != nil),"copyAudio":String(copyAudio)])
         let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
         let port = try Self.freeLoopbackPort()
         contentType = videoMode == .softwareVP8 ? "video/webm" : "video/mp4"
-        let rebased = try captions.mapValues { try WebVTTTimeline.rebased($0,offset:offset) }
+        captionWindow = SubtitleWindow(center:subtitleDelay)
+        var rebased:[Int:Data] = [:]
+        for (kind,text) in captions {
+            for variant in captionWindow.variants(kind:kind) { rebased[variant.id] = try WebVTTTimeline.rebased(text,offset:offset,delay:variant.delay) }
+        }
         let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType,captions:rebased)
         proxy = bridge
         let url = try await bridge.start()
@@ -164,6 +175,7 @@ enum EmbeddedMediaError: LocalizedError {
         media.addOption(":network-caching=1500")
         if let audioID, !repairInput { media.addOption(":audio-track-id=\(audioID)") }
         if let subtitleID {
+            media.addOption(":sub-delay=\(Int(SubtitleWindow.normalized(subtitleDelay)*10))")
             media.addOption(repairInput ? ":sub-track=0" : ":sub-track-id=\(subtitleID)")
             let font = style.font == "serif" ? "Georgia" : style.font == "mono" ? "Courier New" : "Arial"
             media.addOption(":freetype-font=\(font)")

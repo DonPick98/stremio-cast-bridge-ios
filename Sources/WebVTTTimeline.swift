@@ -1,9 +1,10 @@
 import Foundation
 
 enum WebVTTTimeline {
-    static func rebased(_ text:String, offset:Double) throws -> Data {
+    static func rebased(_ text:String, offset:Double, delay:Double = 0) throws -> Data {
         let source = text.hasPrefix("\u{feff}") ? String(text.dropFirst()) : text
-        guard source.utf8.count <= 1_048_576, source.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix("WEBVTT"), offset.isFinite, offset >= 0 else { throw StreamHeaderError.invalid }
+        guard source.utf8.count <= 1_048_576, source.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix("WEBVTT"), offset.isFinite, offset >= 0, delay.isFinite, abs(delay) <= 300 else { throw StreamHeaderError.invalid }
+        let origin = offset-delay
         let normalized = source.trimmingCharacters(in:.whitespacesAndNewlines).replacingOccurrences(of:"\r\n",with:"\n").replacingOccurrences(of:"\r",with:"\n")
         let pattern = #"^(\d{2,}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s+-->\s+(\d{2,}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})(.*)$"#
         let regex = try NSRegularExpression(pattern:pattern)
@@ -18,15 +19,15 @@ enum WebVTTTimeline {
             let line = lines[i] as NSString
             guard let match = regex.firstMatch(in:lines[i],range:NSRange(location:0,length:line.length)),
                   let start = seconds(line.substring(with:match.range(at:1))), let end = seconds(line.substring(with:match.range(at:2))), end > start else { throw StreamHeaderError.invalid }
-            if end <= offset { continue }
-            lines[i] = time(max(0,start-offset)) + " --> " + time(end-offset) + line.substring(with:match.range(at:3))
+            if end <= origin { continue }
+            lines[i] = time(max(0,start-origin)) + " --> " + time(end-origin) + line.substring(with:match.range(at:3))
             if i+1 < lines.count {
                 for j in (i+1)..<lines.count {
                     let original = lines[j] as NSString
                     let matches = inline.matches(in:lines[j],range:NSRange(location:0,length:original.length))
                     let changed = NSMutableString(string:lines[j])
                     for tag in matches.reversed() {
-                        if let t = seconds(original.substring(with:tag.range(at:1))) { changed.replaceCharacters(in:tag.range,with:t <= offset ? "" : "<\(time(t-offset))>") }
+                        if let t = seconds(original.substring(with:tag.range(at:1))) { changed.replaceCharacters(in:tag.range,with:t <= origin ? "" : "<\(time(t-origin))>") }
                     }
                     lines[j] = changed as String
                 }
@@ -56,10 +57,7 @@ enum WebVTTTimeline {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw StreamHeaderError.network }
         var data = Data()
         for try await byte in bytes { guard data.count < 1_048_576 else { throw StreamHeaderError.tooLarge }; data.append(byte) }
-        guard var text = String(data:data,encoding:.utf8) else { throw StreamHeaderError.invalid }
-        if text.hasPrefix("\u{feff}") { text = String(text.dropFirst()) }
-        guard text.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix("WEBVTT") else { throw StreamHeaderError.invalid }
-        return text
+        return try SubtitleDocument.normalize(data)
     }
 }
 private final class CaptionRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

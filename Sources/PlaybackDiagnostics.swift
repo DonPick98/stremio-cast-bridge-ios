@@ -16,7 +16,7 @@ import Foundation
     private var entries:[Entry] = []
     private var flushTask:Task<Void,Never>?
     private var changes:[String:String] = [:]
-    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build"]
+    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","raw","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build"]
 
     init(retention:TimeInterval = 600,limit:Int = 600,file:URL? = nil,clock:@escaping () -> Date = Date.init) {
         self.retention = retention; self.limit = limit; self.file = file; self.clock = clock

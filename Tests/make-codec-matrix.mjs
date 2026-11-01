@@ -44,7 +44,7 @@ cases.push({name:'embedded_text',filename:subtitle,burn:true,selectAlternate:fal
 // DVD-sized MPEG-4 ASP with B frames, quarter-pixel motion, MP3/AC3 and SRT.
 // Exercise the actual streaming gateway, including a non-keyframe seek.
 run(['-f','lavfi','-i','testsrc2=size=720x480:rate=30000/1001',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-i',path.join(root,'captions.srt'),'-t','12','-map','0:v','-map','1:a','-map','2:a','-map','3:s','-c:v','mpeg4','-q:v','4','-bf','2','-flags','+qpel+mv4','-g','60','-threads','2','-c:a:0','libmp3lame','-c:a:1','ac3','-ac','2','-c:s','srt','-metadata:s:a:0','language=eng','-metadata:s:a:1','language=ita','-metadata:s:s:0','language=eng',path.join(root,'quality-legacy-asp.mkv')]);
-for(const [name,burn,start,selectAlternate] of [['legacy_asp',false,0,false],['legacy_asp_subtitles',true,0,false],['legacy_asp_seek',false,3.25,true]]) cases.push({name,filename:'quality-legacy-asp.mkv',burn,start,selectAlternate,native:true});
+for(const [name,burn,start,selectAlternate] of [['legacy_asp',false,0,false],['legacy_asp_subtitles',true,0,false],['legacy_asp_seek',false,3.25,true],['legacy_asp_subtitles_seek',true,3.25,false]]) cases.push({name,filename:'quality-legacy-asp.mkv',burn,start,selectAlternate,native:true});
 fs.writeFileSync(path.join(root,'manifest.json'),JSON.stringify(cases,null,2));
 run(['-stream_loop','-1','-i',base,...tone,'-t','1200','-map','0:v','-map','1:a','-c:v','copy','-c:a','ac3','-ac','2',path.join(root,'background-probe.mkv')]);
 console.log(`Generated ${cases.length} synthetic codec cases`);

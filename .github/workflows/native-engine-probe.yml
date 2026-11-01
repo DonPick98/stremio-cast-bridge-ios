@@ -30,6 +30,8 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/PlaybackDiagnostics.swift Tests/PlaybackDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostics-tests"
           "$RUNNER_TEMP/diagnostics-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"
+          "$RUNNER_TEMP/subtitle-catalog-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-regressions"
           "$RUNNER_TEMP/playback-regressions"
           swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
@@ -38,7 +40,7 @@ jobs:
           "$RUNNER_TEMP/output-channel-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
-          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
           "$RUNNER_TEMP/caption-timeline-tests"
       - name: Exercise native AC3 to AAC conversion
         run: |
