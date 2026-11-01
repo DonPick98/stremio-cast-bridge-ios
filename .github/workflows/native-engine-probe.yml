@@ -11,6 +11,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Test bounded rewind input and cancellation
+        run: |
+          swiftc -parse-as-library Sources/RewindableInputStream.swift Tests/RewindableInputStreamTests.swift -o "$RUNNER_TEMP/rewind-input-tests"
+          "$RUNNER_TEMP/rewind-input-tests"
       - name: Boot simulator while building
         run: |
           device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid)})')
@@ -97,3 +101,4 @@ jobs:
           name: embedded-engine-evidence
           path: native-engine-report
           if-no-files-found: ignore
+

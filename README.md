@@ -1,4 +1,4 @@
-# Cast Bridge iOS 0.6.3
+# Cast Bridge iOS 0.6.4
 
 iOS sender for Stremio video sources and Google Cast receivers. The app reads media tracks with MobileVLCKit and chooses direct playback, remuxing or local conversion automatically.
 
@@ -24,7 +24,11 @@ The in-app browser uses the [official Stremio OpenSubtitles v3 add-on](https://g
 
 HTTPS subtitle downloads accept bounded UTF-8, UTF-16 and legacy text encodings, normalize SRT/ASS to WebVTT and remain local. Fine timing changes use immutable half-second WebVTT track variants without reloading video. Larger adjustments rebuild at the preserved point. Delay is stored per content, source and subtitle; appearance preferences remain global.
 
-Selecting a supported indexed MKV text track first attempts separate extraction of the exact subtitle ordinal, avoiding video conversion solely for text overlays. Extraction remains bounded and best effort; unsupported or unindexed tracks use the existing overlay path. A stalled overlay is stopped and playback resumes without that failed track with an explicit status message. Startup is only confirmed after actual receiver media time advances, so a transient PLAYING acknowledgement does not cancel recovery.
+Embedded tracks in the remembered subtitle language take priority over source-provided external captions; an explicit user choice to disable subtitles is still respected. Selecting a supported indexed MKV text track first attempts separate extraction of the exact subtitle ordinal, avoiding video conversion solely for text overlays. Extraction remains bounded and best effort; unsupported or unindexed tracks use the existing overlay path. A selected-device-only gateway serves the output. The repaired subtitle overlay route uses an 8 MiB loopback input buffer with 2 MiB of rewind history, allowing VLC's Matroska parser to inspect clusters without treating a chunked HTTP connection as seekable or downloading the entire video. Full buffers suspend the input task; cancellation wakes blocked readers and writers.
+
+Initial automatic track selections use the same extraction preflight as manual selections. Repaired overlay input uses VLC's native Matroska demux: the pinned VLC 3 avformat bridge does not map FFmpeg SUBRIP/ASS codecs. A stalled overlay is stopped and playback resumes without that failed track, with a persistent warning on the main screen. Automatic recovery does not save an off preference. Startup is only confirmed after actual receiver media time advances, so a transient PLAYING acknowledgement does not cancel recovery.
+
+Toggling an already registered separate text track uses EDIT_TRACKS_INFO without replacing the media URL, pausing the producer or issuing another LOAD. Re-selecting the currently cached embedded caption reuses it. A different caption not registered with the receiver still requires a media reload; arbitrary-language switching without reload is not implemented. Bitmap overlays still require rebuilding the video pipeline.
 
 ## Build
 
@@ -32,6 +36,6 @@ Use CastRemote.xcworkspace, scheme CastRemote, Release and iphoneos. CocoaPods p
 
 Production builds must leave CAST_ENGINE_VALIDATION empty. CAST_ENGINE_TESTING enables the synthetic simulator validation only.
 
-The separate validation workflow covers 29 synthetic codec combinations through the actual playback gateway, five gateway cases, ten resolution/cadence/seek cases and 65 seconds of continuous network transfer in background with pause/resume and cancellation. The copied 1080p test compares every decoded frame with its source. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
+The separate validation workflow covers 31 synthetic codec combinations through the actual playback gateway, five gateway cases, ten resolution/cadence/seek cases and 65 seconds of continuous network transfer in background with pause/resume and cancellation. Two post-seek tests select the second SRT/ASS track and alternate audio, then check actual caption pixels at absent/present/absent times on a black picture; successful video decoding alone is insufficient. The copied 1080p test compares every decoded frame with its source. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
 
 See [HANDOFF.md](HANDOFF.md) for technical validation status, [BUILD-WINDOWS.md](BUILD-WINDOWS.md) for build steps and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licenses and upstream sources.

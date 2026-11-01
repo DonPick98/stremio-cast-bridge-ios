@@ -1,16 +1,18 @@
-# Technical checkpoint: Cast Bridge 0.6.3 (13)
+# Technical checkpoint: Cast Bridge 0.6.4 (14)
 
 ## Source and validation
 
-Validated media-engine source: f7eae139a3f06266f9597a6266ca08967ac486e3.
-Native integration: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41338472674
-Initial production compile and regression tests: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41338472694
+Validated media-engine and controller source: d56b76bd27932bdb210fcefb7a2dd83ddc793c8f.
+Native integration: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41346105625
+Candidate production compile and regression tests: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41346105595
 
-The main release adds controller request-order guards, preservation of delay during text extraction, a text-only fallback selection guard, explicit timing names and numeric raw receiver position in diagnostics. These changes leave the validated media engine and timestamp transformation unchanged; the main production workflow compiles and runs the resolver, subtitle catalogue, timing, resume, indexed-extraction and privacy-related parser checks.
+VLC 3's avformat demux exposed FFmpeg SUBRIP as undf after a seek. The overlay route now uses native Matroska demux for repaired inputs carrying subtitles. VLC 3 also refuses native Matroska on unseekable input. RewindableInputStream therefore adapts only the private loopback producer with an 8 MiB buffer and 2 MiB history through VLCKit's supported InputStream callback API. The callback advertises seeking with FASTSEEK=false, so the parser can revisit clusters without scanning to the movie end. Full buffers suspend the input task; trimming resumes it, and stop wakes blocked readers/writers. Both workflows test rewind, forward seek, byte continuity, EOF and blocked read/write cancellation before building. Other playback routes retain their prior demux. Initial default text selection now runs the same indexed extraction preflight as a manual selection; status callbacks cannot preempt it with an overlay. In-file captions in the selected language take priority over external source captions.
 
-The native suite passes 29 actual-gateway codec cases, five gateway scenarios and ten strict video-quality/audio/seek cases, with 34 decoded baseline outputs. A new burned-text case starts at a non-keyframe seek position. Caption integration verifies 21 timing variants, actual HTTP cue timestamps after a seek, half-second delay changes and retained video EOF. The offscreen transfer probe also checks real delivery pause/resume and worker shutdown.
+The native suite covers 31 actual-gateway codec cases, five gateway scenarios and ten strict video-quality/audio/seek cases, with 36 decoded baseline outputs. Two cases select the second subtitle and 440 Hz alternate audio, start at 3.25 seconds and require visible SRT/ASS captions only at the correct output time (checks at 1/4/7 seconds). This replaces reliance on the old seek fixture whose only cue had already elapsed. Caption integration retains 21 timing variants and the offscreen transfer probe retains delivery pause/resume and worker shutdown checks.
 
-A guarded physical classic Chromecast test loads one video with 21 text tracks, switches +0.5/-0.5/zero using EDIT_TRACKS_INFO, confirms active track IDs and advancing playback without replacing the media session or reloading video, then restores the idle screen. The receiver prefetches all caption variants, so total memory and download size are bounded by the text limit and the 21-track window.
+Automatic overlay recovery retains the user's language preference and exposes a persistent warning on the main screen. Only explicit UI subtitle choices write preferences; programmatic representation changes and recovery do not trigger the picker callback. The controller toggles already registered text captions through EDIT_TRACKS_INFO, without pausing/replacing the producer, changing the timeline or issuing LOAD. Re-selecting the cached embedded text reuses that representation. A different, unregistered text caption still requires LOAD; arbitrary-language switching without reload remains open.
+
+The prior guarded physical Chromecast test verified one video with 21 text tracks and three delay switches without replacing the media session. It did not validate this version's iPhone UI or exact private subtitles. The latest read-only Wi-Fi check observed the user's video advancing; it was not interrupted to run synthetic tests.
 
 ## OpenSubtitles and Stremio
 

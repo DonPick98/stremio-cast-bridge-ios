@@ -17,7 +17,7 @@ import MobileVLCKit
                 row["inputAudio"] = original.audioCodecsDescription; row["inputVideo"] = original.videoDescription
                 let burn = item["burn"] as? Bool ?? false
                 let audio = (item["selectAlternate"] as? Bool == true ? original.audio.last : original.audio.first)!
-                let subtitle = burn ? original.subtitles.first : nil
+                let subtitle = burn ? (item["selectLastSubtitle"] as? Bool == true ? original.subtitles.last : original.subtitles.first) : nil
                 if burn && subtitle == nil { throw EmbeddedMediaError.metadata }
                 let copyAudio = ["aac","mp3"].contains(audio.codec.lowercased()) && (audio.channels ?? 0) > 0 && (audio.channels ?? 0) <= 2
                 let repairAudio = AudioRepairPipe.required(audio.codec)
@@ -55,3 +55,4 @@ import MobileVLCKit
     }
 }
 #endif
+
