@@ -31,7 +31,7 @@ import MobileVLCKit
                     let repair = AudioRepairPipe(); defer { repair.stop() }
                     let repaired = repairAudio ? try await repair.start(input:input,position:0,audioIndex:original.audio.firstIndex(where:{$0.key == audio.key}) ?? 0,subtitleIndex:subtitle.flatMap{s in original.subtitles.firstIndex(where:{$0.key == s.key})}) : input
                     let media = VLCMedia(url:repaired)
-                    if repairAudio { media.addOption(":demux=mkv"); media.addOption(":stream-filter=cache_read") }
+                    if repairAudio { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
                     media.addOption(":sout=\(EmbeddedMediaEngine.outputChain(videoMode:mode,copyAudio:copyAudio || repairAudio,burn:burn,access:"file",target:output.path))")
                     media.addOption(":no-sout-all"); media.addOption(":sout-mux-caching=4000")
                     if !repairAudio, original.audio.count > 1, let id = Int(audio.key.dropFirst(4)) { media.addOption(":audio-track-id=\(id)") }

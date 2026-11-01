@@ -114,7 +114,7 @@ enum EmbeddedMediaError: LocalizedError {
             producerInput = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
         }
         let media = VLCMedia(url:producerInput)
-        if repairAudio { media.addOption(":demux=mkv"); media.addOption(":stream-filter=cache_read") }
+        if repairAudio { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
         let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,access:"http",target:"127.0.0.1:\(port)\(bridge.path)")
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
@@ -142,13 +142,14 @@ enum EmbeddedMediaError: LocalizedError {
 #endif
         self.player = player
         running = true
-        observeLifecycle(); updateBackground()
+        observeLifecycle()
         player.delegate = self; player.media = media; player.play()
         for _ in 0..<35 {
             try Task.checkCancellation()
             if player.state == .error || audioRepair?.failed == true { stop(); throw EmbeddedMediaError.encoder }
             do {
                 try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()})
+                updateBackground()
                 streamURL = url; startedStream = true
                 return url
             } catch LocalStreamError.upstream { try Task.checkCancellation() }
@@ -187,7 +188,7 @@ enum EmbeddedMediaError: LocalizedError {
     }
     private func updateBackground() {
         guard running else { return }
-        if UIApplication.shared.applicationState != .active {
+        do {
             // Same remote-playback mechanism used by the official VLC iOS app.
             // Its lifetime is restricted to an active local Cast pipeline.
             if AVAudioSession.sharedInstance().category != .playback || AVAudioSession.sharedInstance().mode != .moviePlayback {
@@ -203,7 +204,7 @@ enum EmbeddedMediaError: LocalizedError {
                 helper.media = VLCMedia(path:"/dev/zero"); backgroundPlayer = helper
             }
             if backgroundPlayer?.isPlaying != true { backgroundPlayer?.play() }
-        } else { backgroundPlayer?.stop() }
+        }
     }
     func refreshBackground() { updateBackground() }
 #if CAST_ENGINE_TESTING
