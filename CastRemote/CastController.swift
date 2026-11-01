@@ -126,7 +126,7 @@ import UIKit
         independentCaptions.onStatus={ [weak self] busy,issue in
             self?.subtitleDownloadBusy=busy
             self?.subtitleIssue=issue
-            if let issue{self?.subtitlePlaybackWarning=issue}
+            self?.subtitlePlaybackWarning=issue
         }
         PlaybackDiagnostics.record(.app,["phase":"launch"])
         // Keep only the system media card, including after an upgrade from 0.6.0.
@@ -272,7 +272,7 @@ import UIKit
             } else if status.playerState == .buffering {
                 if bufferingSince == nil { bufferingSince = Date() }
                 let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
-                if localProcessing && selectedSubtitle.hasPrefix("vlc_") && Date().timeIntervalSince(bufferingSince!) >= 15 {
+                if !captionIsIndependent && localProcessing && selectedSubtitle.hasPrefix("vlc_") && Date().timeIntervalSince(bufferingSince!) >= 15 {
                     disableSubtitlesAndResume(automatic:true); return
                 }
                 if stalled && localProcessing {
@@ -777,7 +777,7 @@ import UIKit
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
                 guard !Task.isCancelled, let self, self.loadPending else { return }
                 self.loadPending = false; self.loading = false; self.loadRequest = nil
-                if self.selectedSubtitle.hasPrefix("vlc_") { self.disableSubtitlesAndResume(automatic:true); return }
+                if !self.captionIsIndependent && self.selectedSubtitle.hasPrefix("vlc_") { self.disableSubtitlesAndResume(automatic:true); return }
                 if self.recoverPlayback(allowVideoConversion:false) { return }
                 self.message = "La TV non ha avviato il video dopo l’adattamento automatico. La posizione è conservata."
                 self.playbackIssue = "La TV non ha avviato il flusso dopo l’adattamento automatico. La posizione è conservata."
