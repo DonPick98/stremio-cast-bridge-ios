@@ -9,7 +9,7 @@ enum LocalStreamError: Error { case address, listener, request, upstream, initia
 final class MediaOutputChannel: @unchecked Sendable {
     private let queue = DispatchQueue(label:"app.castbridge.media-output")
     private let reader:Int32
-    let writer:Int32
+    private(set) var writer:Int32
     private var listener:NWListener?
     private var client:NWConnection?
     private var source:DispatchSourceRead?
@@ -24,7 +24,7 @@ final class MediaOutputChannel: @unchecked Sendable {
         var flag:Int32 = 1
         _ = setsockopt(writer,SOL_SOCKET,SO_NOSIGPIPE,&flag,socklen_t(MemoryLayout<Int32>.size))
     }
-    deinit { Darwin.close(writer) }
+    deinit { if writer >= 0 { Darwin.close(writer) } }
     func start(port:UInt16,path:String,type:String) async throws {
         try await withCheckedThrowingContinuation { (c:CheckedContinuation<Void,Error>) in
             queue.async {
@@ -88,7 +88,9 @@ final class MediaOutputChannel: @unchecked Sendable {
         } else if errno == EAGAIN || errno == EINTR { suspended = false; source.resume() }
         else { finish() }
     }
-    func endWriting() { queue.async { _ = Darwin.shutdown(self.writer,SHUT_WR) } }
+    // Close only our descriptor. VLC's duplicate must remain writable until
+    // the muxer has flushed its last fragment and closed that duplicate.
+    func endWriting() { queue.async { if self.writer >= 0 { Darwin.close(self.writer); self.writer = -1 } } }
     func stop() { queue.async { self.finish() } }
     private func finish() {
         guard !stopped else { return }; stopped = true
@@ -99,7 +101,7 @@ final class MediaOutputChannel: @unchecked Sendable {
         _ = Darwin.shutdown(reader,SHUT_RDWR)
         if let source { if suspended { suspended = false; source.resume() }; source.cancel(); self.source = nil }
         else { Darwin.close(reader) }
-        _ = Darwin.shutdown(writer,SHUT_RDWR)
+        if writer >= 0 { _ = Darwin.shutdown(writer,SHUT_RDWR) }
     }
 }
 

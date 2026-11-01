@@ -196,7 +196,7 @@ enum EmbeddedMediaError: LocalizedError {
         let state = origin.state
         Task { @MainActor [weak self, weak origin] in
             guard let self, let origin, self.player === origin else { return }
-            if state == .ended || (self.startedStream && state == .stopped) { self.producerEnded = true; self.outputChannel?.endWriting(); self.proxy?.producerDidEnd() }
+            if state == .ended { self.producerEnded = true; self.outputChannel?.endWriting() }
             else if self.running && state == .error { self.onFailure?() }
         }
     }
