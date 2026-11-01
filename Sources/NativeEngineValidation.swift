@@ -22,7 +22,7 @@ import UIKit
             let repairedFile = documents.appendingPathComponent("repair-direct.mkv")
             repair.testingOutput = repairedFile
             do {
-                _ = try repair.start(input:documents.appendingPathComponent("CodecSamples/truehd.mkv"),position:0,audioIndex:0,subtitleIndex:nil)
+                _ = try await repair.start(input:documents.appendingPathComponent("CodecSamples/truehd.mkv"),position:0,audioIndex:0,subtitleIndex:nil)
                 for _ in 0..<300 { if repair.finished { break }; try await Task.sleep(nanoseconds:100_000_000) }
                 let checked = try await EmbeddedMediaEngine.inspect(repairedFile)
                 result["decoder"] = ["passed":!repair.failed && repair.finished,"audio":checked.audioCodecsDescription,"video":checked.videoDescription]

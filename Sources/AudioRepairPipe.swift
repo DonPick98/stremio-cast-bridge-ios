@@ -30,7 +30,7 @@ import Darwin
     }
 #endif
 
-    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?) throws -> URL {
+    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?) async throws -> URL {
         _ = Self.initialized
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
               audioIndex >= 0, position.isFinite, position >= 0 else { throw EmbeddedMediaError.encoder }
@@ -86,6 +86,19 @@ import Darwin
                 }
                 try? await Task.sleep(nanoseconds:100_000_000)
             }
+        }
+        if useFIFO {
+            // A FIFO is non-seekable and VLC's file access can read it before
+            // FFmpeg has emitted its first header. Wait without consuming any
+            // bytes, so an initially empty pipe cannot be mistaken for EOF.
+            for _ in 0..<150 {
+                try Task.checkCancellation()
+                if failed { throw EmbeddedMediaError.encoder }
+                var available:Int32 = 0
+                if keeper >= 0, Darwin.ioctl(keeper,UInt(FIONREAD),&available) == 0, available >= 512 { return selectedPath }
+                try await Task.sleep(nanoseconds:100_000_000)
+            }
+            throw EmbeddedMediaError.timeout
         }
         return selectedPath
     }

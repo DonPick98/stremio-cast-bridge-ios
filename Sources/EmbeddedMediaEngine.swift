@@ -111,7 +111,7 @@ enum EmbeddedMediaError: LocalizedError {
         var producerInput = input
         if repairAudio {
             let repair = AudioRepairPipe(); audioRepair = repair
-            producerInput = try repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
+            producerInput = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
         }
         let media = VLCMedia(url:producerInput)
         if repairAudio { media.addOption(":demux=mkv"); media.addOption(":stream-filter=cache_read") }
