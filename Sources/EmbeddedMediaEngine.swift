@@ -214,7 +214,9 @@ enum EmbeddedMediaError: LocalizedError {
     func setReceiverPaused(_ paused: Bool) {
         guard running, !producerEnded, let player else { return }
         if paused { player.pause() }
-        else if !player.isPlaying { player.play() }
+        // Pause is asynchronous and may still be queued under backpressure.
+        // Always enqueue PLAYING, even if isPlaying has not changed yet.
+        else { player.play() }
     }
     private func observeLifecycle() {
         for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {

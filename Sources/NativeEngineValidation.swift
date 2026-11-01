@@ -113,13 +113,19 @@ import MediaPlayer
         let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.hardwareH264,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
         let pauseTest = Task { @MainActor in
             try? await Task.sleep(nanoseconds:12_000_000_000)
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled else { return (false,false) }
             engine.setReceiverPaused(true)
-            try? await Task.sleep(nanoseconds:700_000_000)
+            for _ in 0..<40 {
+                if !engine.testingProducerPlaying { break }
+                try? await Task.sleep(nanoseconds:100_000_000)
+            }
             let paused = !engine.testingProducerPlaying
             engine.setReceiverPaused(false)
-            try? await Task.sleep(nanoseconds:700_000_000)
-            return paused && engine.testingProducerPlaying
+            for _ in 0..<40 {
+                if engine.testingProducerPlaying { break }
+                try? await Task.sleep(nanoseconds:100_000_000)
+            }
+            return (paused,engine.testingProducerPlaying)
         }
         defer { pauseTest.cancel() }
         let ready = try JSONSerialization.data(withJSONObject:["url":url.absoluteString])
@@ -138,11 +144,12 @@ import MediaPlayer
         let span = metrics["dataSpan"] as? Double ?? 0
         let lateBytes = metrics["lateBytes"] as? Int ?? 0
         let producerState = engine.testingProducerState
-        let pauseResume = await pauseTest.value
+        let pauseResult = await pauseTest.value
+        let pauseResume = pauseResult.0 && pauseResult.1
         engine.stop()
         for _ in 0..<50 { if engine.testingStopCompleted { break }; try await Task.sleep(nanoseconds:100_000_000) }
         let stopped = engine.testingStopCompleted
-        return ["passed":offscreen && helper && stopped && pauseResume && bytes > 4096 && seconds >= 60 && span >= 55 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":producerState,"pauseResume":pauseResume,"stoppedCleanly":stopped,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
+        return ["passed":offscreen && helper && stopped && pauseResume && bytes > 4096 && seconds >= 60 && span >= 55 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":producerState,"pauseResume":pauseResume,"pauseAcknowledged":pauseResult.0,"resumeAcknowledged":pauseResult.1,"stoppedCleanly":stopped,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
     }
 }
 
