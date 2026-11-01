@@ -1,7 +1,110 @@
 import Foundation
 import Network
+import Darwin
 
 enum LocalStreamError: Error { case address, listener, request, upstream, initialization }
+
+/// VLC's HTTP output is a live circular buffer: late readers start at the
+/// latest packet. A FIFO instead retains every byte and applies backpressure.
+final class LosslessMediaPipe: @unchecked Sendable {
+    private let queue = DispatchQueue(label:"app.castbridge.encoder-pipe")
+    let file: URL
+    private let readFD:Int32
+    private var keeper:Int32
+    private var listener:NWListener?
+    private var client:NWConnection?
+    private var source:DispatchSourceRead?
+    private var suspended = false
+    private var stopped = false
+    private var opening:CheckedContinuation<Void,Error>?
+    init() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("cast-"+UUID().uuidString+".pipe")
+        guard mkfifo(file.path,0o600) == 0 else { throw LocalStreamError.listener }
+        let reader = Darwin.open(file.path,O_RDONLY|O_NONBLOCK)
+        let writer = Darwin.open(file.path,O_WRONLY|O_NONBLOCK)
+        guard reader >= 0, writer >= 0 else {
+            if reader >= 0 { Darwin.close(reader) }; if writer >= 0 { Darwin.close(writer) }
+            unlink(file.path); throw LocalStreamError.listener
+        }
+        self.file = file; readFD = reader; keeper = writer
+        Darwin.signal(SIGPIPE,SIG_IGN)
+    }
+    func start(port:UInt16,path:String,contentType:String) async throws {
+        try await withCheckedThrowingContinuation { (c:CheckedContinuation<Void,Error>) in
+            queue.async {
+                self.opening = c
+                do {
+                    let params = NWParameters.tcp
+                    params.requiredLocalEndpoint = .hostPort(host:"127.0.0.1",port:NWEndpoint.Port(rawValue:port)!)
+                    let server = try NWListener(using:params)
+                    self.listener = server
+                    server.stateUpdateHandler = { [weak self] state in
+                        guard let self, !self.stopped else { return }
+                        if case .ready = state { let c = self.opening; self.opening = nil; c?.resume() }
+                        else if case .failed = state { self.finish() }
+                    }
+                    server.newConnectionHandler = { [weak self] connection in
+                        guard let self, self.client == nil, !self.stopped else { connection.cancel(); return }
+                        self.client = connection
+                        connection.stateUpdateHandler = { [weak self] state in if case .failed = state { self?.finish() } }
+                        connection.start(queue:self.queue)
+                        self.readRequest(connection,path:path,type:contentType,buffer:Data())
+                    }
+                    server.start(queue:self.queue)
+                    self.queue.asyncAfter(deadline:.now()+8) { if self.opening != nil { self.finish() } }
+                } catch { self.finish() }
+            }
+        }
+    }
+    private func readRequest(_ connection:NWConnection,path:String,type:String,buffer:Data) {
+        connection.receive(minimumIncompleteLength:1,maximumLength:4096) { [weak self] data,_,complete,error in
+            guard let self, !self.stopped else { return }
+            var buffer = buffer; if let data { buffer.append(data) }
+            do {
+                if let method = try LocalStreamProxy.method(buffer,path:path), method == "GET" {
+                    let header = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\nConnection: close\r\n\r\n".utf8)
+                    connection.send(content:header,completion:.contentProcessed { [weak self] error in
+                        guard let self, !self.stopped else { return }
+                        if error != nil { self.finish(); return }
+                        let source = DispatchSource.makeReadSource(fileDescriptor:self.readFD,queue:self.queue)
+                        self.source = source
+                        source.setEventHandler { [weak self] in self?.pump() }
+                        let fd = self.readFD; source.setCancelHandler { Darwin.close(fd) }
+                        source.resume()
+                    })
+                } else if complete || error != nil { self.finish() }
+                else { self.readRequest(connection,path:path,type:type,buffer:buffer) }
+            } catch { self.finish() }
+        }
+    }
+    private func pump() {
+        guard !stopped, !suspended, let source, let client else { return }
+        source.suspend(); suspended = true
+        var bytes = [UInt8](repeating:0,count:16_384)
+        let count = Darwin.read(readFD,&bytes,16_384)
+        if count > 0 {
+            client.send(content:Data(bytes.prefix(count)),completion:.contentProcessed { [weak self] error in
+                guard let self, !self.stopped else { return }
+                if error != nil { self.finish() } else { self.suspended = false; self.source?.resume() }
+            })
+        } else if count == 0 {
+            client.send(content:nil,contentContext:.finalMessage,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.finish() })
+        } else if errno == EAGAIN || errno == EINTR { suspended = false; source.resume() }
+        else { finish() }
+    }
+    func endWriting() { queue.async { if self.keeper >= 0 { Darwin.close(self.keeper); self.keeper = -1 } } }
+    func stop() { queue.async { self.finish() } }
+    private func finish() {
+        guard !stopped else { return }; stopped = true
+        let c = opening; opening = nil; c?.resume(throwing:LocalStreamError.listener)
+        listener?.stateUpdateHandler = nil; listener?.newConnectionHandler = nil; listener?.cancel(); listener = nil
+        client?.stateUpdateHandler = nil; client?.cancel(); client = nil
+        if let source { if suspended { suspended = false; source.resume() }; source.cancel(); self.source = nil }
+        else { Darwin.close(readFD) }
+        if keeper >= 0 { Darwin.close(keeper); keeper = -1 }
+        unlink(file.path)
+    }
+}
 
 /// Exact-token, selected-device-only HTTP bridge. It adds the CORS headers Cast
 /// needs for external subtitles and applies TCP backpressure to the local encoder.

@@ -24,6 +24,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var player: VLCMediaPlayer?
     private var audioRepair: AudioRepairPipe?
     private var proxy: LocalStreamProxy?
+    private var outputPipe: LosslessMediaPipe?
     private var backgroundPlayer: VLCMediaPlayer?
     private var observers: [NSObjectProtocol] = []
     private(set) var streamURL: URL?
@@ -106,6 +107,8 @@ enum EmbeddedMediaError: LocalizedError {
         let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType,captions:rebased)
         proxy = bridge
         let url = try await bridge.start()
+        let outputPipe = try LosslessMediaPipe(); self.outputPipe = outputPipe
+        try await outputPipe.start(port:port,path:bridge.path,contentType:contentType)
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
         var producerInput = input
@@ -115,10 +118,10 @@ enum EmbeddedMediaError: LocalizedError {
         }
         let media = VLCMedia(url:producerInput)
         if repairAudio { media.addOption(":demux=avformat"); media.addOption(":stream-filter=cache_read") }
-        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,access:"http",target:"127.0.0.1:\(port)\(bridge.path)")
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairAudio,burn:subtitleID != nil,access:"stream",target:outputPipe.file.path)
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
-        media.addOption(":sout-keep")
+        media.addOption(":no-sout-keep")
         media.addOption(":sout-mux-caching=4000")
         if !repairAudio { media.addOption(":start-time=\(offset)") }
         media.addOption(":network-caching=1500")
@@ -163,6 +166,7 @@ enum EmbeddedMediaError: LocalizedError {
         backgroundPlayer?.stop(); backgroundPlayer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
+        outputPipe?.stop(); outputPipe = nil
         audioRepair?.stop(); audioRepair = nil
         let old = player; player = nil; old?.delegate = nil
         if let old { DispatchQueue.global(qos:.utility).async { old.stop() } }
@@ -170,7 +174,7 @@ enum EmbeddedMediaError: LocalizedError {
     nonisolated func mediaPlayerStateChanged(_ aNotification: Notification) {
         Task { @MainActor [weak self] in
             guard let self, let player = self.player else { return }
-            if player.state == .ended || (self.startedStream && player.state == .stopped) { self.proxy?.producerDidEnd() }
+            if player.state == .ended || (self.startedStream && player.state == .stopped) { self.outputPipe?.endWriting(); self.proxy?.producerDidEnd() }
             else if self.running && player.state == .error { self.onFailure?() }
         }
     }
@@ -209,7 +213,7 @@ enum EmbeddedMediaError: LocalizedError {
     func refreshBackground() { updateBackground() }
 #if CAST_ENGINE_TESTING
     var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
-    var testingProducerState: String { String(describing:player?.state) }
+    var testingProducerState: String { player.map { String($0.state.rawValue) } ?? "nil" }
 #endif
     static func freeLoopbackPort() throws -> UInt16 {
         let fd = Darwin.socket(AF_INET,SOCK_STREAM,0); guard fd >= 0 else { throw EmbeddedMediaError.address }; defer { Darwin.close(fd) }

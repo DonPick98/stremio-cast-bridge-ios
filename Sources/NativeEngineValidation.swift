@@ -102,7 +102,7 @@ import MediaPlayer
     private static func backgroundProbe(documents:URL) async throws -> [String:Any] {
         let engine = EmbeddedMediaEngine(); defer { engine.stop() }
         let input = documents.appendingPathComponent("CodecSamples/background-probe.mkv")
-        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.copy,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
+        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.hardwareH264,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
         let ready = try JSONSerialization.data(withJSONObject:["url":url.absoluteString])
         try ready.write(to:documents.appendingPathComponent("background-ready.json"),options:.atomic)
         let network = documents.appendingPathComponent("background-network.json")

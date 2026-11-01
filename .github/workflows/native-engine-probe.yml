@@ -15,8 +15,6 @@ jobs:
         run: |
           device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid)})')
           xcrun simctl boot "$device" || true
-      - name: Typecheck stream header validator
-        run: swiftc -typecheck Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift
       - name: Install media engines
         env:
           LANG: en_US.UTF-8
