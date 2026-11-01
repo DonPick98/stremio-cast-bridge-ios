@@ -220,8 +220,8 @@ enum EmbeddedMediaError: LocalizedError {
     }
     func setReceiverPaused(_ paused: Bool) {
         guard running, let player else { return }
-        if paused && (player.state == .playing || player.state == .buffering) { player.pause() }
-        else if !paused && player.state == .paused { player.play() }
+        if paused { player.pause() }
+        else if !player.isPlaying { player.play() }
     }
     private func observeLifecycle() {
         for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
@@ -254,6 +254,7 @@ enum EmbeddedMediaError: LocalizedError {
 #if CAST_ENGINE_TESTING
     private(set) var testingStopCompleted = true
     var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
+    var testingProducerPlaying: Bool { player?.isPlaying == true }
     var testingProducerState: String { player.map { String($0.state.rawValue) } ?? "nil" }
 #endif
     static func freeLoopbackPort() throws -> UInt16 {
