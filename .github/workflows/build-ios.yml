@@ -23,6 +23,8 @@ jobs:
 
       - name: Test resolver without personal credentials
         run: |
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"
+          "$RUNNER_TEMP/subtitle-catalog-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-regressions"
           "$RUNNER_TEMP/playback-regressions"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
@@ -39,7 +41,7 @@ jobs:
           "$RUNNER_TEMP/local-stream-tests"
           swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
           "$RUNNER_TEMP/output-channel-tests"
-          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
           "$RUNNER_TEMP/caption-timeline-tests"
 
       - name: Test embedded subtitles and hosting service

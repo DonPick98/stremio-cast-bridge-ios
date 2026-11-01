@@ -1,6 +1,23 @@
 import Foundation
 import CryptoKit
 
+enum PlaybackResume {
+    static func validated(_ value:Double,duration:Double) -> Double {
+        guard value.isFinite, value > 0 else { return 0 }
+        guard duration.isFinite, duration > 0 else { return value }
+        // An out-of-range or completed resume must restart, never clamp to
+        // the final second and generate an unplayably short replacement stream.
+        guard value < max(0,duration-min(10,duration*0.02)) else { return 0 }
+        return value
+    }
+}
+
+enum PlaybackReadiness {
+    static func progressed(actual:Double,start:Double,paused:Bool) -> Bool {
+        paused || (actual.isFinite && start.isFinite && actual >= start+0.25)
+    }
+}
+
 /// The resume point belongs to the film/episode, independently of the file,
 /// quality, torrent, add-on or expiring download link selected for it.
 struct PlaybackContent: Equatable {

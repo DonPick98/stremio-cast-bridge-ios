@@ -1,29 +1,31 @@
-# Technical checkpoint: Cast Bridge 0.6.1 (11)
+# Technical checkpoint: Cast Bridge 0.6.2 (12)
 
-## Playback and state
+## Current application
 
-Google Cast SDK controls the receiver. MobileVLCKit reads metadata and performs required video/subtitle conversion. FFmpegKit copies compatible original video into fragmented MP4 and selects or converts audio. Both use the bounded anonymous output socket and selected-device-only HTTP gateway. Nonzero seeks discard negative preroll before rebasing; external WebVTT follows the original-media offset. Compatible video is not passed through VLC's H.264 packetizer.
+Validated media-engine source: 7edf7fa7b6ba925b2c813e931093b2a81e2ffc07. The main release additionally includes a display-only guard for unknown resolution.
+Production build: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41327486735
+Native validation: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41327486801
 
-Every source and stream preparation has a revision. Cancelled work and late errors cannot update a later choice. The canonical resume key belongs to the film/episode, independently of source, quality and add-on. The old engine's offset is captured before replacement. Requested positions remain visible until the receiver confirms them. Repeated seeks coalesce to the latest target, including requests received during preparation. The latest play/pause intention survives late status callbacks. Subtitle-driven conversion is reconsidered when the selected tracks change.
+The terminal icon beside Settings copies local playback diagnostics for the preceding ten minutes, bounded to 600 events. The cache survives an app restart and prunes expired entries. Numeric errors, source/stream revisions, codec/dimensions/cadence, selected track keys, preparation attempts, producer exit, receiver state, requested positions and receiver-reported positions help distinguish source, conversion and Cast failures. Real-Debrid HTTP status and API code are recorded without response bodies. The clipboard item is local-only and expires after one hour. Nothing is sent automatically. URLs, credentials, titles, caption text and raw third-party error descriptions must never be logged.
 
-The system media card is the only Lock Screen playback surface. Opening this version ends legacy ActivityKit cards. The extension is retained for upgrade compatibility, but no new ActivityKit activity is requested.
+Legacy MPEG-4 ASP, MPEG-2 and WMV2 can use FFmpeg software decoding and H.264 VideoToolbox encoding directly into the bounded output socket. VLC H.264 and VP8 remain fallback attempts. Burned subtitles use VLC; software decoding is explicitly selected for legacy MPEG-4 input. SD input is not upscaled and fractional cadence is retained. A new source or failed preparation clears the previous stream's quality description.
 
-## Verified candidate
+The existing revision-based source/stream state, queued latest seek, retained play/pause intention and canonical film/episode resume key are unchanged. Compatible H.264 remains packet-copied through FFmpeg, avoiding VLC packetizer B-frame loss. The system media card remains the only Lock Screen playback surface; old ActivityKit cards are closed when opening the app.
 
-Application source: 8f101dd365e38de132b5839dbeaf44dba4822a53.
-Production build and regression tests: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41316645170
-Native validation: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41316645209
+## Validation
 
-All 30 baseline decoded outputs and eight quality/seek cases passed. The 1080p 23.976 test retained all 96 decoded frames with identical hashes. Converted cadence was checked at 23.976, 25, 29.97 and 720p/60. Both selected audio tones and non-keyframe seek timing were checked. The copy path uses FFmpeg directly to avoid packetizer B-frame losses.
+The codec matrix captures the actual EmbeddedMediaEngine gateway for all 28 cases and waits for natural EOF. Five gateway scenarios and ten strict dimensions/cadence/audio/seek audits add up to 43 media outputs. A MPEG-4 ASP fixture at 720x480 and 30000/1001 fps includes B frames, quarter-pixel motion, two audio tracks and SRT. Tests cover normal playback, burned subtitles and non-keyframe seek with alternate audio. Original H.264 1080p frame hashes are checked for identity.
 
-The offscreen simulator probe transferred 7,406,817 bytes over 65.092 seconds, including 1,966,080 bytes after 50 seconds. Delivery pause/resume, a rapid pause/play pair, the audio helper and actual worker cancellation passed. The VLC conversion path also checks live libvlc state so cached ES-added notifications cannot hide natural EOF.
+The 65-second offscreen transfer probe checks delivered-byte pause/resume, a rapid pause/play pair, the audio helper and actual worker cancellation. Pause measurement waits for in-flight network operations to drain, then requires a stable delivered-byte count and subsequent resumed delivery.
 
-Seven physical receiver protocol checks passed: 1080p, 720p60, rapid source/audio replacement at 5.5 seconds, five pause/play pairs, backward seek, external subtitles on/off and an end-delimited rebuilt stream. These PC-driven receiver checks are separate from iPhone UI acceptance.
+Diagnostic tests cover URL exclusion, deduplication, history bounds, expiry and restoration. Production packaging is checked for matching app/extension version, arm64, icon assets, required frameworks and absence of validation markers.
 
-## Delivery and remaining device acceptance
+Three MPEG-4 outputs from the iOS engine were additionally played on a physical classic Chromecast using a guarded PC relay. Normal video, subtitle overlay and alternate-audio seek output all reached progressing PLAYING state. The receiver was restored to its idle screen. These checks are distinct from iPhone UI and locked-screen acceptance.
 
-The unsigned arm64 IPA has matching app/extension version 0.6.1/11, icon assets, media frameworks, license resources, Lock Screen command APIs and no validation marker. SHA256: e67b37e9edffa7a87e139a1f720c820f757f9265aef4e0805aabda526d62d71f.
+## Delivery and remaining acceptance
 
-Physical iPhone installation, legacy-card removal, rapid UI operations and locked-screen playback remain user acceptance checks. Synthetic simulator results do not certify a full-length high-bitrate/HDR movie on every iPhone. Stream-copy seeking is bounded by video keyframes; the measured seek fixtures differed by 0.5 seconds.
+The release artifact must have matching app/extension version 0.6.2 (12). Regenerate its SHA256 for each build; the user-facing release notes contain the delivered file's hash.
 
-No credentials or personal source URLs belong in source control, diagnostics or handoffs. See THIRD_PARTY_NOTICES.md for pinned libraries and relinking instructions.
+The exact privately sourced file reported by the user has not been acquired or tested. Synthetic success does not prove that file is readable or that every device can convert every stream in real time. Use the new copied diagnostic report if the same source still fails. Installation, the copy-button flow and full locked-phone playback remain physical iPhone acceptance checks. Keep the phone powered on and on the receiver network during local conversion; force-quitting stops the local producer.
+
+No credentials or personal media URLs belong in source control, diagnostics or handoffs. See THIRD_PARTY_NOTICES.md for pinned upstream libraries and relinking instructions.

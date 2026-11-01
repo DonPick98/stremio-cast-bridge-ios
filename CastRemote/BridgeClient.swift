@@ -33,11 +33,12 @@ struct AddonStream: Decodable, Identifiable {
         behaviorHints = try? c.decode(Hints.self, forKey:.behaviorHints)
         subtitles = try? c.decode([Subtitle].self, forKey:.subtitles)
     }
-    struct Subtitle: Decodable { let url: String; let lang: String? }
+    struct Subtitle: Decodable { let url: String; let lang: String?; let id:String?; let label:String? }
     struct Hints: Decodable {
         let filename: String?
         let bingeGroup: String?
         let videoSize: Int64?
+        let videoHash: String?
         let proxyHeaders: ProxyHeaders?
     }
     struct ProxyHeaders: Decodable { let request: [String:String]? }
@@ -245,4 +246,3 @@ struct AddonConfigStore {
         guard SecItemAdd(record as CFDictionary,nil) == errSecSuccess else { throw AddonConfigError.keychain }
     }
 }
-

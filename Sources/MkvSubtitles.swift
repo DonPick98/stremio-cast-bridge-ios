@@ -111,7 +111,7 @@ struct MkvSubtitleExtractor {
     }
     /// Best effort for indexed text tracks. Does not scan/download video clusters.
     /// Cues are optional in MKV: a successful extraction cannot prove cue completeness.
-    static func extract(read: @escaping Reader, language: String) async throws -> String {
+    static func extract(read: @escaping Reader, language: String, subtitleOrdinal:Int? = nil) async throws -> String {
         let first = Array(try await read(0,65536)), eb = try header(first)
         guard eb.id == 0x1a45dfa3, let ebSize = eb.size else { throw SubtitleError.unsupported }
         let seg = try header(first,eb.header+ebSize)
@@ -143,13 +143,14 @@ struct MkvSubtitleExtractor {
         for e in try children(t) where e.id == 0xae {
             let c = try children(t,e.data,e.data+e.size!)
             guard try number(t,c.first{$0.id == 0x83}) == 17 else { continue }
-            let codec = string(t,c.first{$0.id == 0x86})
-            guard ["S_TEXT/UTF8","S_TEXT/ASS","S_TEXT/SSA"].contains(codec), !c.contains(where:{$0.id == 0x6d80}) else { continue }
+            let codec = c.contains(where:{$0.id == 0x6d80}) ? "unsupported" : string(t,c.first{$0.id == 0x86})
             let lang = string(t,c.first{$0.id == 0x22b59d})
             tracks.append(Track(id:try number(t,c.first{$0.id == 0xd7}),codec:codec,language:lang.isEmpty ? string(t,c.first{$0.id == 0x22b59c}) : lang,name:string(t,c.first{$0.id == 0x536e})))
         }
         let aliases = language == "it" ? ["it","ita"] : ["en","eng"]
-        guard let track = tracks.first(where:{ aliases.contains($0.language.lowercased().components(separatedBy:"-")[0]) }) else { throw SubtitleError.noTrack }
+        let selected = subtitleOrdinal.flatMap{tracks.indices.contains($0) ? tracks[$0] : nil} ?? (subtitleOrdinal == nil ? tracks.first(where:{aliases.contains($0.language.lowercased().components(separatedBy:"-")[0])}) : nil)
+        guard let track = selected else { throw SubtitleError.noTrack }
+        guard ["S_TEXT/UTF8","S_TEXT/ASS","S_TEXT/SSA"].contains(track.codec) else { throw SubtitleError.unsupported }
         let b = try await element(read,cuesAt,0x1c53bb6b)
         var cues: [Cue] = []
         for e in try children(b) where e.id == 0xbb {
