@@ -6,6 +6,7 @@ import MediaPlayer
 
 /// Exercises the actual iOS binary on synthetic fixtures in CI, without accounts or Cast devices.
 @MainActor enum NativeEngineValidation {
+    static func trace(_ text:String) { FileHandle.standardOutput.write(Data("Engine validation: \(text)\n".utf8)) }
     static func log(_ player:VLCMediaPlayer,to url:URL) {
         FileManager.default.createFile(atPath:url.path,contents:nil)
         guard let handle = try? FileHandle(forWritingTo:url) else { return }
@@ -25,6 +26,7 @@ import MediaPlayer
         result["systemMediaControls"] = mediaControls
         controls.clear()
         do {
+            trace("decoder")
             let repair = AudioRepairPipe()
             let repairedFile = documents.appendingPathComponent("repair-direct.mkv")
             repair.testingOutput = repairedFile
@@ -35,6 +37,7 @@ import MediaPlayer
                 result["decoder"] = ["passed":!repair.failed && repair.finished,"audio":checked.audioCodecsDescription,"video":checked.videoDescription]
             } catch { result["decoder"] = ["passed":false,"error":error.localizedDescription] }
             repair.stop()
+            trace("core conversion")
             let source = VLCMedia(url:input)
             source.addOption(":sout=#transcode{acodec=mp4a,ab=192,channels=2}:std{access=file,mux=avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof}},dst=\(output.path)}")
             source.addOption(":no-sout-all")
@@ -68,12 +71,14 @@ import MediaPlayer
             var gatewayResults: [[String:Any]] = []
             let scenarios: [(EmbeddedMediaEngine.VideoMode,Bool,Bool)] = [(.copy,false,false),(.hardwareH264,false,false),(.softwareVP8,false,false),(.copy,true,false),(.copy,true,true)]
             for (mode,repairAudio,httpsInput) in scenarios {
+                trace("gateway \(gatewayResults.count) begin")
                 let engine = EmbeddedMediaEngine()
                 do {
                     let began = Date()
                     let fixture = URL(string:"https://raw.githubusercontent.com/DonPick98/stremio-cast-bridge-ios/f14b900daaeae97a4970eea66b804ded21d9a82a/Tests/CodecSamples/h264-ac3.mkv")!
                     let source = httpsInput ? fixture : repairAudio ? documents.appendingPathComponent("CodecSamples/truehd.mkv") : input
                     let url = try await engine.start(input:source,deviceIP:"127.0.0.1",start:0,videoMode:mode,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),repairAudio:repairAudio,selfTest:true)
+                    trace("gateway \(gatewayResults.count) ready")
                     let capture = NativeStreamCapture()
                     let (body,cors,eof) = try await capture.read(url)
                     let suffix = mode == .softwareVP8 ? "webm" : "mp4"
@@ -85,13 +90,16 @@ import MediaPlayer
                     gatewayResults.append(["mode":String(describing:mode),"passed":false,"error":error.localizedDescription])
                 }
                 engine.stop()
+                trace("gateway \(gatewayResults.count) complete")
             }
             result["gateway"] = gatewayResults
             result["passed"] = (result["passed"] as? Bool == true) && gatewayResults.allSatisfy{$0["passed"] as? Bool == true}
+            trace("codec matrix")
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
                 result["matrix"] = matrix
                 result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 25 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+                trace("background conversion")
                 let background = try await backgroundProbe(documents:documents)
                 result["background"] = background
                 result["passed"] = (result["passed"] as? Bool == true) && (background["passed"] as? Bool == true)

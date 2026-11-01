@@ -48,7 +48,7 @@ jobs:
           SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch --stdout="$data/Documents/stdio.log" --stderr="$data/Documents/stdio-error.log" "$device" app.example.castbridge
           mkdir -p native-engine-report
           background_tested=0
-          for i in $(seq 1 600); do
+          for i in $(seq 1 360); do
             if test "$background_tested" -eq 0 && test -f "$data/Documents/background-ready.json"; then
               background_tested=1
               xcrun simctl openurl "$device" 'https://example.com/'
@@ -68,6 +68,11 @@ jobs:
             fi
             sleep 1
           done
+          find "$data/Documents" -name 'gateway-*' -exec cp '{}' native-engine-report/ \;
+          find "$data/Documents" -name 'matrix-*' -exec cp '{}' native-engine-report/ \;
+          find "$data/Documents" -name 'repair-*' -exec cp '{}' native-engine-report/ \;
+          find "$data/Documents" -name 'stdio*' -exec cp '{}' native-engine-report/ \;
+          test ! -f "$data/Documents/stdio.log" || tail -n 80 "$data/Documents/stdio.log"
           xcrun simctl spawn "$device" log show --last 2m --style compact --predicate 'process == "CastRemote"' | tail -n 100
           exit 1
       - name: Upload native engine evidence
