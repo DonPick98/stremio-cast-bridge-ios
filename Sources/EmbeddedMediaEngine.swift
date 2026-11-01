@@ -144,7 +144,7 @@ enum EmbeddedMediaError: LocalizedError {
         running = true
         observeLifecycle()
         player.delegate = self; player.media = media; player.play()
-        for _ in 0..<35 {
+        for _ in 0..<1400 {
             try Task.checkCancellation()
             if player.state == .error || audioRepair?.failed == true { stop(); throw EmbeddedMediaError.encoder }
             do {
@@ -154,7 +154,7 @@ enum EmbeddedMediaError: LocalizedError {
                 return url
             } catch LocalStreamError.upstream { try Task.checkCancellation() }
             catch { stop(); throw EmbeddedMediaError.encoder }
-            try await Task.sleep(nanoseconds:200_000_000)
+            try await Task.sleep(nanoseconds:5_000_000)
         }
         stop(); throw EmbeddedMediaError.timeout
     }
