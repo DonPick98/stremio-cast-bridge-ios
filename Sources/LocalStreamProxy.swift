@@ -15,6 +15,7 @@ final class LosslessMediaPipe: @unchecked Sendable {
     private var client:NWConnection?
     private var source:DispatchSourceRead?
     private var suspended = false
+    private var discarding = false
     private var stopped = false
     private var opening:CheckedContinuation<Void,Error>?
     init() throws {
@@ -64,27 +65,38 @@ final class LosslessMediaPipe: @unchecked Sendable {
                 if let method = try LocalStreamProxy.method(buffer,path:path), method == "GET" {
                     let header = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\nConnection: close\r\n\r\n".utf8)
                     connection.send(content:header,completion:.contentProcessed { [weak self] error in
-                        guard let self, !self.stopped else { return }
+                        guard let self, !self.stopped, !self.discarding else { return }
                         if error != nil { self.finish(); return }
-                        let source = DispatchSource.makeReadSource(fileDescriptor:self.readFD,queue:self.queue)
-                        self.source = source
-                        source.setEventHandler { [weak self] in self?.pump() }
-                        let fd = self.readFD; source.setCancelHandler { Darwin.close(fd) }
-                        source.resume()
+                        self.beginReading()
                     })
                 } else if complete || error != nil { self.finish() }
                 else { self.readRequest(connection,path:path,type:type,buffer:buffer) }
             } catch { self.finish() }
         }
     }
+    private func beginReading() {
+        guard source == nil, !stopped else { return }
+        let source = DispatchSource.makeReadSource(fileDescriptor:readFD,queue:queue)
+        self.source = source
+        source.setEventHandler { [weak self] in self?.pump() }
+        let fd = readFD; source.setCancelHandler { Darwin.close(fd) }
+        source.resume()
+    }
     private func pump() {
-        guard !stopped, !suspended, let source, let client else { return }
+        guard !stopped, !suspended, let source else { return }
         source.suspend(); suspended = true
         var bytes = [UInt8](repeating:0,count:16_384)
         let count = Darwin.read(readFD,&bytes,16_384)
+        if discarding {
+            if count == 0 { finish() }
+            else if count > 0 || errno == EAGAIN || errno == EINTR { suspended = false; source.resume() }
+            else { finish() }
+            return
+        }
+        guard let client else { finish(); return }
         if count > 0 {
             client.send(content:Data(bytes.prefix(count)),completion:.contentProcessed { [weak self] error in
-                guard let self, !self.stopped else { return }
+                guard let self, !self.stopped, !self.discarding else { return }
                 if error != nil { self.finish() } else { self.suspended = false; self.source?.resume() }
             })
         } else if count == 0 {
@@ -93,6 +105,18 @@ final class LosslessMediaPipe: @unchecked Sendable {
         else { finish() }
     }
     func endWriting() { queue.async { if self.keeper >= 0 { Darwin.close(self.keeper); self.keeper = -1 } } }
+    // VLC opens FIFO destinations read/write. Drain during cancellation so its
+    // blocking writer can finish while libvlc stops the decoder threads.
+    func drain() {
+        queue.async {
+            guard !self.stopped else { return }
+            self.discarding = true
+            self.listener?.stateUpdateHandler = nil; self.listener?.newConnectionHandler = nil; self.listener?.cancel(); self.listener = nil
+            self.client?.stateUpdateHandler = nil; self.client?.cancel(); self.client = nil
+            if self.source == nil { self.beginReading() }
+            else if self.suspended { self.suspended = false; self.source?.resume() }
+        }
+    }
     func stop() { queue.async { self.finish() } }
     private func finish() {
         guard !stopped else { return }; stopped = true

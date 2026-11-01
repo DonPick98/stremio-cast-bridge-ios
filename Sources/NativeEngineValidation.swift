@@ -106,7 +106,7 @@ import MediaPlayer
         let ready = try JSONSerialization.data(withJSONObject:["url":url.absoluteString])
         try ready.write(to:documents.appendingPathComponent("background-ready.json"),options:.atomic)
         let network = documents.appendingPathComponent("background-network.json")
-        for _ in 0..<400 {
+        for _ in 0..<900 {
             if FileManager.default.fileExists(atPath:network.path) { break }
             try await Task.sleep(nanoseconds:100_000_000)
         }
@@ -118,7 +118,11 @@ import MediaPlayer
         let seconds = metrics["seconds"] as? Double ?? 0
         let span = metrics["dataSpan"] as? Double ?? 0
         let lateBytes = metrics["lateBytes"] as? Int ?? 0
-        return ["passed":offscreen && helper && bytes > 4096 && seconds >= 10 && span >= 10 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":engine.testingProducerState,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
+        let producerState = engine.testingProducerState
+        engine.stop()
+        for _ in 0..<50 { if engine.testingStopCompleted { break }; try await Task.sleep(nanoseconds:100_000_000) }
+        let stopped = engine.testingStopCompleted
+        return ["passed":offscreen && helper && stopped && bytes > 4096 && seconds >= 60 && span >= 55 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":producerState,"stoppedCleanly":stopped,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
     }
 }
 

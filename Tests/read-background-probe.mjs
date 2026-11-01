@@ -7,9 +7,9 @@ const began=Date.now();let bytes=0,done=false,connected=false,status=0,errorCode
 function finish(){if(done)return;done=true;const tmp=process.argv[3]+'.tmp';fs.writeFileSync(tmp,JSON.stringify({bytes,seconds:(Date.now()-began)/1000,connected,status,errorCode,dataSpan:first?(last-first)/1000:0,lateBytes}));fs.renameSync(tmp,process.argv[3]);}
 const request=http.get(url,response=>{
  status=response.statusCode;
- response.on('data',chunk=>{bytes+=chunk.length;const now=Date.now();if(!first)first=now;last=now;if(now-began>=10000)lateBytes+=chunk.length;});
+ response.on('data',chunk=>{bytes+=chunk.length;const now=Date.now();if(!first)first=now;last=now;if(now-began>=50000)lateBytes+=chunk.length;});
  response.on('end',finish);response.on('error',e=>{errorCode=e.code||'response';finish();});
 });
 request.on('socket',socket=>socket.once('connect',()=>{connected=true;}));
 request.on('error',e=>{errorCode=e.code||'request';finish();});
-setTimeout(()=>{finish();request.destroy();},15000);
+setTimeout(()=>{finish();request.destroy();},65000);

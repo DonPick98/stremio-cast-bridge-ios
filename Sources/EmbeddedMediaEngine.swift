@@ -166,10 +166,21 @@ enum EmbeddedMediaError: LocalizedError {
         backgroundPlayer?.stop(); backgroundPlayer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
-        outputPipe?.stop(); outputPipe = nil
+        let outputPipe = self.outputPipe; self.outputPipe = nil
         audioRepair?.stop(); audioRepair = nil
         let old = player; player = nil; old?.delegate = nil
-        if let old { DispatchQueue.global(qos:.utility).async { old.stop() } }
+        if let old {
+            outputPipe?.drain()
+#if CAST_ENGINE_TESTING
+            testingStopCompleted = false
+#endif
+            DispatchQueue.global(qos:.utility).async { [weak self] in
+                old.stop(); outputPipe?.stop()
+#if CAST_ENGINE_TESTING
+                Task { @MainActor [weak self] in self?.testingStopCompleted = true }
+#endif
+            }
+        } else { outputPipe?.stop() }
     }
     nonisolated func mediaPlayerStateChanged(_ aNotification: Notification) {
         Task { @MainActor [weak self] in
@@ -212,6 +223,7 @@ enum EmbeddedMediaError: LocalizedError {
     }
     func refreshBackground() { updateBackground() }
 #if CAST_ENGINE_TESTING
+    private(set) var testingStopCompleted = true
     var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
     var testingProducerState: String { player.map { String($0.state.rawValue) } ?? "nil" }
 #endif
