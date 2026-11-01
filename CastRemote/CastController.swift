@@ -43,14 +43,17 @@ import UIKit
     private var loadPending = false
     private var loadAccepted = false
     private var loadTimeout: Task<Void, Never>?
-    private var activity: Activity<CastActivityAttributes>?
-    private var lastActivityState = ""
-    private var lastActivityUpdate = Date.distantPast
+    private var sourceRequests = PlaybackRequestState()
+    private var streamRequests = PlaybackRequestState()
+    private var timeline = PlaybackTimeline()
+    private var playWhenReady = true
+    private var transportRetries = 0
     private var lastPositionSave = Date.distantPast
     private var positionKey: String?
     private var bufferingSince: Date?
     private var expectedContentID: String?
     private var loadedSignature: String?
+    private var loadedStreamGeneration: UUID?
     private var loadedSubtitle: String?
     private var subtitleRequest: GCKRequest?
     private var pendingSubtitle: String?
@@ -91,7 +94,13 @@ import UIKit
 
     override init() {
         super.init()
-        activity = Activity<CastActivityAttributes>.activities.first
+        // Keep only the system media card, including after an upgrade from 0.6.0.
+        Task {
+            for old in Activity<CastActivityAttributes>.activities {
+                if #available(iOS 16.2, *) { await old.end(nil,dismissalPolicy:.immediate) }
+                else { await old.end(dismissalPolicy:.immediate) }
+            }
+        }
         positionKey = UserDefaults.standard.string(forKey: "cast.session.positionKey")
         if let positionKey { lastGoodPosition = UserDefaults.standard.double(forKey: positionKey) }
         CastActivityCommands.handler = { [weak self] command in await self?.handleCommand(command) ?? false }
@@ -113,8 +122,8 @@ import UIKit
         return candidates.contains { contentDigest($0) == saved }
     }
     private func capturePosition() {
-        guard ownsCurrentMedia, !loadPending, let client,
-              let state = client.mediaStatus?.playerState, state == .playing || state == .paused || state == .buffering else { return }
+        guard timeline.target == nil, !checkingStream, ownsCurrentMedia, !loadPending, let client,
+              let state = client.mediaStatus?.playerState, state == .playing || state == .paused else { return }
         let value = client.approximateStreamPosition() + streamOffset
         guard value.isFinite, value >= 0, state != .buffering || value > 0 else { return }
         lastGoodPosition = value
@@ -161,22 +170,26 @@ import UIKit
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         deviceMuted = session.currentDeviceMuted
         if let status = client.mediaStatus {
+            // This status still belongs to the stream being replaced. Keep the
+            // requested position, autoplay intent and any new preparation intact.
+            if checkingStream { return }
+            if let loadedStreamGeneration, !streamRequests.accepts(loadedStreamGeneration) { return }
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
             guard ownsCurrentMedia else {
                 if hasLoaded && !loadPending && !checkingStream { stopLocalProcessing(); hasLoaded = false; wantsPlayback = false; lockScreen.clear(); message = "La TV sta riproducendo un altro contenuto." }
-                playing = false; return
-            }
-            if checkingStream && status.playerState == .idle {
-                if status.idleReason == .cancelled { streamCheckTask?.cancel(); checkingStream = false; loading = false; stopLocalProcessing(); hasLoaded = false }
+                if !loadPending && timeline.target == nil { playing = false }
                 return
             }
             if loadPending && !loadAccepted { return }
             playing = status.playerState == .playing
-            if status.playerState == .paused || status.playerState == .playing { nativeEngine?.setReceiverPaused(status.playerState == .paused) }
+            if status.playerState == .playing || (status.playerState == .paused && (!loadPending || !playWhenReady)) { nativeEngine?.setReceiverPaused(status.playerState == .paused) }
+            if loadPending && loadAccepted && playWhenReady && status.playerState == .paused { _ = client.play() }
             if status.playerState != .buffering { bufferingSince = nil }
             let observed = client.approximateStreamPosition() + streamOffset
-            if !loadPending && observed.isFinite && observed >= 0 && (status.playerState == .playing || status.playerState == .paused) {
+            let ready = status.playerState == .playing || (status.playerState == .paused && (!loadPending || !playWhenReady))
+            let confirmed = timeline.observe(observed,ready:ready && (!loadPending || loadAccepted))
+            if confirmed {
                 lastGoodPosition = observed
                 if let positionKey, observed > 0, Date().timeIntervalSince(lastPositionSave) >= 10 {
                     UserDefaults.standard.set(observed, forKey: positionKey); lastPositionSave = Date()
@@ -185,11 +198,13 @@ import UIKit
             }
             let reported = status.mediaInformation?.streamDuration ?? 0
             let known = prepared?.duration ?? UserDefaults.standard.double(forKey:"cast.session.duration")
-            let d = localProcessing ? known : (reported.isFinite && reported > 0 ? reported : known)
-            duration = d.isFinite && d > 0 ? d : 0
+            let d = localProcessing ? (known > 0 ? known : (reported > 0 ? reported + streamOffset : duration)) : (reported.isFinite && reported > 0 ? reported : (known > 0 ? known : duration))
+            if d.isFinite && d > 0 { duration = d }
             let currentLoad = !loadPending || loadAccepted
-            if (status.playerState == .playing || status.playerState == .paused) && currentLoad {
+            if ready && confirmed && currentLoad {
+                if loadPending || !hasLoaded { playbackIssue = nil }
                 hasLoaded = true; wantsPlayback = true
+                playWhenReady = playing
                 if loadPending { loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = true }
                 if !checkingStream { message = playing ? "In riproduzione sulla TV." : "In pausa sulla TV." }
                 updateActivity(status: playing ? "In riproduzione" : "In pausa")
@@ -197,7 +212,6 @@ import UIKit
             } else if status.playerState == .buffering {
                 if bufferingSince == nil { bufferingSince = Date() }
                 let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
-                if stalled && recoverPlayback() { return }
                 message = stalled ? "Buffering prolungato. Riprova dal punto conservato o cambia sorgente." : "Caricamento sulla TV…"
                 updateActivity(status: stalled ? "Buffering: apri l’app per riprovare" : "Caricamento")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .error {
@@ -260,15 +274,16 @@ import UIKit
         sources = []; selectedSource = nil; prepared = nil; handoff = nil; configuration = nil; originalURL = nil; hasLoaded = false; lastGoodPosition = 0
         do {
             let ticket = try BridgeClient.shared.ticket(from:url)
+            let sourceToken = sourceRequests.generation
             busy = true; message = "Apro la sorgente…"
             work = Task {
                 do {
                     let data = try await BridgeClient.shared.handoff(ticket:ticket)
-                    try Task.checkCancellation()
+                    try validateSource(sourceToken)
                     handoff = data; work = nil
                     beginSources(data)
                 } catch is CancellationError { } catch {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled || !sourceRequests.accepts(sourceToken) { return }
                     busy = false
                     message = (error as? BridgeError)?.localizedDescription ?? "Non riesco ad aprire il collegamento. Riprova da Stremio."
                 }
@@ -277,6 +292,8 @@ import UIKit
     }
     private func beginSources(_ data: BridgeHandoff) {
         work?.cancel()
+        sourceRequests.invalidate()
+        let sourceToken = sourceRequests.generation
         do {
             guard let saved = try AddonConfigStore.load(provider:data.provider) else {
                 busy = false; showSetup = true
@@ -288,7 +305,7 @@ import UIKit
             work = Task {
                 do {
                     let found = try await BridgeClient.shared.sources(data,manifest:saved.manifest)
-                    try Task.checkCancellation()
+                    try validateSource(sourceToken)
                     sources = found; busy = false; work = nil
                     if let wanted = data.selection, let selected = found.first(where: { $0.identity == wanted }) {
                         choose(selected)
@@ -296,7 +313,7 @@ import UIKit
                         message = data.selection == nil ? "Scegli una sorgente." : "La sorgente è cambiata: scegli un file dall’elenco aggiornato."
                     }
                 } catch is CancellationError { } catch {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled || !sourceRequests.accepts(sourceToken) { return }
                     busy = false
                     message = (error as? BridgeError)?.localizedDescription ?? "Non riesco a leggere le sorgenti. Riprova da Stremio."
                 }
@@ -340,54 +357,63 @@ import UIKit
         positionKey = "cast.position." + digest
         lastGoodPosition = max(0, UserDefaults.standard.double(forKey: positionKey!))
         position = lastGoodPosition
+        let sourceToken = sourceRequests.generation
         busy = true; message = "Leggo audio e sottotitoli del file…"
         work = Task {
             do {
                 guard let key = configuration?.realDebridKey, !key.isEmpty else { throw BridgeError.cannotResolve }
                 let resolver = RDNativeResolver(apiKey:key, session:URLSession(configuration:.ephemeral))
                 let result: RDPreparedMedia
-                let cacheKey = contentDigest(key + "|" + handoff.id + "|" + source.identity)
+                let cacheKey = contentDigest(key + "|" + handoff.id + "|" + source.identity + "|" + (source.torrentHash ?? "") + "|" + source.url)
                 if let (saved,time) = preparedCache[cacheKey], Date().timeIntervalSince(time) < 120 {
                     result = saved
                 } else {
                     let direct: URL?
                     do { direct = try await BridgeClient.shared.resolveDirect(source) }
                     catch BridgeError.cannotResolve { direct = nil }
-                    try Task.checkCancellation()
+                    try validateSource(sourceToken)
                     if let direct {
                         let file = try await resolver.originalFile(directLink:direct)
+                        try validateSource(sourceToken)
                         originalURL = file.download
                         result = try await EmbeddedMediaEngine.inspect(file.download)
                     } else if let hash = source.torrentHash, let filename = source.filename {
                         let link = try await resolver.resolveTorrentLink(torrentHash:hash, filename:filename, videoSize:source.behaviorHints?.videoSize,onProgress:{ [weak self] state,progress in
                             guard let self else { return }
-                            await self.showPreparationStatus(state,progress:progress)
+                            await self.showPreparationStatus(state,progress:progress,sourceToken:sourceToken)
                         })
                         let file = try await resolver.originalFile(directLink:link)
+                        try validateSource(sourceToken)
                         originalURL = file.download
                         result = try await EmbeddedMediaEngine.inspect(file.download)
                     } else { throw BridgeError.cannotResolve }
                     if preparedCache.count >= 8, let oldest = preparedCache.min(by:{$0.value.1 < $1.value.1})?.key { preparedCache[oldest] = nil }
                     preparedCache[cacheKey] = (result,Date())
                 }
-                try Task.checkCancellation()
+                try validateSource(sourceToken)
                 guard !result.audio.isEmpty else { throw BridgeError.cannotResolve }
                 prepared = result; selectedAudio = PlaybackPreferences.audio(result.audio,fallback:result.defaultAudioKey)
                 selectedQuality = result.availableQualities.contains(.high) ? .high : (result.availableQualities.first ?? .high)
                 compatibilityMode = false
                 selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage)
                 busy = false
+                duration = result.duration > 0 ? result.duration : duration
+                playbackIssue = nil
                 message = "Video pronto. Collega la TV per iniziare."
                 if connected && wantsPlayback { load() }
             } catch is CancellationError { } catch {
-                if Task.isCancelled { return }
+                if Task.isCancelled || !sourceRequests.accepts(sourceToken) { return }
                 busy = false
                 message = (error as? RDResolverError)?.localizedDescription ?? (error as? BridgeError)?.localizedDescription ?? "Non riesco a leggere le tracce di questo file. Scegli un’altra sorgente."
             }
         }
     }
-    private func showPreparationStatus(_ state: String, progress: Int?) {
-        guard !Task.isCancelled else { return }
+    private func validateSource(_ token: UUID) throws {
+        try Task.checkCancellation()
+        guard sourceRequests.accepts(token) else { throw CancellationError() }
+    }
+    private func showPreparationStatus(_ state: String, progress: Int?, sourceToken: UUID) {
+        guard !Task.isCancelled, sourceRequests.accepts(sourceToken) else { return }
         let percent = progress.map { " (\($0)%)" } ?? ""
         switch state {
         case "downloading": message = "Real-Debrid sta scaricando questa sorgente\(percent). Attendo automaticamente; puoi cambiare sorgente."
@@ -399,7 +425,8 @@ import UIKit
     }
     func load(preservePosition: Bool = false) {
         wantsPlayback = true
-        startPlayback(requestedPosition:nil,autoplay:hasLoaded ? playing : true)
+        transportRetries = 0
+        startPlayback(requestedPosition:nil,autoplay:playWhenReady)
     }
     private func startPlayback(requestedPosition: Double?, autoplay: Bool) {
         guard let prepared, client != nil else { message = "Collega prima il Chromecast e scegli un file."; return }
@@ -409,21 +436,37 @@ import UIKit
         let burnedSubtitle = subtitle.hasPrefix("vlc_") ? subtitle : "none"
         let needsLocal = forceLocalPlayback || !prepared.directCompatible || audio != prepared.defaultAudioKey || burnedSubtitle != "none"
         if !needsLocal {
-            stopLocalProcessing(); compatibilityMode = false; processingDetail = "Originale · diretto"
+            let target = requestedPosition ?? timeline.target ?? lastGoodPosition
+            timeline.begin(at:target); position = target; lastGoodPosition = target
+            stopLocalProcessing(); compatibilityMode = false; processingDetail = "Video originale · \(prepared.video?.label ?? prepared.videoDescription)"
             sendLoad(preservePosition:true,autoplay:autoplay)
             return
         }
         let appearance = burnedSubtitle == "none" ? SubtitleAppearance() : SubtitleAppearance.load()
         let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:externalSubtitleURL,extracted:embeddedSubtitleURL)
+        // Burning a subtitle is not a permanent reason to re-encode the movie.
+        // Re-evaluate the original-video route when the selected tracks change.
+        if selection != nativeSelection { localFallbackLevel = 0 }
         let requiredCaption = subtitle == "external" ? 1 : subtitle == "embedded" ? 2 : nil
-        if requestedPosition == nil, selection == nativeSelection, let engine = nativeEngine, engine.running, let url = engine.streamURL, requiredCaption == nil || engine.captionURLs[requiredCaption!] != nil {
+        if requestedPosition == nil, hasLoaded, ownsCurrentMedia, selection == nativeSelection, let engine = nativeEngine, engine.running, let url = engine.streamURL, requiredCaption == nil || engine.captionURLs[requiredCaption!] != nil {
             sendLoad(preservePosition:false,urlOverride:url,contentTypeOverride:engine.contentType,autoplay:autoplay)
             return
         }
         guard let host = castSession?.device.ipAddress, CastWire.localIPv4(host) else { playbackIssue = EmbeddedMediaError.address.localizedDescription; return }
-        let start = requestedPosition ?? lastGoodPosition
+        let start = requestedPosition ?? timeline.target ?? lastGoodPosition
+        let sourceToken = sourceRequests.generation
+        streamRequests.invalidate()
+        let streamToken = streamRequests.generation
+        timeline.begin(at:start); position = start; lastGoodPosition = start
+        // Freeze the old stream while replacing its audio/subtitle pipeline.
+        // Its late statuses must not move the new original-media timeline.
+        if hasLoaded && ownsCurrentMedia {
+            nativeEngine?.setReceiverPaused(true)
+            _ = client?.pause()
+        }
         checkingStream = true; loading = true; playbackIssue = nil
         message = "Preparo il flusso sull’iPhone…"
+        updateActivity(status:"Caricamento")
         streamCheckTask = Task { [weak self] in
             let background = UIApplication.shared.beginBackgroundTask(withName:"Prepare Cast stream")
             defer { if background != .invalid { UIApplication.shared.endBackgroundTask(background) } }
@@ -432,7 +475,7 @@ import UIKit
                 var captions: [Int:String] = [:]
                 for (id,url) in [(1,selection.external),(2,selection.extracted)] {
                     if id == requiredCaption, let url, let text = await self.readCaption(url) { captions[id] = text }
-                    try Task.checkCancellation()
+                    try self.validateStream(source:sourceToken,stream:streamToken)
                 }
                 if let requiredCaption, captions[requiredCaption] == nil {
                     let languages = self.handoff?.subtitleLanguage == "ita" ? ["it","ita"] : ["en","eng"]
@@ -445,7 +488,7 @@ import UIKit
                 let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel)
                 var lastError: Error = EmbeddedMediaError.encoder
                 for mode in modes {
-                    try Task.checkCancellation()
+                    try self.validateStream(source:sourceToken,stream:streamToken)
                     self.message = mode == .copy ? "Adatto l’audio sull’iPhone, mantenendo il video originale…" : "Adatto il video sull’iPhone per il Chromecast…"
                     let engine = EmbeddedMediaEngine()
                     do {
@@ -456,17 +499,20 @@ import UIKit
                         let repairAudio = AudioRepairPipe.required(audioTrack?.codec ?? "")
                         let audioIndex = prepared.audio.firstIndex(where:{$0.key == audio}) ?? 0
                         let subtitleIndex = prepared.subtitles.firstIndex(where:{$0.key == burnedSubtitle})
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions)
-                        try Task.checkCancellation()
-                        guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, self.selectedSubtitle == subtitle else { engine.stop(); self.checkingStream = false; self.loading = false; return }
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,video:prepared.video)
+                        try self.validateStream(source:sourceToken,stream:streamToken)
+                        guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, self.selectedSubtitle == subtitle else { engine.stop(); return }
                         self.nativeEngine?.stop()
                         self.nativeEngine = engine; self.nativeSelection = selection
                         engine.refreshBackground()
                         self.localProcessing = true; self.compatibilityMode = true; CastActivityCommands.usesLocalStream = true
                         self.localFallbackLevel = mode == .copy ? 0 : mode == .hardwareH264 ? 1 : 2
-                        self.processingDetail = mode == .copy ? (copyAudio ? "Contenitore adattato · audio e video originali" : "Video originale · audio AAC stereo") : mode == .hardwareH264 ? "Video H.264 · audio compatibile" : "Video VP8 · audio Vorbis stereo"
+                        let rate = prepared.video.map { format in
+                            format.conversionFrameRate.map { "\(Int($0)) fps" } ?? format.frameRateLabel
+                        } ?? "fps originali"
+                        self.processingDetail = mode == .copy ? "Video originale · \(prepared.video?.label ?? prepared.videoDescription) · \(copyAudio ? "audio originale" : "audio AAC stereo")" : "Video convertito \(mode == .hardwareH264 ? "H.264" : "VP8") · fino a 1080p · \(rate)"
                         engine.onFailure = { [weak self, weak engine] in
-                            guard let self, self.nativeEngine === engine else { return }
+                            guard let self, let engine, self.nativeEngine === engine, self.sourceRequests.accepts(sourceToken), self.streamRequests.accepts(streamToken), !self.checkingStream, !self.loadPending else { return }
                             if !self.recoverPlayback() { self.playbackIssue = "Il motore integrato ha interrotto la conversione. La posizione è conservata." }
                         }
                         self.lastGoodPosition = max(0,start); self.position = self.lastGoodPosition
@@ -475,22 +521,28 @@ import UIKit
                         return
                     } catch {
                         engine.stop(); lastError = error
-                        try Task.checkCancellation()
+                        try self.validateStream(source:sourceToken,stream:streamToken)
                     }
                 }
                 throw lastError
             } catch {
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled, let self, self.sourceRequests.accepts(sourceToken), self.streamRequests.accepts(streamToken) else { return }
                 self.checkingStream = false; self.loading = false
+                self.hasLoaded = false
                 self.playbackIssue = (error as? EmbeddedMediaError)?.localizedDescription ?? "Il motore integrato non ha preparato questa sorgente."
                 self.message = "Preparazione del flusso non riuscita."
             }
         }
     }
+    private func validateStream(source:UUID,stream:UUID) throws {
+        try validateSource(source)
+        guard streamRequests.accepts(stream) else { throw CancellationError() }
+    }
     private func sendLoad(preservePosition: Bool, urlOverride: URL? = nil, contentTypeOverride: String? = nil, autoplay: Bool = true) {
         guard let prepared, let client else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loadPending, subtitleRequest == nil else { return }
-        if urlOverride == nil { capturePosition() }
+        // startPlayback captured the original-media position before replacing
+        // the old engine. Reading it again here would lose the old stream offset.
         do {
             let url = urlOverride ?? prepared.directURL
             let signature = url.absoluteString + "|" + (externalSubtitleURL?.absoluteString ?? "") + "|" + (embeddedSubtitleURL?.absoluteString ?? "")
@@ -539,6 +591,7 @@ import UIKit
             loadAccepted = false
             expectedContentID = url.absoluteString
             loadedSignature = signature
+            loadedStreamGeneration = streamRequests.generation
             loadedSubtitle = selectedSubtitle
             UserDefaults.standard.set(contentDigest(url.absoluteString), forKey: "cast.session.content")
             UserDefaults.standard.set(prepared.duration, forKey:"cast.session.duration")
@@ -552,7 +605,7 @@ import UIKit
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
                 guard !Task.isCancelled, let self, self.loadPending else { return }
                 self.loadPending = false; self.loading = false; self.loadRequest = nil
-                if self.recoverPlayback() { return }
+                if self.recoverPlayback(allowVideoConversion:false) { return }
                 self.message = "La TV non ha avviato il video dopo l’adattamento automatico. La posizione è conservata."
                 self.playbackIssue = "La TV non ha avviato il flusso dopo l’adattamento automatico. La posizione è conservata."
                 self.updateActivity(status: "Apri l’app per riprovare")
@@ -643,6 +696,8 @@ import UIKit
     func seek(to value: Double) {
         guard hasLoaded, !loadPending, !loading, value.isFinite else { return }
         let target = min(duration > 0 ? max(0,duration-(localProcessing ? 1 : 0)) : value,max(0,value))
+        timeline.begin(at:target); position = target; lastGoodPosition = target
+        updateActivity(status:"Caricamento")
         Task { _ = await handleCommand("seek:\(target)") }
     }
     func stopPlayback() {
@@ -656,16 +711,20 @@ import UIKit
         nativeEngine?.stop(); nativeEngine = nil; nativeSelection = nil
         localProcessing = false; CastActivityCommands.usesLocalStream = false
     }
-    @discardableResult private func recoverPlayback() -> Bool {
+    @discardableResult private func recoverPlayback(allowVideoConversion:Bool = true) -> Bool {
         guard !checkingStream, let prepared, connected else { return false }
-        if localProcessing {
+        if !allowVideoConversion {
+            guard transportRetries < 1 else { return false }
+            transportRetries += 1
+            if !localProcessing { forceLocalPlayback = true }
+        } else if localProcessing {
             guard localFallbackLevel < 2 else { return false }
             localFallbackLevel += 1
         } else { guard !forceLocalPlayback else { return false }; forceLocalPlayback = true }
         loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; hasLoaded = false
-        lastGoodPosition = max(lastGoodPosition,position)
+        lastGoodPosition = timeline.target ?? lastGoodPosition
         message = "Adatto automaticamente il formato per la TV…"
-        startPlayback(requestedPosition:lastGoodPosition,autoplay:true)
+        startPlayback(requestedPosition:lastGoodPosition,autoplay:playWhenReady)
         return prepared.directURL == self.prepared?.directURL
     }
     func setVolume(_ value: Double) { castSession?.setDeviceVolume(Float(min(1,max(0,value)))) }
@@ -691,47 +750,59 @@ import UIKit
         }
     }
     private func handleCommand(_ command:String) async -> Bool {
+        let sourceToken = sourceRequests.generation
         let canUseDirect = !localProcessing || ["toggle","play","pause","stop"].contains(command)
         if canUseDirect && (UIApplication.shared.applicationState != .active || !connected) {
             if await directCommand(command) { return true }
         }
+        guard sourceRequests.accepts(sourceToken) else { return false }
         if await performActivityCommand(command) { return true }
+        guard sourceRequests.accepts(sourceToken) else { return false }
         return canUseDirect ? await directCommand(command) : false
     }
     private func directCommand(_ command:String) async -> Bool {
+        let sourceToken = sourceRequests.generation
         let success = await CastDirectControl.perform(command,offset:streamOffset,originalDuration:localProcessing ? duration : nil) { [weak self] position,duration,playing in
-            guard let self else { return }
-            self.position = position; self.lastGoodPosition = position; self.duration = duration; self.playing = playing
+            guard let self, self.sourceRequests.accepts(sourceToken), !self.checkingStream, !self.loadPending else { return }
+            if self.timeline.observe(position,ready:true) { self.position = position; self.lastGoodPosition = position }
+            if duration > 0 { self.duration = duration }
+            self.playing = playing; self.playWhenReady = playing
             self.nativeEngine?.setReceiverPaused(!playing)
             self.updateActivity(status:playing ? "In riproduzione" : "In pausa")
         }
+        guard sourceRequests.accepts(sourceToken) else { return false }
         if success && command == "stop" { resetPlayback(); hasLoaded = false; playing = false; message = "Riproduzione interrotta." }
         return success
     }
     private func performActivityCommand(_ command: String) async -> Bool {
+        let sourceToken = sourceRequests.generation
         if client == nil || !connected { reconnectControls() }
         for _ in 0..<20 {
             if client != nil { break }
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
-        guard let client, ownsCurrentMedia, !loadPending, commandContinuation == nil else {
+        guard sourceRequests.accepts(sourceToken) else { return false }
+        guard let client, ownsCurrentMedia, !loadPending, !checkingStream, commandContinuation == nil else {
             message = "Riconnetti Chromecast per usare i controlli."
             return false
         }
         let request: GCKRequest
         switch command {
-        case "play": request = client.play()
-        case "pause": request = client.pause()
+        case "play": playWhenReady = true; request = client.play()
+        case "pause": playWhenReady = false; request = client.pause()
         case "stop": endPlayback(); return true
-        case "toggle": request = client.mediaStatus?.playerState == .playing ? client.pause() : client.play()
+        case "toggle": playWhenReady.toggle(); request = playWhenReady ? client.play() : client.pause()
         case let value where value == "back" || value == "forward" || value.hasPrefix("seek:"):
-            let current = client.approximateStreamPosition() + streamOffset
+            let current = timeline.target ?? lastGoodPosition
             guard current.isFinite, current >= 0 else { return false }
             guard var target = CastWire.seekTarget(command,current:current,duration:duration) else { return false }
+            timeline.begin(at:target); position = target; lastGoodPosition = target
+            updateActivity(status:"Caricamento")
             if localProcessing {
                 if duration > 0 { target = min(target,max(0,duration-1)) }
-                startPlayback(requestedPosition:target,autoplay:client.mediaStatus?.playerState == .playing)
+                startPlayback(requestedPosition:target,autoplay:playWhenReady)
                 await streamCheckTask?.value
+                guard sourceRequests.accepts(sourceToken) else { return false }
                 return loadPending || (ownsCurrentMedia && abs(position-target) < 2)
             }
             let opts = GCKMediaSeekOptions()
@@ -756,6 +827,7 @@ import UIKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        sourceRequests.invalidate(); streamRequests.invalidate()
         wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil
         trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear()
         streamCheckTask?.cancel(); streamCheckTask = nil; checkingStream = false; playbackIssue = nil
@@ -768,38 +840,16 @@ import UIKit
         positionKey = nil
         finishCommand(false)
         loadTimeout?.cancel(); loadPending = false; loading = false; loadAccepted = false; loadRequest = nil; bufferingSince = nil
-        expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil
+        expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil; loadedStreamGeneration = nil
         subtitleRequest = nil; pendingSubtitle = nil
         UserDefaults.standard.removeObject(forKey: "cast.session.content")
         UserDefaults.standard.removeObject(forKey: "cast.session.positionKey")
         lastGoodPosition = 0; position = 0; duration = 0
-        if let old = activity {
-            activity = nil; lastActivityState = ""
-            Task {
-                if #available(iOS 16.2, *) { await old.end(nil, dismissalPolicy: .immediate) }
-                else { await old.end(dismissalPolicy: .immediate) }
-            }
-        }
+        timeline.reset(); playWhenReady = true; playing = false; transportRetries = 0
     }
     private func updateActivity(status: String) {
         if wantsPlayback && (hasLoaded || loadPending || localProcessing) {
-            lockScreen.update(title:displayTitle,device:deviceName,position:lastGoodPosition,duration:duration,playing:playing,loading:loading,local:localProcessing)
-        }
-        guard hasLoaded || loadPending || activity != nil else { return }
-        let stateKey = "\(status)|\(Int(lastGoodPosition / 10))|\(Int(duration))"
-        let age = Date().timeIntervalSince(lastActivityUpdate)
-        guard (stateKey != lastActivityState && (age >= 5 || status != lastActivityState.components(separatedBy: "|").first)) || age >= 30 else { return }
-        lastActivityState = stateKey; lastActivityUpdate = Date()
-        let state = CastActivityAttributes.ContentState(status: status, playing: playing, position: lastGoodPosition, duration: duration, updatedAt: Date())
-        if activity == nil, ActivityAuthorizationInfo().areActivitiesEnabled {
-            let attributes = CastActivityAttributes(title: displayTitle)
-            if #available(iOS 16.2, *) { activity = try? Activity.request(attributes: attributes, content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(60)), pushType: nil) }
-            else { activity = try? Activity.request(attributes: attributes, contentState: state, pushType: nil) }
-        } else if let activity {
-            Task {
-                if #available(iOS 16.2, *) { await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(60))) }
-                else { await activity.update(using: state) }
-            }
+            lockScreen.update(title:displayTitle,device:deviceName,position:lastGoodPosition,duration:duration,playing:playing,loading:loading || timeline.target != nil,local:localProcessing)
         }
     }
 }

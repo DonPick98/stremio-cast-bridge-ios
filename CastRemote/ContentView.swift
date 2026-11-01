@@ -25,7 +25,7 @@ struct ContentView: View {
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
                     else { emptyState }
-                    if cast.hasLoaded || cast.playing { playerCard }
+                    if cast.hasLoaded || cast.playing || (cast.loading && cast.duration > 0) { playerCard }
                     if let media = cast.prepared {
                         optionsCard(media)
                         if !cast.hasLoaded { playButton }
@@ -130,7 +130,10 @@ struct ContentView: View {
             Divider().padding(.leading,38)
             Button { showSubtitleAppearance = true } label: { optionRow(icon:"textformat.size",title:"Aspetto sottotitoli",detail:"Anteprima e preferenze") }.buttonStyle(.plain)
             Divider()
-            Label(cast.processingDetail,systemImage:cast.localProcessing ? "iphone" : "wand.and.stars").font(.footnote).foregroundStyle(.secondary).padding(.vertical,14).frame(maxWidth:.infinity,alignment:.leading)
+            VStack(alignment:.leading,spacing:6) {
+                Text("Sorgente · \(media.videoDescription)")
+                Label(cast.processingDetail,systemImage:cast.localProcessing ? "iphone" : "play.tv")
+            }.font(.footnote).foregroundStyle(.secondary).padding(.vertical,14).frame(maxWidth:.infinity,alignment:.leading)
         }.padding(.horizontal,20).background(CastPalette.surface,in:RoundedRectangle(cornerRadius:24))
     }
     private var playButton: some View {

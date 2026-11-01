@@ -82,6 +82,39 @@ actor RDRequestGate {
     func forget(_ key: String) { torrents[key] = nil }
 }
 
+struct VideoFormat: Equatable {
+    let codec: String
+    let width: Int
+    let height: Int
+    let frameRate: Double
+    var bitrate: Int = 0
+    var profile: Int = 0
+    var level: Int = 0
+
+    var frameRateLabel: String {
+        guard frameRate.isFinite, frameRate > 0 else { return "fps non rilevati" }
+        return String(format:abs(frameRate.rounded()-frameRate) < 0.001 ? "%.0f fps" : "%.3f fps",locale:Locale(identifier:"en_US_POSIX"),frameRate)
+    }
+    var label: String {
+        [width > 0 && height > 0 ? "\(width)×\(height)" : "risoluzione non rilevata",frameRateLabel].joined(separator:" · ")
+    }
+    // Missing metadata is not proof that H.264 needs to be re-encoded. The
+    // original is tried through the gateway before receiver-driven fallback.
+    var requiresConversion: Bool {
+        guard ["h264","avc","avc1"].contains(codec.lowercased()) else { return true }
+        let limit: Double = height > 0 && height <= 720 ? 60 : 30
+        return profile > 100 || (level > 0 && level > 42) || width > 1920 || height > 1080 || (frameRate.isFinite && frameRate > limit+0.01)
+    }
+    var conversionFrameRate: Double? {
+        let limit: Double = height > 0 && height <= 720 ? 60 : 30
+        return frameRate.isFinite && frameRate > limit+0.01 ? limit : nil
+    }
+    var conversionBitrate: Int {
+        let fallback = height > 720 ? 10_000 : 6_000
+        return bitrate > 0 ? min(12_000,max(fallback,bitrate/1000)) : fallback
+    }
+}
+
 /// A validated original file and, when available, HLS conversion variants.
 /// Conversion selects one audio track and can burn a subtitle into the picture.
 struct RDPreparedMedia {
@@ -96,10 +129,11 @@ struct RDPreparedMedia {
     let videoDescription: String
     let duration: Double
     let requiresVideoConversion: Bool
+    var video: VideoFormat? = nil
     fileprivate let variants: [String: String]
 
-    static func native(audio:[RDTrack],subtitles:[RDTrack],defaultAudio:String,url:URL,contentType:String,direct:Bool,videoConversion:Bool,description:String,duration:Double) -> Self {
-        Self(audio:audio,subtitles:subtitles,defaultAudioKey:defaultAudio,directURL:url,directContentType:contentType,directCompatible:direct,videoDescription:description,duration:duration,requiresVideoConversion:videoConversion,variants:[:])
+    static func native(audio:[RDTrack],subtitles:[RDTrack],defaultAudio:String,url:URL,contentType:String,direct:Bool,videoConversion:Bool,description:String,duration:Double,video:VideoFormat? = nil) -> Self {
+        Self(audio:audio,subtitles:subtitles,defaultAudioKey:defaultAudio,directURL:url,directContentType:contentType,directCompatible:direct,videoDescription:description,duration:duration,requiresVideoConversion:videoConversion,video:video,variants:[:])
     }
 
     var availableQualities: [RDQuality] { RDQuality.allCases.filter { variants[$0.rawValue] != nil } }

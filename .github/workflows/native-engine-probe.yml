@@ -28,6 +28,8 @@ jobs:
           xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES CAST_ENGINE_VALIDATION=CAST_ENGINE_TESTING -jobs 1 -derivedDataPath "$RUNNER_TEMP/native-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Test stream boundary and resolver regressions
         run: |
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-regressions"
+          "$RUNNER_TEMP/playback-regressions"
           swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
           "$RUNNER_TEMP/local-stream-tests"
           swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
@@ -63,6 +65,7 @@ jobs:
               test ! -f "$data/Documents/converted.mp4" || cp "$data/Documents/converted.mp4" native-engine-report/
               find "$data/Documents" -name 'gateway-*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'matrix-*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'quality-*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'repair-*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'stdio*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'background-*.json' -exec cp '{}' native-engine-report/ \;
@@ -70,6 +73,7 @@ jobs:
               cat native-engine-report/engine-validation.json
               tail -n 50 "$data/Documents/stdio.log"
               node Tests/verify-decoded-media.mjs native-engine-report Tests/CodecSamples/h264-ac3.mkv
+              node Tests/verify-video-quality.mjs native-engine-report
               node -e 'const r=require("./native-engine-report/engine-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
               exit 0
             fi

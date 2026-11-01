@@ -4,6 +4,8 @@ iOS sender for Stremio video sources and Google Cast receivers. The app reads me
 
 Compatible H.264 video is preserved where possible. Incompatible audio becomes AAC stereo. Video conversion uses H.264 VideoToolbox with VP8/Vorbis fallback, up to 1920x1080 at 30 fps. TrueHD/MLP audio uses the pinned LGPL FFmpegKit backend, connected to VLC over loopback HTTP.
 
+VLC output travels through a bounded anonymous socket into the local HTTP gateway. The same upstream connection is retained from initialization through playback, and natural end of stream waits for the muxer to close its output descriptor.
+
 The interface includes source sizes, automatic playback after source selection, remembered audio/subtitle languages, persistent subtitle appearance settings, and a Live Activity. The iOS system media card provides a draggable timeline on the Lock Screen and in Control Center through MPNowPlayingInfoCenter and MPRemoteCommandCenter. ActivityKit provides synchronized elapsed time and 30-second buttons; interactive Live Activity buttons require iOS 17 and display requires iOS 16.1.
 
 When local conversion is active, the phone must remain powered on and connected to the receiver's network. Force-quitting interrupts conversion. Background support uses an audio playback session restricted to active casting. Controls reconnect without reloading owned media; a pinned direct Cast connection provides a fallback for media commands. Simulator results do not certify physical-device screen-lock behavior.

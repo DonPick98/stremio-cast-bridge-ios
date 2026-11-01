@@ -1,0 +1,46 @@
+import Foundation
+
+@main struct PlaybackRegressions {
+    static func main() {
+        var requests = PlaybackRequestState()
+        let first = requests.generation
+        precondition(requests.accepts(first))
+        requests.invalidate()
+        precondition(!requests.accepts(first),"A late error from an old source must be ignored")
+        precondition(requests.accepts(requests.generation))
+
+        var timeline = PlaybackTimeline()
+        timeline.begin(at:600)
+        precondition(!timeline.observe(0,ready:false))
+        precondition(!timeline.observe(0,ready:true))
+        precondition(!timeline.observe(93,ready:true))
+        precondition(timeline.target == 600)
+        precondition(timeline.observe(600.25,ready:true))
+        precondition(timeline.target == nil)
+        timeline.begin(at:90)
+        precondition(!timeline.observe(601,ready:true),"A backward seek must not be replaced by the old position")
+        precondition(timeline.observe(90.5,ready:true))
+        timeline.begin(at:0)
+        precondition(!timeline.observe(500,ready:true))
+        precondition(timeline.observe(0,ready:true))
+        timeline.begin(at:25); timeline.begin(at:.nan)
+        precondition(timeline.target == 25)
+        timeline.reset(); precondition(timeline.target == nil)
+
+        for rate in [24000.0/1001,24,25,30000.0/1001,30] {
+            let video = VideoFormat(codec:"h264",width:1920,height:1080,frameRate:rate,profile:100,level:41)
+            precondition(!video.requiresConversion)
+            precondition(video.conversionFrameRate == nil,"Compatible frame rates must not be forced to 30")
+            precondition(video.conversionBitrate >= 10000)
+        }
+        let sixty = VideoFormat(codec:"h264",width:1280,height:720,frameRate:60000.0/1001)
+        precondition(!sixty.requiresConversion && sixty.conversionFrameRate == nil)
+        let fullHD60 = VideoFormat(codec:"h264",width:1920,height:1080,frameRate:60)
+        precondition(fullHD60.requiresConversion && fullHD60.conversionFrameRate == 30)
+        precondition(!VideoFormat(codec:"h264",width:1920,height:1080,frameRate:0).requiresConversion)
+        precondition(VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:25).requiresConversion)
+        precondition(VideoFormat(codec:"h264",width:1920,height:1080,frameRate:24,profile:110).requiresConversion)
+        precondition(VideoFormat(codec:"h264",width:1920,height:1080,frameRate:24000.0/1001).frameRateLabel == "23.976 fps")
+        print("Playback generation, seek confirmation and original frame-rate regressions passed")
+    }
+}
