@@ -56,6 +56,11 @@ for(const codec of ['srt','ass']){
  run(['-f','lavfi','-i','color=black:size=640x360:rate=24',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-i',path.join(root,'wrong.srt'),'-i',path.join(root,'seek.srt'),'-t','12','-map','0:v','-map','1:a','-map','2:a','-map','3:s','-map','4:s','-c:v','libx264','-pix_fmt','yuv420p','-preset','ultrafast','-g','48','-threads','2','-c:a','aac','-ac','2','-c:s',codec,'-metadata:s:a:0','language=eng','-metadata:s:a:1','language=ita','-metadata:s:s:0','language=eng','-metadata:s:s:1','language=ita',path.join(root,filename)]);
  cases.push({name:`caption_${codec}_seek`,filename,burn:true,start:3.25,selectAlternate:true,selectLastSubtitle:true});
 }
+// Startup versus seek: HEVC 10-bit 1080p, FLAC/EAC3/AAC/AAC, 13 ASS tracks.
+// Select the second audio (440 Hz EAC3) and the first, correctly timed caption.
+const animeMaps=['-map','0:v',...Array.from({length:4},(_,i)=>['-map',`${i+1}:a`]).flat(),'-map','5:s',...Array.from({length:12},()=>['-map','6:s']).flat()];
+run(['-f','lavfi','-i','color=black:size=1920x1080:rate=24000/1001',...tone,'-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-f','lavfi','-i','sine=frequency=660:sample_rate=48000','-f','lavfi','-i','sine=frequency=550:sample_rate=48000','-i',path.join(root,'seek.srt'),'-i',path.join(root,'wrong.srt'),'-t','12',...animeMaps,'-c:v','libx265','-pix_fmt','yuv420p10le','-preset','ultrafast','-x265-params','pools=2:frame-threads=2:log-level=error','-threads','2','-g','48','-c:a:0','flac','-c:a:1','eac3','-c:a:2','aac','-c:a:3','aac','-ac','2','-c:s','ass','-metadata:s:a:0','language=jpn','-metadata:s:a:1','language=eng','-metadata:s:s:0','language=eng',path.join(root,'caption-hevc-eac3.mkv')]);
+for(const [name,start] of [['caption_hevc_eac3_start',0],['caption_hevc_eac3_seek',3.25]]) cases.push({name,filename:'caption-hevc-eac3.mkv',burn:true,start,audioIndex:1});
 fs.writeFileSync(path.join(root,'manifest.json'),JSON.stringify(cases,null,2));
 run(['-stream_loop','-1','-i',base,...tone,'-t','1200','-map','0:v','-map','1:a','-c:v','copy','-c:a','ac3','-ac','2',path.join(root,'background-probe.mkv')]);
 console.log(`Generated ${cases.length} synthetic codec cases`);

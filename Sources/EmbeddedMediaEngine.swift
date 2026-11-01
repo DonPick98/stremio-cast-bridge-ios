@@ -157,7 +157,11 @@ enum EmbeddedMediaError: LocalizedError {
             return url
         }
         var producerInput = input
-        let repairInput = repairAudio || offset > 0
+        // Overlays need the same selected-track/AAC input at time zero as
+        // after a seek. Otherwise EAC3/FLAC + ASS starts on an entirely
+        // different decoder path and may fail before a Cast LOAD is sent.
+        let repairInput = repairAudio || offset > 0 || subtitleID != nil
+        PlaybackDiagnostics.record(.producer,["phase":"input","kind":repairInput ? "normalized" : "original","audio":String(audioIndex),"subtitle":subtitleIndex.map{String($0)} ?? "none"])
         if repairInput {
             let repair = AudioRepairPipe(); audioRepair = repair
             producerInput = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
@@ -235,7 +239,10 @@ enum EmbeddedMediaError: LocalizedError {
                 streamURL = url; startedStream = true
                 return url
             } catch LocalStreamError.upstream { try Task.checkCancellation() }
-            catch { stop(); throw EmbeddedMediaError.output }
+            catch {
+                PlaybackDiagnostics.record(.error,["phase":"output_readiness","kind":String(describing:type(of:error)),"code":(error as? LocalStreamError).map{String(describing:$0)} ?? String((error as NSError).code),"status":realState(player).map{String($0)} ?? "unknown"])
+                stop(); throw EmbeddedMediaError.output
+            }
             try await Task.sleep(nanoseconds:5_000_000)
         }
         stop(); throw EmbeddedMediaError.timeout

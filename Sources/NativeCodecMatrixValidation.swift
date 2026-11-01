@@ -16,7 +16,9 @@ import MobileVLCKit
                 let original = try await EmbeddedMediaEngine.inspect(input)
                 row["inputAudio"] = original.audioCodecsDescription; row["inputVideo"] = original.videoDescription
                 let burn = item["burn"] as? Bool ?? false
-                let audio = (item["selectAlternate"] as? Bool == true ? original.audio.last : original.audio.first)!
+                let audioIndex = item["audioIndex"] as? Int ?? (item["selectAlternate"] as? Bool == true ? original.audio.count-1 : 0)
+                guard original.audio.indices.contains(audioIndex) else { throw EmbeddedMediaError.metadata }
+                let audio = original.audio[audioIndex]
                 let subtitle = burn ? (item["selectLastSubtitle"] as? Bool == true ? original.subtitles.last : original.subtitles.first) : nil
                 if burn && subtitle == nil { throw EmbeddedMediaError.metadata }
                 let copyAudio = ["aac","mp3"].contains(audio.codec.lowercased()) && (audio.channels ?? 0) > 0 && (audio.channels ?? 0) <= 2
@@ -39,6 +41,7 @@ import MobileVLCKit
                             row["outputChannels"] = converted.audio.first?.channels ?? 0; row["videoMode"] = label
                             row["audioRepair"] = repairAudio; row["audioTracks"] = original.audio.count
                             row["chosenAudio"] = audio.language; row["subtitleBurn"] = burn
+                            row["chosenAudioCodec"] = audio.codec; row["inputSubtitleTracks"] = original.subtitles.count
                             row["passed"] = (converted.audio.first?.channels ?? 0) == 2; row["stage"] = "complete"
                             let canonical = documents.appendingPathComponent("matrix-\(name).\(ext)")
                             try? FileManager.default.removeItem(at:canonical); try FileManager.default.copyItem(at:output,to:canonical)
