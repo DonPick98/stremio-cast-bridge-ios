@@ -53,8 +53,10 @@ jobs:
           for i in $(seq 1 360); do
             if test "$background_tested" -eq 0 && test -f "$data/Documents/background-ready.json"; then
               background_tested=1
+              node Tests/read-background-probe.mjs "$data/Documents/background-ready.json" "$data/Documents/background-network.json" &
+              probe_reader=$!
               xcrun simctl openurl "$device" 'https://example.com/'
-              node Tests/read-background-probe.mjs "$data/Documents/background-ready.json" "$data/Documents/background-network.json"
+              wait "$probe_reader"
             fi
             if test -f "$data/Documents/engine-validation.json"; then
               cp "$data/Documents/engine-validation.json" native-engine-report/
@@ -63,6 +65,7 @@ jobs:
               find "$data/Documents" -name 'matrix-*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'repair-*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'stdio*' -exec cp '{}' native-engine-report/ \;
+              find "$data/Documents" -name 'background-*.json' -exec cp '{}' native-engine-report/ \;
               if test -f "$data/Documents/matrix-embedded_text.mp4"; then ffmpeg -hide_banner -loglevel error -ss 0.5 -i "$data/Documents/matrix-embedded_text.mp4" -frames:v 1 native-engine-report/subtitle-frame.png; fi
               cat native-engine-report/engine-validation.json
               tail -n 50 "$data/Documents/stdio.log"

@@ -104,7 +104,7 @@ import MediaPlayer
                 result["background"] = background
                 result["passed"] = (result["passed"] as? Bool == true) && (background["passed"] as? Bool == true)
             }
-        } catch { result["error"] = "Native codec probe failed: \(error.localizedDescription)" }
+        } catch { result["passed"] = false; result["error"] = "Native codec probe failed: \(error.localizedDescription)" }
         if let data = try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report,options:.atomic) }
     }
     private static func backgroundProbe(documents:URL) async throws -> [String:Any] {
@@ -125,7 +125,7 @@ import MediaPlayer
         let ready = try JSONSerialization.data(withJSONObject:["url":url.absoluteString])
         try ready.write(to:documents.appendingPathComponent("background-ready.json"),options:.atomic)
         let network = documents.appendingPathComponent("background-network.json")
-        for _ in 0..<900 {
+        for _ in 0..<1800 {
             if FileManager.default.fileExists(atPath:network.path) { break }
             try await Task.sleep(nanoseconds:100_000_000)
         }
