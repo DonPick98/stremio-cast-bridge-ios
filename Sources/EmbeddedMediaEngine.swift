@@ -195,7 +195,7 @@ enum EmbeddedMediaError: LocalizedError {
             }
             try? AVAudioSession.sharedInstance().setActive(true)
             if backgroundPlayer == nil {
-                let helper = VLCMediaPlayer(options:["--quiet","--demux=rawaud","--rawaud-channels=2","--rawaud-samplerate=8000"])
+                let helper = VLCMediaPlayer(options:["--demux=rawaud"])
 #if CAST_ENGINE_TESTING
                 let folder = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
                 NativeEngineValidation.log(helper,to:folder.appendingPathComponent("gateway-background-helper.log"))

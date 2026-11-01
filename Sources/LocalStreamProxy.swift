@@ -20,7 +20,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     private var producerEnded = false
     private func trace(_ message:String) {
 #if CAST_ENGINE_TESTING
-        print("Cast proxy \(Date().timeIntervalSince1970): \(message)")
+        FileHandle.standardOutput.write(Data("Cast proxy \(Date().timeIntervalSince1970): \(message)\n".utf8))
 #endif
     }
     private var preparing: CheckedContinuation<Void,Error>?
