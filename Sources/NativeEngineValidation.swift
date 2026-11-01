@@ -125,7 +125,12 @@ import MediaPlayer
                 if engine.testingProducerPlaying { break }
                 try? await Task.sleep(nanoseconds:100_000_000)
             }
-            return (paused,engine.testingProducerPlaying)
+            let resumed = engine.testingProducerPlaying
+            // Reproduce a resume arriving before the asynchronous pause is applied.
+            engine.setReceiverPaused(true)
+            engine.setReceiverPaused(false)
+            try? await Task.sleep(nanoseconds:2_000_000_000)
+            return (paused,resumed && engine.testingProducerPlaying)
         }
         defer { pauseTest.cancel() }
         let ready = try JSONSerialization.data(withJSONObject:["url":url.absoluteString])
