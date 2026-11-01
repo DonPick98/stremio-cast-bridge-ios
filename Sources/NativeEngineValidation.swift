@@ -97,6 +97,9 @@ import MediaPlayer
             let captionSync = try await captionProbe(documents:documents,input:input)
             result["captionSync"] = captionSync
             result["passed"] = (result["passed"] as? Bool == true) && (captionSync["passed"] as? Bool == true)
+            let independent = try await CaptionIntegrationValidation.run(documents:documents)
+            result["independentCaptions"] = independent
+            result["passed"] = (result["passed"] as? Bool == true) && (independent["passed"] as? Bool == true)
             trace("quality and seek regressions")
             let quality = await qualityProbe(documents:documents)
             result["quality"] = quality

@@ -45,10 +45,10 @@
 	<string>Cast Bridge usa la rete locale per trovare il Chromecast e controllare la riproduzione.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Cast Bridge può usare Bluetooth per individuare dispositivi compatibili.</string>
-	<key>NSBonjourServices</key>
+	<key>CastBridgeReceiverAppID</key><string>$(CAST_BRIDGE_RECEIVER_APP_ID)</string><key>NSBonjourServices</key>
 	<array>
 		<string>_googlecast._tcp</string>
-		<string>_CC1AD845._googlecast._tcp</string>
+		<string>_$(CAST_BRIDGE_RECEIVER_APP_ID)._googlecast._tcp</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
@@ -60,3 +60,4 @@
 	</array>
 </dict>
 </plist>
+

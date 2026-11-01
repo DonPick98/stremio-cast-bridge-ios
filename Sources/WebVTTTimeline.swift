@@ -66,3 +66,4 @@ private final class CaptionRedirectGuard: NSObject, URLSessionTaskDelegate, @unc
         completionHandler(request)
     }
 }
+

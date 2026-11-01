@@ -11,6 +11,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Test independent caption model and receiver
+        run: |
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
+          "$RUNNER_TEMP/caption-model-tests"
+          cd Receiver
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+          npm run build
       - name: Test bounded rewind input and cancellation
         run: |
           swiftc -parse-as-library Sources/RewindableInputStream.swift Tests/RewindableInputStreamTests.swift -o "$RUNNER_TEMP/rewind-input-tests"
@@ -78,6 +86,7 @@ jobs:
               find "$data/Documents" -name 'stdio*' -exec cp '{}' native-engine-report/ \;
               find "$data/Documents" -name 'background-*.json' -exec cp '{}' native-engine-report/ \;
               if test -f "$data/Documents/matrix-embedded_text.mp4"; then ffmpeg -hide_banner -loglevel error -ss 0.5 -i "$data/Documents/matrix-embedded_text.mp4" -frames:v 1 native-engine-report/subtitle-frame.png; fi
+              find "$data/Documents" -name 'caption-window-*' -exec cp '{}' native-engine-report/ \;
               cat native-engine-report/engine-validation.json
               tail -n 50 "$data/Documents/stdio.log"
               node Tests/verify-decoded-media.mjs native-engine-report Tests/CodecSamples/h264-ac3.mkv
@@ -101,4 +110,5 @@ jobs:
           name: embedded-engine-evidence
           path: native-engine-report
           if-no-files-found: ignore
+
 

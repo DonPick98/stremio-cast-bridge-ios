@@ -76,3 +76,4 @@ import Foundation
     static func record(_ event:DiagnosticRecorder.Event,_ fields:[String:String] = [:]) { shared.record(event,fields) }
     static func number(_ value:Double) -> String { value.isFinite ? String(format:"%.3f",locale:Locale(identifier:"en_US_POSIX"),value) : "unknown" }
 }
+

@@ -364,7 +364,7 @@ enum EmbeddedMediaError: LocalizedError {
         let status = withUnsafeMutablePointer(to:&addr) { $0.withMemoryRebound(to:sockaddr.self,capacity:1) { getsockname(fd,$0,&size) } }
         guard status == 0 else { throw EmbeddedMediaError.address }; return UInt16(bigEndian:addr.sin_port)
     }
-    private static func localAddress(to peer:String) throws -> String {
+    static func localAddress(to peer:String) throws -> String {
         let fd = Darwin.socket(AF_INET,SOCK_DGRAM,0); guard fd >= 0 else { throw EmbeddedMediaError.address }; defer { Darwin.close(fd) }
         var addr = sockaddr_in(); addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); addr.sin_family = sa_family_t(AF_INET); addr.sin_port = UInt16(8009).bigEndian
         guard inet_pton(AF_INET,peer,&addr.sin_addr) == 1 else { throw EmbeddedMediaError.address }

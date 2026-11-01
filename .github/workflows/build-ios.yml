@@ -4,6 +4,11 @@ on:
   push:
     branches: [main, native/embedded-media-engine]
   workflow_dispatch:
+    inputs:
+      receiver_app_id:
+        description: Registered custom Google Cast receiver application ID
+        required: false
+        default: CC1AD845
 
 permissions:
   contents: read
@@ -16,6 +21,14 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v6
 
+      - name: Test independent caption model and receiver
+        run: |
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
+          "$RUNNER_TEMP/caption-model-tests"
+          cd Receiver
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+          npm run build
       - name: Test bounded rewind input and cancellation
         run: |
           swiftc -parse-as-library Sources/RewindableInputStream.swift Tests/RewindableInputStreamTests.swift -o "$RUNNER_TEMP/rewind-input-tests"
@@ -56,7 +69,10 @@ jobs:
           node --test SubtitleService/worker.test.mjs
 
       - name: Build for iPhone without signing
+        env:
+          RECEIVER_ID: ${{ inputs.receiver_app_id || 'CC1AD845' }}
         run: |
+          [[ "$RECEIVER_ID" =~ ^[A-Fa-f0-9]{8}$ ]]
           xcodebuild \
             -workspace CastRemote.xcworkspace \
             -scheme CastRemote \
@@ -64,6 +80,7 @@ jobs:
             -sdk iphoneos \
             -jobs 1 \
             -derivedDataPath "$RUNNER_TEMP/castremote-build" \
+            CAST_BRIDGE_RECEIVER_APP_ID="$RECEIVER_ID" \
             SWIFT_ENABLE_EXPLICIT_MODULES=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -94,3 +111,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+
+      - name: Upload custom receiver
+        uses: actions/upload-artifact@v7
+        with:
+          name: CastBridge-receiver
+          path: Receiver/dist/
+          if-no-files-found: error
+          retention-days: 7
