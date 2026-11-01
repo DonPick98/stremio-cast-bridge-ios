@@ -28,6 +28,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var outputChannel: MediaOutputChannel?
     private var producerEnded = false
     private var audioRepair: AudioRepairPipe?
+    private var rewindInput:RewindableInputStream?
     private var proxy: LocalStreamProxy?
     private var backgroundPlayer: VLCMediaPlayer?
     private var observers: [NSObjectProtocol] = []
@@ -161,7 +162,11 @@ enum EmbeddedMediaError: LocalizedError {
             let repair = AudioRepairPipe(); audioRepair = repair
             producerInput = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:subtitleIndex)
         }
-        let media = VLCMedia(url:producerInput)
+        let media:VLCMedia
+        if repairInput && subtitleID != nil {
+            let input = RewindableInputStream(url:producerInput); rewindInput = input
+            media = VLCMedia(stream:input)
+        } else { media = VLCMedia(url:producerInput) }
         // Older MPEG-4/DivX streams may not have an iOS hardware decoder.
         // This affects decoding only; H.264 encoding can still use VideoToolbox.
         if ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "") { media.addOption(":avcodec-hw=none") }
@@ -244,6 +249,7 @@ enum EmbeddedMediaError: LocalizedError {
         backgroundPlayer?.stop(); backgroundPlayer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
+        rewindInput?.close(); rewindInput = nil
 #if CAST_ENGINE_TESTING
         testingStoppedRepair = audioRepair
 #endif

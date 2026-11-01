@@ -16,6 +16,10 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v6
 
+      - name: Test bounded rewind input and cancellation
+        run: |
+          swiftc -parse-as-library Sources/RewindableInputStream.swift Tests/RewindableInputStreamTests.swift -o "$RUNNER_TEMP/rewind-input-tests"
+          "$RUNNER_TEMP/rewind-input-tests"
       - name: Install Cast and embedded media engines
         env:
           LANG: en_US.UTF-8
@@ -89,3 +93,4 @@ jobs:
           path: CastRemote-unsigned.ipa
           if-no-files-found: error
           retention-days: 7
+

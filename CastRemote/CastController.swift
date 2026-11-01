@@ -534,6 +534,7 @@ import UIKit
         guard let prepared, client != nil else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loading, !loadPending, subtitleRequest == nil else { return }
         guard embeddedCaptionTask == nil else { return }
+        if requestedPosition == nil, timeline.target == nil, timeline.queuedTarget == nil, applyLoadedSubtitleTrack() { return }
         // Run the same extraction preflight for an automatic initial selection,
         // a manual track change and a seek. A status callback must not start an
         // overlay while the selected text track is still being extracted.
@@ -956,9 +957,33 @@ import UIKit
         PlaybackDiagnostics.record(.recovery,["phase":"subtitle_disabled","position":PlaybackDiagnostics.number(lastGoodPosition)])
     }
     func togglePlayback() { Task { _ = await handleCommand("toggle") } }
+    /// Only edit registered receiver tracks. Do not pause the producer, replace
+    /// its URL, issue LOAD or touch the timeline for a text caption toggle.
+    private func applyLoadedSubtitleTrack() -> Bool {
+        guard hasLoaded, ownsCurrentMedia, let client, let prepared,
+              let selection = nativeSelection, selection.input == prepared.directURL,
+              selection.audio == selectedAudio, selection.subtitle == "none",
+              let engine = nativeEngine, engine.running else { return false }
+        let ids:[NSNumber]
+        if selectedSubtitle == "none" { ids = [] }
+        else {
+            guard selection.captionIdentity == subtitleIdentity else { return false }
+            let kind = selectedSubtitle == "embedded" ? 2 : selectedSubtitle == "external" ? 1 : nil
+            guard let kind, let id = engine.captionID(kind:kind,delay:subtitleDelay) else { return false }
+            ids = [NSNumber(value:id)]
+        }
+        if loadedSubtitle == selectedSubtitle && lastAppliedSubtitleDelay == subtitleDelay { return true }
+        let request = client.setActiveTrackIDs(ids)
+        subtitleRequest = request; request.delegate = self
+        pendingSubtitle = selectedSubtitle; pendingSubtitleDelay = subtitleDelay
+        message = "Aggiorno i sottotitoli sulla TV…"
+        PlaybackDiagnostics.record(.tracks,["phase":"text_switch","subtitle":selectedSubtitle,"position":PlaybackDiagnostics.number(position)])
+        return true
+    }
     func selectSubtitle(_ key:String) {
-        guard key != selectedSubtitle else { return }
-        selectedSubtitle = key
+        let selected = key == extractedCaptionKey && extractedCaptionText != nil ? "embedded" : key
+        guard selected != selectedSubtitle else { return }
+        selectedSubtitle = selected
         subtitlePlaybackWarning = nil
         attemptedEmbeddedCaptions.remove(key)
         tracksChanged(audio:false)
@@ -1085,7 +1110,12 @@ import UIKit
             loadedSubtitle = pendingSubtitle
             if let delay = pendingSubtitleDelay { lastAppliedSubtitleDelay = delay }
             subtitleRequest = nil; pendingSubtitle = nil; pendingSubtitleDelay = nil
-            subtitleIssue = nil; message = "Sottotitoli aggiornati sulla TV."; flushQueuedSeek(); applySubtitleTiming(); return
+            subtitleIssue = nil; message = "Sottotitoli aggiornati sulla TV."; flushQueuedSeek()
+            if loadedSubtitle != selectedSubtitle, trackApplyTask == nil, embeddedCaptionTask == nil,
+               !loading, !checkingStream, timeline.target == nil, timeline.queuedTarget == nil {
+                load(preservePosition:true)
+            } else { applySubtitleTiming() }
+            return
         }
         if request == commandRequest { finishCommand(true); return }
         if request == loadRequest { loadAccepted = true; message = "Attendo l’avvio sulla TV…"; loadRequest = nil }
