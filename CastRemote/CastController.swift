@@ -48,6 +48,7 @@ import UIKit
     private var subtitleSearchStamp = Date.distantPast
     private var subtitleRetryAfter = Date.distantPast
     private var extractedCaptionText:String?
+    private var completeCaptionCache:[String:String]=[:]
     private var extractedCaptionKey = ""
     private var extractedCaptionLanguage = "en"
     private var lastAppliedSubtitleDelay:Double = 0
@@ -272,7 +273,7 @@ import UIKit
             } else if status.playerState == .buffering {
                 if bufferingSince == nil { bufferingSince = Date() }
                 let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
-                if !captionIsIndependent && localProcessing && selectedSubtitle.hasPrefix("vlc_") && Date().timeIntervalSince(bufferingSince!) >= 15 {
+                if localProcessing && nativeSelection?.subtitle.hasPrefix("vlc_") == true && Date().timeIntervalSince(bufferingSince!) >= 15 {
                     disableSubtitlesAndResume(automatic:true); return
                 }
                 if stalled && localProcessing {
@@ -542,35 +543,23 @@ import UIKit
     private func startPlayback(requestedPosition: Double?, autoplay: Bool) {
         guard let prepared, client != nil else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loading, !loadPending, subtitleRequest == nil else { return }
-        guard embeddedCaptionTask == nil else { return }
+        guard embeddedCaptionTask == nil || selectedEmbeddedText else { return }
+        if !captionIsIndependent{promoteReadyEmbeddedText()}
         if captionIsIndependent, requestedPosition == nil, timeline.target == nil, timeline.queuedTarget == nil,
            hasLoaded, ownsCurrentMedia, loadedSourceInput == prepared.directURL, loadedAudioKey == selectedAudio,
            nativeSelection?.subtitle == nil || nativeSelection?.subtitle == "none" {
             syncIndependentCaptions();return
         }
         if requestedPosition == nil, timeline.target == nil, timeline.queuedTarget == nil, applyLoadedSubtitleTrack() { return }
-        // Run the same extraction preflight for an automatic initial selection,
-        // a manual track change and a seek. A status callback must not start an
-        // overlay while the selected text track is still being extracted.
-        if !captionIsIndependent,selectedSubtitle.hasPrefix("vlc_"), !attemptedEmbeddedCaptions.contains(selectedSubtitle),
-           let track = prepared.subtitles.first(where:{$0.key == selectedSubtitle}),
-           ["subt","srt","ssa","ass","text","utf8"].contains(track.codec.lowercased()) {
-            attemptedEmbeddedCaptions.insert(selectedSubtitle)
-            let source = sourceRequests.generation, choice = subtitleChoices.generation
-            embeddedCaptionTask = Task {
-                await extractSelectedTextTrack()
-                guard !Task.isCancelled, sourceRequests.accepts(source), subtitleChoices.accepts(choice) else { return }
-                embeddedCaptionTask = nil
-                startPlayback(requestedPosition:requestedPosition,autoplay:autoplay)
-            }
-            return
-        }
+        // Prepare standard WebVTT independently. A pending or failed text
+        // extraction must never force a video conversion or delay its start.
+        if !captionIsIndependent,selectedEmbeddedText,!attemptedEmbeddedCaptions.contains(selectedSubtitle){beginEmbeddedTextPreparation()}
         capturePosition()
         let requested = timeline.consumeQueued() ?? requestedPosition
         let audio = selectedAudio, subtitle = selectedSubtitle
         PlaybackDiagnostics.record(.prepare,["phase":"request","audio":audio,"subtitle":subtitle,"position":PlaybackDiagnostics.number(requested ?? lastGoodPosition)])
         let separateCaption=captionIsIndependent
-        let burnedSubtitle = !separateCaption && subtitle.hasPrefix("vlc_") ? subtitle : "none"
+        let burnedSubtitle = !separateCaption && !selectedEmbeddedText && subtitle.hasPrefix("vlc_") ? subtitle : "none"
         let needsLocal = forceLocalPlayback || !prepared.directCompatible || audio != prepared.defaultAudioKey || burnedSubtitle != "none" || (!separateCaption && ["external","embedded"].contains(subtitle))
         if !needsLocal {
             let target = requested ?? timeline.target ?? lastGoodPosition
@@ -777,7 +766,7 @@ import UIKit
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
                 guard !Task.isCancelled, let self, self.loadPending else { return }
                 self.loadPending = false; self.loading = false; self.loadRequest = nil
-                if !self.captionIsIndependent && self.selectedSubtitle.hasPrefix("vlc_") { self.disableSubtitlesAndResume(automatic:true); return }
+                if self.nativeSelection?.subtitle.hasPrefix("vlc_") == true { self.disableSubtitlesAndResume(automatic:true); return }
                 if self.recoverPlayback(allowVideoConversion:false) { return }
                 self.message = "La TV non ha avviato il video dopo l’adattamento automatico. La posizione è conservata."
                 self.playbackIssue = "La TV non ha avviato il flusso dopo l’adattamento automatico. La posizione è conservata."
@@ -872,6 +861,7 @@ import UIKit
         onlineSubtitles = []; selectedOnlineSubtitle = nil; subtitleSearchBusy = false; subtitleDownloadBusy = false; subtitleIssue = nil
         subtitleSearchStamp = .distantPast; subtitleRetryAfter = .distantPast
         extractedCaptionText = nil; extractedCaptionKey = ""; extractedCaptionLanguage = "en"
+        completeCaptionCache.removeAll()
         subtitleDelay = 0; lastAppliedSubtitleDelay = 0; pendingSubtitleDelay = nil
     }
     func searchSubtitles(refresh:Bool = false) {
@@ -942,6 +932,10 @@ import UIKit
     }
     private func applySubtitleTiming() {
         if captionIsIndependent{syncIndependentCaptions();return}
+        if selectedEmbeddedText{
+            guard hasLoaded,!loading,!checkingStream,embeddedCaptionTask == nil,extractedCaptionKey == selectedSubtitle,extractedCaptionText != nil else{return}
+            promoteReadyEmbeddedText();load(preservePosition:true);return
+        }
         guard selectedSubtitle != "none", hasLoaded, !loading, !checkingStream, trackApplyTask == nil, embeddedCaptionTask == nil, timeline.target == nil, timeline.queuedTarget == nil else { return }
         if let nativeSelection, nativeSelection.external != externalSubtitleURL || nativeSelection.captionIdentity != subtitleIdentity {
             guard subtitleRequest == nil else { return }; load(preservePosition:true); return
@@ -993,7 +987,12 @@ import UIKit
             external:externalSubtitleURL,externalText:externalSubtitleURL.flatMap{captionCache[$0]},source:sourceRequests.generation.uuidString,
             position:timeline.target ?? lastGoodPosition,duration:prepared.duration,delay:subtitleDelay)
     }
-    func retryIndependentCaptions(){independentCaptions.retry()}
+    func retryIndependentCaptions(){
+        if independentCaptions.enabled{independentCaptions.retry()}
+        else if selectedEmbeddedText{subtitleChoices.invalidate();attemptedEmbeddedCaptions.remove(selectedSubtitle);beginEmbeddedTextPreparation()}
+        else if let selectedOnlineSubtitle{pickSubtitle(selectedOnlineSubtitle)}
+    }
+    var supportsOriginalSubtitleStyle:Bool{independentCaptions.enabled}
     var preservesOriginalSubtitleStyle:Bool{ReceiverConfiguration.preserveASS}
     func setOriginalSubtitleStyle(_ value:Bool){UserDefaults.standard.set(value,forKey:"cast.subtitle.originalASS");applySubtitleAppearance()}
     /// Only edit registered receiver tracks. Do not pause the producer, replace
@@ -1044,35 +1043,58 @@ import UIKit
             guard !Task.isCancelled else { return }
             trackApplyTask = nil
             if !audio,captionIsIndependent,(nativeSelection?.subtitle == nil || nativeSelection?.subtitle == "none"){syncIndependentCaptions();return}
+            if !audio,!captionIsIndependent,selectedEmbeddedText{beginEmbeddedTextPreparation();return}
             guard !Task.isCancelled, hasLoaded, !loading else { return }
             load(preservePosition:true)
         }
     }
-    private func extractSelectedTextTrack() async {
-        guard let prepared, let ordinal = prepared.subtitles.firstIndex(where:{$0.key == selectedSubtitle}),
-              let track = prepared.subtitles.first(where:{$0.key == selectedSubtitle}),
-              ["subt","srt","ssa","ass","text","utf8"].contains(track.codec.lowercased()),
-              let reader = try? SubtitleRangeReader(url:prepared.directURL) else { return }
-        let selected = selectedSubtitle, token = sourceRequests.generation
-        let choice = subtitleChoices.generation
-        subtitleDownloadBusy = true; subtitleIssue = nil
-        defer { if subtitleChoices.accepts(choice) { subtitleDownloadBusy = false }; Task { await reader.close() } }
-        do {
-            let text = try await withThrowingTaskGroup(of:String.self) { group in
-                group.addTask { try await MkvSubtitleExtractor.extract(read:{try await reader.read($0,$1)},language:SubtitleLanguage.code(track.language),subtitleOrdinal:ordinal) }
-                group.addTask { try await Task.sleep(nanoseconds:12_000_000_000); throw SubtitleError.limit }
-                defer { group.cancelAll() }
-                guard let result = try await group.next() else { throw SubtitleError.noTrack }; return result
+    private var selectedEmbeddedText:Bool{
+        guard selectedSubtitle.hasPrefix("vlc_"),let track=prepared?.subtitles.first(where:{$0.key==selectedSubtitle}) else{return false}
+        return ["subt","srt","subrip","ssa","ass","text","utf8","wvtt","webvtt","tx3g","mov_text","stpp","ttml"].contains(track.codec.lowercased())
+    }
+    private func promoteReadyEmbeddedText(){
+        guard selectedEmbeddedText,extractedCaptionKey==selectedSubtitle,extractedCaptionText != nil else{return}
+        let previousDelay=subtitleDelay;selectedSubtitle="embedded";restoreSubtitleDelay(fallback:previousDelay)
+        if let key=subtitlePreferenceKey{UserDefaults.standard.set(subtitleDelay,forKey:key)}
+    }
+    private func beginEmbeddedTextPreparation(){
+        guard selectedEmbeddedText else{return}
+        embeddedCaptionTask?.cancel();attemptedEmbeddedCaptions.insert(selectedSubtitle)
+        let source=sourceRequests.generation,choice=subtitleChoices.generation
+        embeddedCaptionTask=Task{
+            guard !Task.isCancelled,sourceRequests.accepts(source),subtitleChoices.accepts(choice) else{return}
+            await extractSelectedTextTrack()
+            guard !Task.isCancelled,sourceRequests.accepts(source),subtitleChoices.accepts(choice) else{return}
+            embeddedCaptionTask=nil
+            if hasLoaded,!loading,!loadPending,!checkingStream,extractedCaptionKey==selectedSubtitle,extractedCaptionText != nil{
+                promoteReadyEmbeddedText();load(preservePosition:true)
             }
-            try validateSource(token); guard subtitleChoices.accepts(choice), selectedSubtitle == selected else { throw CancellationError() }
-            extractedCaptionText = text; extractedCaptionKey = selected; extractedCaptionLanguage = track.language
-            let previousDelay = subtitleDelay
-            selectedSubtitle = "embedded"; restoreSubtitleDelay(fallback:previousDelay)
-            if let key = subtitlePreferenceKey { UserDefaults.standard.set(subtitleDelay,forKey:key) }
-            PlaybackDiagnostics.record(.tracks,["phase":"embedded_text_extracted","subtitle":selected,"codec":track.codec])
-        } catch {
-            guard !Task.isCancelled, sourceRequests.accepts(token), selectedSubtitle == selected else { return }
-            PlaybackDiagnostics.record(.tracks,["phase":"embedded_overlay_fallback","subtitle":selected,"kind":String(describing:type(of:error))])
+        }
+    }
+    private func extractSelectedTextTrack() async {
+        guard let prepared,let ordinal=prepared.subtitles.firstIndex(where:{$0.key==selectedSubtitle}) else{return}
+        let track=prepared.subtitles[ordinal],selected=selectedSubtitle,token=sourceRequests.generation,choice=subtitleChoices.generation
+        subtitleDownloadBusy=true;subtitleIssue=nil
+        defer{if subtitleChoices.accepts(choice){subtitleDownloadBusy=false}}
+        do{
+            try Task.checkCancellation()
+            let text:String
+            if let cached=completeCaptionCache[selected]{text=cached}
+            else{
+                PlaybackDiagnostics.record(.tracks,["phase":"full_caption_request","subtitle":selected,"codec":track.codec])
+                let catalog=try await CaptionExtractor.catalog(prepared.directURL)
+                let actual=try catalog.selected(ordinal:ordinal,vlcID:Int(selected.dropFirst(4)),language:track.language,codec:track.codec)
+                text=try await CaptionExtractor.fullDocument(input:prepared.directURL,track:actual)
+            }
+            try validateSource(token)
+            guard !Task.isCancelled,subtitleChoices.accepts(choice),selectedSubtitle==selected else{throw CancellationError()}
+            if completeCaptionCache.count>=6{completeCaptionCache.removeAll()};completeCaptionCache[selected]=text
+            extractedCaptionText=text;extractedCaptionKey=selected;extractedCaptionLanguage=track.language
+            PlaybackDiagnostics.record(.tracks,["phase":"full_caption_ready","subtitle":selected,"codec":track.codec,"bytes":String(text.utf8.count)])
+        }catch{
+            guard !Task.isCancelled,sourceRequests.accepts(token),subtitleChoices.accepts(choice),selectedSubtitle==selected else{return}
+            subtitleIssue="Non riesco a preparare questa traccia testuale. Il video continua: puoi riprovare o scegliere i sottotitoli da Stremio e OpenSubtitles."
+            PlaybackDiagnostics.record(.tracks,["phase":"full_caption_failed","subtitle":selected,"kind":String(describing:type(of:error))])
         }
     }
     func applySubtitleAppearance() {

@@ -216,7 +216,7 @@ private struct TrackOptionsView: View {
                         }.disabled(cast.loading)
                         Button { showAppearance = true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
                         Button { showOnline = true } label: { Label("Scegli da Stremio e OpenSubtitles",systemImage:"captions.bubble") }
-                        if media.subtitles.contains(where:{["ssa","ass"].contains($0.codec.lowercased())}){
+                        if cast.supportsOriginalSubtitleStyle,media.subtitles.contains(where:{["ssa","ass"].contains($0.codec.lowercased())}){
                             Toggle("Mantieni lo stile originale della traccia",isOn:Binding(get:{cast.preservesOriginalSubtitleStyle},set:{cast.setOriginalSubtitleStyle($0)}))
                         }
                         if cast.subtitleDownloadBusy { HStack { ProgressView(); Text("Preparo i sottotitoli…").font(.footnote) } }

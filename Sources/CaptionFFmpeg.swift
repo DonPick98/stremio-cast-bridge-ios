@@ -1,5 +1,7 @@
 import Foundation
 import Darwin
+import MobileVLCKit
+import AVFAudio
 
 @MainActor final class CaptionProcess {
     enum Kind { case ffmpeg,probe }
@@ -56,6 +58,35 @@ import Darwin
         let process = try CaptionProcess(args,kind:.probe); defer { process.stop() }
         try await process.wait(seconds:12)
         return try CaptionCatalog.parse(process.information())
+    }
+    /// A standard Cast text track must be a complete document. Never serve a
+    /// ninety-second extraction window as if it covered the whole movie.
+    static func fullDocument(input:URL,track:CaptionTrack) async throws -> String {
+        guard track.isText,input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil) else{throw CaptionFailure.input}
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("CastFullCaption-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:directory)}
+        let file=directory.appendingPathComponent("complete.vtt")
+        var args=["-hide_banner","-nostdin","-loglevel","error","-nostats","-y","-copyts"]
+        if !input.isFileURL{args += ["-rw_timeout","5000000","-tls_verify","1"]}
+        args += ["-i",input.isFileURL ? input.path:input.absoluteString,"-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-f","webvtt",file.path]
+        let helper=VLCMediaPlayer(options:["--demux=rawaud"])
+        helper.media=VLCMedia(path:"/dev/zero")
+        try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        helper.play();defer{helper.stop()}
+        let process=try CaptionProcess(args);defer{process.stop()}
+        let deadline=Date().addingTimeInterval(120)
+        while !process.finished{
+            try Task.checkCancellation()
+            guard Date()<deadline else{throw CaptionFailure.timeout}
+            if let size=try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize,size>1_048_576{throw CaptionFailure.limit}
+            try await Task.sleep(nanoseconds:100_000_000)
+        }
+        try Task.checkCancellation();guard process.successful else{throw CaptionFailure.process}
+        let data=try Data(contentsOf:file)
+        guard data.count<=1_048_576 else{throw CaptionFailure.limit}
+        return try SubtitleDocument.normalize(data+Data([10]))
     }
     static func fonts(_ input:URL,catalog:CaptionCatalog) async throws -> [CaptionFontData] {
         guard !catalog.fonts.isEmpty else{return []}

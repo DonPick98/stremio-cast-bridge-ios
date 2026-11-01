@@ -21,6 +21,11 @@ enum EmbeddedMediaError: LocalizedError {
     enum VideoMode: Equatable { case copy, ffmpegH264, hardwareH264, softwareVP8 }
     static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false) -> [VideoMode] {
         let legacy = ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "")
+        // The pinned LGPL FFmpeg build lacks a working software AV1 decoder
+        // on this platform; VLC's bundled decoder handles this source instead.
+        if ["av01","av1"].contains(video?.codec.lowercased() ?? ""){
+            return fallbackLevel >= 2 ? [.softwareVP8]:[.hardwareH264,.softwareVP8]
+        }
         // Keep the packet-copy path first for compatible video. When conversion
         // is needed, FFmpeg preserves the source timestamps/frame cadence and
         // drains the encoder before ending the output. VLC remains a fallback.
