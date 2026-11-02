@@ -206,7 +206,7 @@ import UIKit
             reconnectControls(); return
         }
         wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil; lockScreen.clear()
-        directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt="";standardCaptions.stop()
+        stopCaptionDelivery()
         streamCheckTask?.cancel(); checkingStream = false; loading = false
         capturePosition(); stopLocalProcessing(); connected = false; playing = false; finishCommand(false)
     }
@@ -235,7 +235,7 @@ import UIKit
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
             guard ownsCurrentMedia else {
-                if hasLoaded && !loadPending && !checkingStream { stopLocalProcessing(); hasLoaded = false; wantsPlayback = false; lockScreen.clear(); message = "La TV sta riproducendo un altro contenuto." }
+                if hasLoaded && !loadPending && !checkingStream { stopCaptionDelivery();stopLocalProcessing(); hasLoaded = false; wantsPlayback = false; lockScreen.clear(); message = "La TV sta riproducendo un altro contenuto." }
                 if !loadPending && timeline.target == nil { playing = false }
                 return
             }
@@ -298,6 +298,7 @@ import UIKit
                 message = "La riproduzione si è interrotta. Riprova: la posizione è conservata."
                 updateActivity(status: "Errore: apri l’app per riprovare")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .finished {
+                stopCaptionDelivery()
                 wantsPlayback = false; lockScreen.clear()
                 loadPending = false; loading = false; loadTimeout?.cancel()
                 message = "Riproduzione terminata."
@@ -308,6 +309,7 @@ import UIKit
                 updateActivity(status: "Riproduzione terminata")
                 lastGoodPosition = 0
             } else if status.playerState == .idle && currentLoad && status.idleReason == .cancelled {
+                stopCaptionDelivery()
                 wantsPlayback = false; lockScreen.clear()
                 loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = false
                 stopLocalProcessing(); message = "Riproduzione interrotta."
@@ -1266,6 +1268,12 @@ import UIKit
         nativeEngine?.stop(); nativeEngine = nil; nativeSelection = nil
         localProcessing = false; CastActivityCommands.usesLocalStream = false
     }
+    private func stopCaptionDelivery(){
+        directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt=""
+        embeddedCaptionTask?.cancel();embeddedCaptionTask=nil;attemptedEmbeddedCaptions.removeAll()
+        standardCaptions.stop();loadedDirectCaptionURLs=[:];loadedDirectCaptionIdentity=""
+        subtitleDownloadBusy=false
+    }
     @discardableResult private func recoverPlayback(allowVideoConversion:Bool = true) -> Bool {
         PlaybackDiagnostics.record(.recovery,["attempt":String(transportRetries),"position":PlaybackDiagnostics.number(lastGoodPosition)])
         guard !checkingStream, let prepared, connected else { return false }
@@ -1418,8 +1426,7 @@ import UIKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
-        directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt=""
-        standardCaptions.stop();loadedDirectCaptionURLs=[:];loadedDirectCaptionIdentity=""
+        stopCaptionDelivery()
         independentCaptions.clearSource();loadedAudioKey="";loadedSourceInput=nil
         processingDetail = "Automatico"
         sourceRequests.invalidate(); streamRequests.invalidate(); controlRequests.invalidate(); playbackIntent.reset()

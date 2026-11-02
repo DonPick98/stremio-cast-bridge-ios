@@ -55,9 +55,9 @@ enum DirectCaptionPolicy {
     static func allows(response:HTTPURLResponse,preflight:Bool)->Bool{
         guard (200..<300).contains(response.statusCode),response.value(forHTTPHeaderField:"Access-Control-Allow-Origin")?.trimmingCharacters(in:.whitespacesAndNewlines)=="*" else{return false}
         if !preflight{return true}
-        let methods=(response.value(forHTTPHeaderField:"Access-Control-Allow-Methods") ?? "").lowercased()
+        let methods=Set((response.value(forHTTPHeaderField:"Access-Control-Allow-Methods") ?? "").lowercased().split(separator:",").map{$0.trimmingCharacters(in:.whitespaces)})
         let headers=Set((response.value(forHTTPHeaderField:"Access-Control-Allow-Headers") ?? "").lowercased().split(separator:",").map{$0.trimmingCharacters(in:.whitespaces)})
-        return (methods.contains("get") || methods=="*") && (headers.contains("*") || Set(["range","content-type","accept-encoding"]).isSubset(of:headers))
+        return (methods.contains("get") || methods.contains("*")) && (headers.contains("*") || Set(["range","content-type","accept-encoding"]).isSubset(of:headers))
     }
 }
 
