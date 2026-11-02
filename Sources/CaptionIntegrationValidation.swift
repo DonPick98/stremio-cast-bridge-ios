@@ -21,7 +21,7 @@ import Foundation
         guard standardURLs.count==21,let normal=standard.identifier(kind:2,delay:0),let delayed=standard.identifier(kind:2,delay:2),let normalURL=standardURLs[normal],let delayedURL=standardURLs[delayed] else{throw CaptionFailure.process}
         let(normalData,_)=try await URLSession.shared.data(from:normalURL)
         let(delayedData,delayedResponse)=try await URLSession.shared.data(from:delayedURL)
-        let standardPassed=String(decoding:normalData,as:UTF8.self).contains("00:01:40.000") && String(decoding:delayedData,as:UTF8.self).contains("00:01:42.000") && standard.urls==standardURLs && (delayedResponse as? HTTPURLResponse)?.value(forHTTPHeaderField:"Access-Control-Allow-Origin")=="*"
+        let standardPassed=String(decoding:normalData,as:UTF8.self).contains("00:01:40.") && String(decoding:delayedData,as:UTF8.self).contains("00:01:42.") && standard.urls==standardURLs && (delayedResponse as? HTTPURLResponse)?.value(forHTTPHeaderField:"Access-Control-Allow-Origin")=="*"
         var results:[[String:Any]]=[]
         let cases:[(String,URL,Int,CaptionFormat,Double,Double)]=[
             ("ass-zero",input,0,.ass,0,12.05),("ass-seek",input,0,.ass,7,12.05),

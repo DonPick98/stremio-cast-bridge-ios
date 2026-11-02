@@ -582,7 +582,10 @@ import UIKit
             sendLoad(preservePosition:true,autoplay:playWhenReady)
             return
         }
-        directCaptionTask?.cancel();directCaptionTask=nil;standardCaptions.cancelPreparation()
+        if directCaptionTask != nil{
+            directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt="";standardCaptions.cancelPreparation()
+            if embeddedCaptionTask==nil{subtitleDownloadBusy=false}
+        }
         let appearance = burnedSubtitle == "none" ? SubtitleAppearance() : SubtitleAppearance.load()
         let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity)
         // Burning a subtitle is not a permanent reason to re-encode the movie.
@@ -983,6 +986,7 @@ import UIKit
         }
     }
     func disableSubtitlesAndResume(automatic:Bool = false) {
+        directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt="";standardCaptions.cancelPreparation()
         if automatic {
             subtitlePlaybackWarning = "La traccia nel file ha bloccato la riproduzione. Il video è ripartito senza sottotitoli; puoi scegliere un’altra traccia. La tua lingua preferita è conservata."
         } else {

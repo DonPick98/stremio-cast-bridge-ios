@@ -86,11 +86,13 @@ import AVFAudio
         let process=try CaptionProcess(args);cleanupWithProcess=true
         defer{process.stop(afterRelease:{try? FileManager.default.removeItem(at:directory)})}
         let started=Date(),deadline=Date().addingTimeInterval(120)
+        var lastProgress = -1
         while !process.finished{
             try Task.checkCancellation()
             guard Date()<deadline else{throw CaptionFailure.timeout}
             for file in files{if let size=try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize,size>1_048_576{throw CaptionFailure.limit}}
-            progress?(Date().timeIntervalSince(started))
+            let elapsed=Date().timeIntervalSince(started)
+            if Int(elapsed) != lastProgress{lastProgress=Int(elapsed);progress?(elapsed)}
             try await Task.sleep(nanoseconds:100_000_000)
         }
         try Task.checkCancellation();guard process.successful else{throw CaptionFailure.process}

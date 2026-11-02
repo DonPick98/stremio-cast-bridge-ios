@@ -136,19 +136,23 @@ final class CaptionHTTPServer: @unchecked Sendable {
         let config=URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest=4;config.timeoutIntervalForResource=6
         config.httpCookieStorage=nil;config.urlCredentialStorage=nil;config.urlCache=nil
-        let session=URLSession(configuration:config);defer{session.invalidateAndCancel()}
+        func headers(_ request:URLRequest) async throws -> HTTPURLResponse{
+            let session=URLSession(configuration:config);defer{session.invalidateAndCancel()}
+            let (_,response)=try await session.bytes(for:request)
+            guard let response=response as? HTTPURLResponse,response.url?.scheme=="https" else{throw CaptionFailure.network}
+            return response
+        }
         do{
             // Read headers only, even if a server ignores Range and returns a movie.
             var request=URLRequest(url:url);request.setValue("https://www.gstatic.com",forHTTPHeaderField:"Origin")
             request.setValue("bytes=0-0",forHTTPHeaderField:"Range")
-            let (_,response)=try await session.bytes(for:request)
-            guard let response=response as? HTTPURLResponse,DirectCaptionPolicy.allows(response:response,preflight:false),response.url?.scheme=="https" else{return false}
+            let response=try await headers(request)
+            guard DirectCaptionPolicy.allows(response:response,preflight:false) else{return false}
             try Task.checkCancellation()
             request.httpMethod="OPTIONS";request.setValue(nil,forHTTPHeaderField:"Range")
             request.setValue("GET",forHTTPHeaderField:"Access-Control-Request-Method")
             request.setValue("range, content-type, accept-encoding",forHTTPHeaderField:"Access-Control-Request-Headers")
-            let (_,preflight)=try await session.bytes(for:request)
-            guard let preflight=preflight as? HTTPURLResponse else{return false}
+            let preflight=try await headers(request)
             return DirectCaptionPolicy.allows(response:preflight,preflight:true)
         }catch{return false}
     }
