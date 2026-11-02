@@ -77,7 +77,7 @@ import AVFAudio
         var args=["-hide_banner","-nostdin","-loglevel","error","-nostats","-y","-copyts"]
         if !input.isFileURL{args += ["-rw_timeout","5000000","-tls_verify","1"]}
         args += ["-i",input.isFileURL ? input.path:input.absoluteString]
-        for (track,file) in zip(tracks,files){args += ["-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-f","webvtt",file.path]}
+        for (track,file) in zip(tracks,files){args += ["-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-fs","1048577","-f","webvtt",file.path]}
         let helper=VLCMediaPlayer(options:["--demux=rawaud"])
         helper.media=VLCMedia(path:"/dev/zero")
         try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
@@ -90,7 +90,7 @@ import AVFAudio
         while !process.finished{
             try Task.checkCancellation()
             guard Date()<deadline else{throw CaptionFailure.timeout}
-            for file in files{if let size=try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize,size>1_048_576{throw CaptionFailure.limit}}
+            if let size=try? files[0].resourceValues(forKeys:[.fileSizeKey]).fileSize,size>1_048_576{throw CaptionFailure.limit}
             let elapsed=Date().timeIntervalSince(started)
             if Int(elapsed) != lastProgress{lastProgress=Int(elapsed);progress?(elapsed)}
             try await Task.sleep(nanoseconds:100_000_000)
@@ -98,8 +98,10 @@ import AVFAudio
         try Task.checkCancellation();guard process.successful else{throw CaptionFailure.process}
         var results:[Int:String]=[:]
         for (track,file) in zip(tracks,files){
+            guard let size=try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize,size<=1_048_576 else{
+                if track.index==tracks[0].index{throw CaptionFailure.limit};continue
+            }
             let data=try Data(contentsOf:file)
-            guard data.count<=1_048_576 else{throw CaptionFailure.limit}
             // An empty optional track must not discard the selected document.
             if let text=try? SubtitleDocument.normalize(data+Data([10])){results[track.index]=text}
         }
