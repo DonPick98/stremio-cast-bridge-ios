@@ -1,4 +1,65 @@
 import Foundation
+import CryptoKit
+
+/// Complete documents only; filenames contain digests, never source URLs or titles.
+/// Access dates implement LRU across launches. No cache entry is trusted after expiry.
+final class CaptionDocumentCache {
+    private let directory:URL
+    private let budget:Int, countLimit:Int, lifetime:TimeInterval
+    private let clock:()->Date
+    init(directory:URL = FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0].appendingPathComponent("CastBridge/CompleteCaptions-v1"),budget:Int = 12_582_912,countLimit:Int = 24,lifetime:TimeInterval = 604800,clock:@escaping ()->Date = Date.init){
+        self.directory=directory;self.budget=budget;self.countLimit=countLimit;self.lifetime=lifetime;self.clock=clock
+        try? FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        var excluded=directory;var values=URLResourceValues();values.isExcludedFromBackup=true;try? excluded.setResourceValues(values)
+        prune()
+    }
+    static func key(input:URL,track:String)->String{
+        SHA256.hash(data:Data((input.absoluteString+"\n"+track).utf8)).map{String(format:"%02x",$0)}.joined()
+    }
+    private func file(_ key:String)->URL?{
+        guard key.count==64,key.allSatisfy({$0.isHexDigit}) else{return nil}
+        return directory.appendingPathComponent(key+".vtt")
+    }
+    func get(_ key:String)->String?{
+        guard let file=file(key),let values=try? file.resourceValues(forKeys:[.fileSizeKey,.contentModificationDateKey]),
+              let size=values.fileSize,size<=1_048_576,let date=values.contentModificationDate,clock().timeIntervalSince(date)<=lifetime,
+              let data=try? Data(contentsOf:file),let text=String(data:data,encoding:.utf8),text.hasPrefix("WEBVTT") else{return nil}
+        try? FileManager.default.setAttributes([.modificationDate:clock()],ofItemAtPath:file.path)
+        return text
+    }
+    func put(_ text:String,key:String){
+        guard let file=file(key),text.hasPrefix("WEBVTT"),text.utf8.count<=min(budget,1_048_576) else{return}
+        do{try Data(text.utf8).write(to:file,options:.atomic);try FileManager.default.setAttributes([.modificationDate:clock()],ofItemAtPath:file.path)}catch{return}
+        prune()
+    }
+    private func prune(){
+        let files=(try? FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:[.fileSizeKey,.contentModificationDateKey,.isRegularFileKey])) ?? []
+        var entries:[(URL,Int,Date)]=[]
+        for file in files where file.pathExtension=="vtt"{
+            guard let values=try? file.resourceValues(forKeys:[.fileSizeKey,.contentModificationDateKey,.isRegularFileKey]),values.isRegularFile==true else{continue}
+            let date=values.contentModificationDate ?? .distantPast,size=values.fileSize ?? 0
+            if clock().timeIntervalSince(date)>lifetime || size>1_048_576{try? FileManager.default.removeItem(at:file)}else{entries.append((file,size,date))}
+        }
+        entries.sort{$0.2<$1.2};var bytes=entries.reduce(0){$0+$1.1}
+        while entries.count>countLimit || bytes>budget{
+            let old=entries.removeFirst();bytes-=old.1;try? FileManager.default.removeItem(at:old.0)
+        }
+    }
+}
+
+enum DirectCaptionPolicy {
+    static func needsMediaProxy(force:Bool,compatible:Bool,audioChanged:Bool,burn:Bool,textSelected:Bool,corsAllowed:Bool?)->Bool{
+        force || !compatible || audioChanged || burn || (textSelected && corsAllowed == false)
+    }
+    // A wildcard is independent of receiver version/origin; otherwise be conservative.
+    static func allows(response:HTTPURLResponse,preflight:Bool)->Bool{
+        guard (200..<300).contains(response.statusCode),response.value(forHTTPHeaderField:"Access-Control-Allow-Origin")?.trimmingCharacters(in:.whitespacesAndNewlines)=="*" else{return false}
+        if !preflight{return true}
+        let methods=(response.value(forHTTPHeaderField:"Access-Control-Allow-Methods") ?? "").lowercased()
+        let headers=Set((response.value(forHTTPHeaderField:"Access-Control-Allow-Headers") ?? "").lowercased().split(separator:",").map{$0.trimmingCharacters(in:.whitespaces)})
+        return (methods.contains("get") || methods=="*") && (headers.contains("*") || Set(["range","content-type","accept-encoding"]).isSubset(of:headers))
+    }
+}
 
 enum CaptionFailure:Error { case input,probe,track,unsupported,limit,timeout,process,network,cancelled }
 enum CaptionFormat:String,Codable { case vtt,ass }

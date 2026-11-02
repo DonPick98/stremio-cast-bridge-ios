@@ -13,6 +13,15 @@ import Foundation
         let sparseCatalog=try await CaptionExtractor.catalog(sparseFile)
         let sparse=try await CaptionExtractor.fullDocument(input:sparseFile,track:sparseCatalog.tracks[0])
         let fullPassed=complete.contains("EMBEDDED CAPTION AFTER SEEK") && sparse.contains("01:40") && sparse.contains("LATE CAPTION")
+        let batch=try await CaptionExtractor.fullDocuments(input:input,tracks:Array(catalog.tracks.prefix(4)))
+        let batchPassed=batch.count==4 && batch[catalog.tracks[0].index]==complete
+        let standard=StandardCaptionHost();defer{standard.stop()}
+        try await standard.prepare(text:sparse,kind:2,identity:"late",delay:0,peer:"127.0.0.1",localIP:"127.0.0.1")
+        let standardURLs=standard.urls
+        guard standardURLs.count==21,let normal=standard.identifier(kind:2,delay:0),let delayed=standard.identifier(kind:2,delay:2),let normalURL=standardURLs[normal],let delayedURL=standardURLs[delayed] else{throw CaptionFailure.process}
+        let(normalData,_)=try await URLSession.shared.data(from:normalURL)
+        let(delayedData,delayedResponse)=try await URLSession.shared.data(from:delayedURL)
+        let standardPassed=String(decoding:normalData,as:UTF8.self).contains("00:01:40.000") && String(decoding:delayedData,as:UTF8.self).contains("00:01:42.000") && standard.urls==standardURLs && (delayedResponse as? HTTPURLResponse)?.value(forHTTPHeaderField:"Access-Control-Allow-Origin")=="*"
         var results:[[String:Any]]=[]
         let cases:[(String,URL,Int,CaptionFormat,Double,Double)]=[
             ("ass-zero",input,0,.ass,0,12.05),("ass-seek",input,0,.ass,7,12.05),
@@ -49,7 +58,7 @@ import Foundation
         var bad=URLComponents(url:stateURL,resolvingAgainstBaseURL:false)!;bad.queryItems=[URLQueryItem(name:"epoch",value:"wrong")]
         let(_,denied)=try await URLSession.shared.data(from:bad.url!)
         let gateway=(response as? HTTPURLResponse)?.statusCode==200 && body==Data("WEBVTT\n\n".utf8) && (response as? HTTPURLResponse)?.value(forHTTPHeaderField:"Access-Control-Allow-Origin")=="*" && (denied as? HTTPURLResponse)?.statusCode==410
-        return ["passed":results.count==6&&results.allSatisfy{$0["passed"] as? Bool==true}&&callbacks==0&&gateway&&fontPassed&&fullPassed,"windows":results,"cancelledCleanly":callbacks==0,"gateway":gateway,"fontPreserved":fontPassed,"fullDocuments":fullPassed]
+        return ["passed":results.count==6&&results.allSatisfy{$0["passed"] as? Bool==true}&&callbacks==0&&gateway&&fontPassed&&fullPassed&&batchPassed&&standardPassed,"windows":results,"cancelledCleanly":callbacks==0,"gateway":gateway,"fontPreserved":fontPassed,"fullDocuments":fullPassed,"batchDocuments":batchPassed,"standardDirectText":standardPassed]
     }
 }
 #endif

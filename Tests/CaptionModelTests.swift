@@ -18,6 +18,38 @@ import Foundation
         let prefix=try CaptionDocument.completePrefix(Data("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\ncomplete\n\n00:00:03.000 -->".utf8),format:.vtt)
         precondition(silence==Data("WEBVTT\n\n".utf8))
         precondition(prefix==Data("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\ncomplete\n\n".utf8))
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer{try? FileManager.default.removeItem(at:root)}
+        var now=Date()
+        let cache=CaptionDocumentCache(directory:root,budget:300,countLimit:2,lifetime:60,clock:{now})
+        let input=URL(string:"https://example.test/private?token=secret")!
+        let keys=(1...3).map{CaptionDocumentCache.key(input:input,track:String($0))}
+        precondition(Set(keys).count==3 && keys.allSatisfy{$0.count==64 && !$0.contains("secret")})
+        cache.put("WEBVTT\n\nA",key:keys[0]);now+=1
+        cache.put("WEBVTT\n\nB",key:keys[1]);now+=1
+        precondition(cache.get(keys[0]) != nil);now+=1
+        cache.put("WEBVTT\n\nC",key:keys[2])
+        precondition(cache.get(keys[1])==nil && cache.get(keys[0]) != nil && cache.get(keys[2]) != nil)
+        let reopened=CaptionDocumentCache(directory:root,budget:300,countLimit:2,lifetime:60,clock:{now})
+        precondition(reopened.get(keys[0]) != nil)
+        cache.put("not complete",key:keys[0]);precondition(cache.get(keys[0])=="WEBVTT\n\nA")
+        now+=61;precondition(cache.get(keys[0])==nil)
+        let budgetRoot=root.appendingPathComponent("budget")
+        let bounded=CaptionDocumentCache(directory:budgetRoot,budget:30,countLimit:20,clock:{now})
+        bounded.put("WEBVTT\n\n12345678",key:keys[0]);now+=1
+        bounded.put("WEBVTT\n\nabcdefgh",key:keys[1])
+        precondition(bounded.get(keys[0])==nil && bounded.get(keys[1]) != nil)
+        precondition(!DirectCaptionPolicy.needsMediaProxy(force:false,compatible:true,audioChanged:false,burn:false,textSelected:true,corsAllowed:true))
+        precondition(!DirectCaptionPolicy.needsMediaProxy(force:false,compatible:true,audioChanged:false,burn:false,textSelected:true,corsAllowed:nil))
+        precondition(DirectCaptionPolicy.needsMediaProxy(force:false,compatible:true,audioChanged:false,burn:false,textSelected:true,corsAllowed:false))
+        precondition(DirectCaptionPolicy.needsMediaProxy(force:false,compatible:true,audioChanged:true,burn:false,textSelected:true,corsAllowed:true))
+        precondition(DirectCaptionPolicy.needsMediaProxy(force:false,compatible:true,audioChanged:false,burn:true,textSelected:false,corsAllowed:true))
+        let headers=["Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET, HEAD, OPTIONS","Access-Control-Allow-Headers":"Range, Content-Type, Accept-Encoding"]
+        let response=HTTPURLResponse(url:input,statusCode:206,httpVersion:nil,headerFields:headers)!
+        precondition(DirectCaptionPolicy.allows(response:response,preflight:true))
+        precondition(!DirectCaptionPolicy.allows(response:HTTPURLResponse(url:input,statusCode:200,httpVersion:nil,headerFields:[:])!,preflight:false))
+        precondition(!DirectCaptionPolicy.allows(response:HTTPURLResponse(url:input,statusCode:204,httpVersion:nil,headerFields:["Access-Control-Allow-Origin":"*"])!,preflight:true))
+        print("Direct caption routing/CORS and persistent bounded LRU: passed")
         print("Caption model passed: exact stream mapping, bitmap exclusion, bounded windows, original timestamps, independent coverage heartbeat and complete cue publication")
     }
 }

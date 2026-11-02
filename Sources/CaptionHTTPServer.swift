@@ -91,11 +91,65 @@ final class CaptionHTTPServer: @unchecked Sendable {
     }
     private func reply(_ id:UUID,status:Int,type:String="text/plain",body:Data=Data(),head:Bool=false){
         guard let connection=connections[id] else{return}
-        var data=Data("HTTP/1.1 \(status) Response\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Range, Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\nConnection: close\r\n\r\n".utf8)
+        var data=Data("HTTP/1.1 \(status) Response\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Range, Content-Type, Accept-Encoding\r\nAccess-Control-Allow-Private-Network: true\r\nConnection: close\r\n\r\n".utf8)
         if !head{data.append(body)}
         connection.send(content:data,completion:.contentProcessed{_ in self.close(id)})
     }
     private func close(_ id:UUID){connections.removeValue(forKey:id)?.cancel()}
     private func finish(){let c=opening;opening=nil;c?.resume(throwing:CaptionFailure.network);listener?.cancel();listener=nil;for id in Array(connections.keys){close(id)};assets.removeAll();order.removeAll();port=0}
     func stop(){queue.async{self.finish()}}
+}
+
+/// Standard receiver text service. It never reads or relays video bytes.
+@MainActor final class StandardCaptionHost {
+    private var server:CaptionHTTPServer?
+    private var previous:CaptionHTTPServer?
+    private var revision=UUID()
+    private(set) var urls:[Int:URL]=[:]
+    private(set) var identity=""
+    private(set) var peer=""
+    private(set) var window=SubtitleWindow(center:0)
+    func identifier(kind:Int,delay:Double)->Int?{
+        guard let id=window.identifier(kind:kind,delay:delay),urls[id] != nil else{return nil};return id
+    }
+    func prepare(text:String,kind:Int,identity:String,delay:Double,peer:String,localIP:String) async throws {
+        let token=UUID();revision=token
+        let candidate=CaptionHTTPServer(localIP:localIP,peer:peer)
+        var installed=false;defer{if !installed{candidate.stop()}}
+        _ = try await candidate.start()
+        let nextWindow=SubtitleWindow(center:delay)
+        var next:[Int:URL]=[:]
+        for variant in nextWindow.variants(kind:kind){
+            try Task.checkCancellation();guard revision==token else{throw CancellationError()}
+            next[variant.id]=try await candidate.publish(WebVTTTimeline.rebased(text,offset:0,delay:variant.delay),format:.vtt)
+        }
+        try Task.checkCancellation();guard revision==token else{throw CancellationError()}
+        // Keep the previous URLs alive until the replacement LOAD is acknowledged.
+        previous?.stop();previous=server;server=candidate;installed=true
+        urls=next;window=nextWindow;self.identity=identity;self.peer=peer
+    }
+    func acknowledge(){previous?.stop();previous=nil}
+    func cancelPreparation(){revision=UUID()}
+    func stop(){revision=UUID();server?.stop();previous?.stop();server=nil;previous=nil;urls=[:];identity="";peer=""}
+    static func supportsDirectMedia(_ url:URL) async -> Bool {
+        guard url.scheme=="https",url.user==nil,url.password==nil else{return false}
+        let config=URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest=4;config.timeoutIntervalForResource=6
+        config.httpCookieStorage=nil;config.urlCredentialStorage=nil;config.urlCache=nil
+        let session=URLSession(configuration:config);defer{session.invalidateAndCancel()}
+        do{
+            // Read headers only, even if a server ignores Range and returns a movie.
+            var request=URLRequest(url:url);request.setValue("https://www.gstatic.com",forHTTPHeaderField:"Origin")
+            request.setValue("bytes=0-0",forHTTPHeaderField:"Range")
+            let (_,response)=try await session.bytes(for:request)
+            guard let response=response as? HTTPURLResponse,DirectCaptionPolicy.allows(response:response,preflight:false),response.url?.scheme=="https" else{return false}
+            try Task.checkCancellation()
+            request.httpMethod="OPTIONS";request.setValue(nil,forHTTPHeaderField:"Range")
+            request.setValue("GET",forHTTPHeaderField:"Access-Control-Request-Method")
+            request.setValue("range, content-type, accept-encoding",forHTTPHeaderField:"Access-Control-Request-Headers")
+            let (_,preflight)=try await session.bytes(for:request)
+            guard let preflight=preflight as? HTTPURLResponse else{return false}
+            return DirectCaptionPolicy.allows(response:preflight,preflight:true)
+        }catch{return false}
+    }
 }

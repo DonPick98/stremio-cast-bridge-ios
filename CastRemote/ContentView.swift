@@ -21,6 +21,10 @@ struct ContentView: View {
                         if cast.busy || cast.loading { ProgressView().controlSize(.small).padding(.top,2) }
                         Text(cast.message).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }.frame(maxWidth:.infinity,alignment:.leading)
+                    if cast.subtitleDownloadBusy {
+                        HStack(spacing:8){ProgressView().controlSize(.small);Text(cast.subtitlePreparation).font(.footnote).foregroundStyle(.secondary)}
+                            .frame(maxWidth:.infinity,alignment:.leading)
+                    }
                     if let issue = cast.playbackIssue {
                         Label(issue,systemImage:"exclamationmark.circle").font(.subheadline).foregroundStyle(.orange).fixedSize(horizontal:false,vertical:true).castCard()
                     }
@@ -219,7 +223,7 @@ private struct TrackOptionsView: View {
                         if cast.supportsOriginalSubtitleStyle,media.subtitles.contains(where:{["ssa","ass"].contains($0.codec.lowercased())}){
                             Toggle("Mantieni lo stile originale della traccia",isOn:Binding(get:{cast.preservesOriginalSubtitleStyle},set:{cast.setOriginalSubtitleStyle($0)}))
                         }
-                        if cast.subtitleDownloadBusy { HStack { ProgressView(); Text("Preparo i sottotitoli…").font(.footnote) } }
+                        if cast.subtitleDownloadBusy { HStack { ProgressView(); Text(cast.subtitlePreparation).font(.footnote) } }
                         if let issue = cast.subtitleIssue {
                             Text(issue).font(.footnote).foregroundStyle(.orange)
                             Button("Riprova sottotitoli"){cast.retryIndependentCaptions()}

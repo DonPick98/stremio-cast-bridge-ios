@@ -62,31 +62,47 @@ import AVFAudio
     /// A standard Cast text track must be a complete document. Never serve a
     /// ninety-second extraction window as if it covered the whole movie.
     static func fullDocument(input:URL,track:CaptionTrack) async throws -> String {
-        guard track.isText,input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil) else{throw CaptionFailure.input}
+        let result=try await fullDocuments(input:input,tracks:[track])
+        guard let text=result[track.index] else{throw CaptionFailure.process};return text
+    }
+    /// One demux pass prepares the selected language and a few alternatives.
+    /// Each output is complete and independently bounded; never publish partial files.
+    static func fullDocuments(input:URL,tracks:[CaptionTrack],progress:((Double)->Void)? = nil) async throws -> [Int:String] {
+        guard !tracks.isEmpty,tracks.count<=4,Set(tracks.map{$0.index}).count==tracks.count,tracks.allSatisfy({$0.isText}),input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil) else{throw CaptionFailure.input}
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent("CastFullCaption-"+UUID().uuidString)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-        defer{try? FileManager.default.removeItem(at:directory)}
-        let file=directory.appendingPathComponent("complete.vtt")
+        var cleanupWithProcess=false
+        defer{if !cleanupWithProcess{try? FileManager.default.removeItem(at:directory)}}
+        let files=tracks.map{directory.appendingPathComponent("\($0.index).vtt")}
         var args=["-hide_banner","-nostdin","-loglevel","error","-nostats","-y","-copyts"]
         if !input.isFileURL{args += ["-rw_timeout","5000000","-tls_verify","1"]}
-        args += ["-i",input.isFileURL ? input.path:input.absoluteString,"-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-f","webvtt",file.path]
+        args += ["-i",input.isFileURL ? input.path:input.absoluteString]
+        for (track,file) in zip(tracks,files){args += ["-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-f","webvtt",file.path]}
         let helper=VLCMediaPlayer(options:["--demux=rawaud"])
         helper.media=VLCMedia(path:"/dev/zero")
         try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         helper.play();defer{helper.stop()}
-        let process=try CaptionProcess(args);defer{process.stop()}
-        let deadline=Date().addingTimeInterval(120)
+        let process=try CaptionProcess(args);cleanupWithProcess=true
+        defer{process.stop(afterRelease:{try? FileManager.default.removeItem(at:directory)})}
+        let started=Date(),deadline=Date().addingTimeInterval(120)
         while !process.finished{
             try Task.checkCancellation()
             guard Date()<deadline else{throw CaptionFailure.timeout}
-            if let size=try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize,size>1_048_576{throw CaptionFailure.limit}
+            for file in files{if let size=try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize,size>1_048_576{throw CaptionFailure.limit}}
+            progress?(Date().timeIntervalSince(started))
             try await Task.sleep(nanoseconds:100_000_000)
         }
         try Task.checkCancellation();guard process.successful else{throw CaptionFailure.process}
-        let data=try Data(contentsOf:file)
-        guard data.count<=1_048_576 else{throw CaptionFailure.limit}
-        return try SubtitleDocument.normalize(data+Data([10]))
+        var results:[Int:String]=[:]
+        for (track,file) in zip(tracks,files){
+            let data=try Data(contentsOf:file)
+            guard data.count<=1_048_576 else{throw CaptionFailure.limit}
+            // An empty optional track must not discard the selected document.
+            if let text=try? SubtitleDocument.normalize(data+Data([10])){results[track.index]=text}
+        }
+        guard results[tracks[0].index] != nil else{throw CaptionFailure.process}
+        return results
     }
     static func fonts(_ input:URL,catalog:CaptionCatalog) async throws -> [CaptionFontData] {
         guard !catalog.fonts.isEmpty else{return []}

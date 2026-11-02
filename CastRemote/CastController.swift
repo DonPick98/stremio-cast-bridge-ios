@@ -33,6 +33,7 @@ import UIKit
     @Published private(set) var onlineSubtitles:[OnlineSubtitle] = []
     @Published private(set) var subtitleSearchBusy = false
     @Published private(set) var subtitleDownloadBusy = false
+    @Published private(set) var subtitlePreparation = "Preparo i sottotitoli…"
     @Published private(set) var subtitleIssue:String?
     @Published private(set) var subtitlePlaybackWarning:String?
     @Published private(set) var subtitleDelay:Double = 0
@@ -48,7 +49,14 @@ import UIKit
     private var subtitleSearchStamp = Date.distantPast
     private var subtitleRetryAfter = Date.distantPast
     private var extractedCaptionText:String?
-    private var completeCaptionCache:[String:String]=[:]
+    private let completeCaptionCache=CaptionDocumentCache()
+    private let standardCaptions=StandardCaptionHost()
+    private var directCaptionTask:Task<Void,Never>?
+    private var directCaptionAttempt=""
+    private var mediaCORS:[URL:Bool]=[:]
+    private var loadedDirectCaptionURLs:[Int:URL]=[:]
+    private var loadedDirectCaptionIdentity=""
+    private var cachedCaptionCatalog:(URL,CaptionCatalog)?
     private var extractedCaptionKey = ""
     private var extractedCaptionLanguage = "en"
     private var lastAppliedSubtitleDelay:Double = 0
@@ -198,6 +206,7 @@ import UIKit
             reconnectControls(); return
         }
         wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil; lockScreen.clear()
+        directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt="";standardCaptions.stop()
         streamCheckTask?.cancel(); checkingStream = false; loading = false
         capturePosition(); stopLocalProcessing(); connected = false; playing = false; finishCommand(false)
     }
@@ -560,14 +569,20 @@ import UIKit
         PlaybackDiagnostics.record(.prepare,["phase":"request","audio":audio,"subtitle":subtitle,"position":PlaybackDiagnostics.number(requested ?? lastGoodPosition)])
         let separateCaption=captionIsIndependent
         let burnedSubtitle = !separateCaption && !selectedEmbeddedText && subtitle.hasPrefix("vlc_") ? subtitle : "none"
-        let needsLocal = forceLocalPlayback || !prepared.directCompatible || audio != prepared.defaultAudioKey || burnedSubtitle != "none" || (!separateCaption && ["external","embedded"].contains(subtitle))
+        let textSelected = !separateCaption && ["external","embedded"].contains(subtitle)
+        let needsLocal = DirectCaptionPolicy.needsMediaProxy(force:forceLocalPlayback,compatible:prepared.directCompatible,audioChanged:audio != prepared.defaultAudioKey,burn:burnedSubtitle != "none",textSelected:textSelected,corsAllowed:mediaCORS[prepared.directURL])
         if !needsLocal {
+            if textSelected { prepareDirectCaption() }
+            // Preparing text must not reload an already playing direct movie.
+            if requested == nil,timeline.target == nil,hasLoaded,!localProcessing,ownsCurrentMedia,loadedSourceInput == prepared.directURL,loadedAudioKey == audio,
+               textSelected,!directCaptionReady{return}
             let target = requested ?? timeline.target ?? lastGoodPosition
             timeline.begin(at:target); position = target; lastGoodPosition = target
             stopLocalProcessing(); compatibilityMode = false; processingDetail = "Video originale · \(prepared.video?.label ?? prepared.videoDescription)"
             sendLoad(preservePosition:true,autoplay:playWhenReady)
             return
         }
+        directCaptionTask?.cancel();directCaptionTask=nil;standardCaptions.cancelPreparation()
         let appearance = burnedSubtitle == "none" ? SubtitleAppearance() : SubtitleAppearance.load()
         let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity)
         // Burning a subtitle is not a permanent reason to re-encode the movie.
@@ -693,12 +708,15 @@ import UIKit
         // the old engine. Reading it again here would lose the old stream offset.
         do {
             let url = urlOverride ?? prepared.directURL
-            let signature = url.absoluteString + (captionIsIndependent ? "|receiver":"|" + (externalSubtitleURL?.absoluteString ?? "") + "|" + (embeddedSubtitleURL?.absoluteString ?? "") + "|" + subtitleIdentity)
+            let directURLs = directCaptionReady || selectedSubtitle == "none" ? standardCaptions.urls : [:]
+            let captions:[Int:URL] = captionIsIndependent ? [:]:urlOverride != nil ? (nativeEngine?.captionURLs ?? [:]) : directURLs
+            let signature = url.absoluteString + (captionIsIndependent ? "|receiver":"|" + captions.sorted(by:{$0.key<$1.key}).map{"\($0.key):\($0.value.absoluteString)"}.joined(separator:"|"))
+            let captionKind = captionIsIndependent ? nil:selectedSubtitle == "external" ? 1 : selectedSubtitle == "embedded" ? 2 : nil
+            let activeID = captionKind.flatMap{kind in urlOverride != nil ? nativeEngine?.captionID(kind:kind,delay:subtitleDelay) : standardCaptions.identifier(kind:kind,delay:subtitleDelay)}.flatMap{captions[$0] == nil ? nil : $0}
             // Text tracks are attached even when disabled, so selecting one
             // later does not need to reload the movie or recreate its buffer.
             if hasLoaded && ownsCurrentMedia && loadedSignature == signature && loadedSubtitle != selectedSubtitle {
-                let kind = selectedSubtitle == "external" ? 1 : selectedSubtitle == "embedded" ? 2 : nil
-                let ids:[NSNumber] = kind.map{[NSNumber(value:nativeEngine?.captionID(kind:$0,delay:subtitleDelay) ?? $0)]} ?? []
+                let ids:[NSNumber] = activeID.map{[NSNumber(value:$0)]} ?? []
                 if selectedSubtitle == "external" && externalSubtitleURL == nil { return }
                 let request = client.setActiveTrackIDs(ids)
                 subtitleRequest = request; request.delegate = self
@@ -726,19 +744,17 @@ import UIKit
             let load = GCKMediaLoadRequestDataBuilder()
             load.autoplay = NSNumber(value:autoplay)
             var textTracks: [GCKMediaTrack] = []
-            let captions:[Int:URL] = captionIsIndependent ? [:]:urlOverride != nil ? (nativeEngine?.captionURLs ?? [:]) : Dictionary(uniqueKeysWithValues:[(1,externalSubtitleURL),(2,embeddedSubtitleURL)].compactMap{ pair in pair.1.map{(pair.0,$0)} })
             for (id,url) in captions.sorted(by:{$0.key < $1.key}) {
                 let kind = SubtitleWindow.kind(id)
                 let language = kind == 2 ? extractedCaptionLanguage : externalSubtitleLanguage
-                let center = nativeEngine?.captionWindow.center ?? 0
+                let center = urlOverride != nil ? (nativeEngine?.captionWindow.center ?? 0) : standardCaptions.window.center
                 let delay = id >= 10000 ? center+Double(id%10000-10)/2 : center
                 let name = SubtitleLanguage.name(language) + (urlOverride == nil ? "" : String(format:" · %+.1f s",delay))
                 if urlOverride != nil || url.pathExtension.lowercased() == "vtt",
                    let track = GCKMediaTrack(identifier:id,contentIdentifier:url.absoluteString,contentType:"text/vtt",type:.text,textSubtype:.subtitles,name:name,languageCode:SubtitleLanguage.code(language),customData:nil) { textTracks.append(track) }
             }
             info.mediaTracks = textTracks
-            let kind = captionIsIndependent ? nil:selectedSubtitle == "external" ? 1 : selectedSubtitle == "embedded" ? 2 : nil
-            load.activeTrackIDs = kind.map{[NSNumber(value:nativeEngine?.captionID(kind:$0,delay:subtitleDelay) ?? $0)]} ?? []
+            load.activeTrackIDs = activeID.map{[NSNumber(value:$0)]} ?? []
             load.mediaInformation = info.build()
             if urlOverride != nil { load.startTime = 0 }
             else if preservePosition || lastGoodPosition > 0 { load.startTime = max(0, lastGoodPosition) }
@@ -752,7 +768,9 @@ import UIKit
             expectedContentID = url.absoluteString
             loadedSignature = signature
             loadedStreamGeneration = streamRequests.generation
-            loadedSubtitle = selectedSubtitle
+            loadedSubtitle = captionKind != nil && activeID == nil ? "none" : selectedSubtitle
+            loadedDirectCaptionURLs = urlOverride == nil ? captions : [:]
+            loadedDirectCaptionIdentity = urlOverride == nil ? standardCaptions.identity : ""
             loadedAudioKey=selectedAudio;loadedSourceInput=prepared.directURL
             UserDefaults.standard.set(contentDigest(url.absoluteString), forKey: "cast.session.content")
             UserDefaults.standard.set(prepared.duration, forKey:"cast.session.duration")
@@ -861,7 +879,7 @@ import UIKit
         onlineSubtitles = []; selectedOnlineSubtitle = nil; subtitleSearchBusy = false; subtitleDownloadBusy = false; subtitleIssue = nil
         subtitleSearchStamp = .distantPast; subtitleRetryAfter = .distantPast
         extractedCaptionText = nil; extractedCaptionKey = ""; extractedCaptionLanguage = "en"
-        completeCaptionCache.removeAll()
+        cachedCaptionCatalog=nil
         subtitleDelay = 0; lastAppliedSubtitleDelay = 0; pendingSubtitleDelay = nil
     }
     func searchSubtitles(refresh:Bool = false) {
@@ -896,6 +914,7 @@ import UIKit
     }
     func pickSubtitle(_ subtitle:OnlineSubtitle) {
         guard let url = OnlineSubtitle.safeURL(subtitle.url) else { return }
+        directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt="";standardCaptions.cancelPreparation()
         subtitleChoices.invalidate(); let choice = subtitleChoices.generation, source = sourceRequests.generation
         trackApplyTask?.cancel(); trackApplyTask = nil
         embeddedCaptionTask?.cancel(); embeddedCaptionTask = nil
@@ -937,6 +956,12 @@ import UIKit
             promoteReadyEmbeddedText();load(preservePosition:true);return
         }
         guard selectedSubtitle != "none", hasLoaded, !loading, !checkingStream, trackApplyTask == nil, embeddedCaptionTask == nil, timeline.target == nil, timeline.queuedTarget == nil else { return }
+        if !localProcessing,["external","embedded"].contains(selectedSubtitle){
+            if applyLoadedSubtitleTrack(){return}
+            prepareDirectCaption()
+            if directCaptionReady || prepared.map({mediaCORS[$0.directURL] == false}) == true{load(preservePosition:true)}
+            return
+        }
         if let nativeSelection, nativeSelection.external != externalSubtitleURL || nativeSelection.captionIdentity != subtitleIdentity {
             guard subtitleRequest == nil else { return }; load(preservePosition:true); return
         }
@@ -990,6 +1015,7 @@ import UIKit
     func retryIndependentCaptions(){
         if independentCaptions.enabled{independentCaptions.retry()}
         else if selectedEmbeddedText{subtitleChoices.invalidate();attemptedEmbeddedCaptions.remove(selectedSubtitle);beginEmbeddedTextPreparation()}
+        else if !localProcessing,["external","embedded"].contains(selectedSubtitle){directCaptionAttempt="";subtitleIssue=nil;subtitlePlaybackWarning=nil;prepareDirectCaption()}
         else if let selectedOnlineSubtitle{pickSubtitle(selectedOnlineSubtitle)}
     }
     var supportsOriginalSubtitleStyle:Bool{independentCaptions.enabled}
@@ -998,6 +1024,22 @@ import UIKit
     /// Only edit registered receiver tracks. Do not pause the producer, replace
     /// its URL, issue LOAD or touch the timeline for a text caption toggle.
     private func applyLoadedSubtitleTrack() -> Bool {
+        if hasLoaded,ownsCurrentMedia,!localProcessing,!forceLocalPlayback,let client,let prepared,loadedSourceInput==prepared.directURL,loadedAudioKey==selectedAudio,mediaCORS[prepared.directURL] != false || selectedSubtitle=="none"{
+            let ids:[NSNumber]
+            if selectedSubtitle=="none"{ids=[]}
+            else{
+                guard directCaptionReady,loadedDirectCaptionIdentity==subtitleIdentity,
+                      let kind=selectedSubtitle=="embedded" ? 2:selectedSubtitle=="external" ? 1:nil,
+                      let id=standardCaptions.identifier(kind:kind,delay:subtitleDelay),
+                      loadedDirectCaptionURLs[id]==standardCaptions.urls[id] else{return false}
+                ids=[NSNumber(value:id)]
+            }
+            if loadedSubtitle==selectedSubtitle && lastAppliedSubtitleDelay==subtitleDelay{return true}
+            let request=client.setActiveTrackIDs(ids);subtitleRequest=request;request.delegate=self
+            pendingSubtitle=selectedSubtitle;pendingSubtitleDelay=subtitleDelay
+            PlaybackDiagnostics.record(.tracks,["phase":"direct_text_switch","subtitle":selectedSubtitle])
+            return true
+        }
         guard hasLoaded, ownsCurrentMedia, let client, let prepared,
               let selection = nativeSelection, selection.input == prepared.directURL,
               selection.audio == selectedAudio, selection.subtitle == "none",
@@ -1032,6 +1074,7 @@ import UIKit
         if audio { PlaybackPreferences.remember(audio:prepared.audio.first(where:{$0.key == selectedAudio}),subtitle:nil) }
         else {
             subtitleChoices.invalidate(); subtitlePickTask?.cancel(); subtitleDownloadBusy = false
+            directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt="";standardCaptions.cancelPreparation()
             embeddedCaptionTask?.cancel(); embeddedCaptionTask = nil
             restoreSubtitleDelay()
             let language = selectedSubtitle == "none" ? "none" : selectedSubtitle == "external" ? externalSubtitleLanguage : selectedSubtitle == "embedded" ? extractedCaptionLanguage : prepared.subtitles.first(where:{$0.key == selectedSubtitle})?.language
@@ -1057,6 +1100,50 @@ import UIKit
         let previousDelay=subtitleDelay;selectedSubtitle="embedded";restoreSubtitleDelay(fallback:previousDelay)
         if let key=subtitlePreferenceKey{UserDefaults.standard.set(subtitleDelay,forKey:key)}
     }
+    private var directCaptionReady:Bool{
+        guard standardCaptions.identity==subtitleIdentity,standardCaptions.peer==castSession?.device.ipAddress,
+              let kind=selectedSubtitle=="embedded" ? 2:selectedSubtitle=="external" ? 1:nil else{return false}
+        return standardCaptions.identifier(kind:kind,delay:subtitleDelay) != nil
+    }
+    private func prepareDirectCaption(){
+        guard !captionIsIndependent,!directCaptionReady,let prepared,let peer=castSession?.device.ipAddress,
+              let kind=selectedSubtitle=="embedded" ? 2:selectedSubtitle=="external" ? 1:nil else{return}
+        let identity=subtitleIdentity,delay=subtitleDelay
+        let key=contentDigest(prepared.directURL.absoluteString)+identity+peer+String(delay)
+        guard directCaptionAttempt != key else{return}
+        directCaptionTask?.cancel();standardCaptions.cancelPreparation();directCaptionAttempt=key
+        let source=sourceRequests.generation,choice=subtitleChoices.generation
+        subtitleDownloadBusy=true;subtitlePreparation="Collego i sottotitoli alla TV…"
+        directCaptionTask=Task{
+            defer{if sourceRequests.accepts(source),subtitleChoices.accepts(choice),directCaptionAttempt==key{directCaptionTask=nil;subtitleDownloadBusy=false}}
+            do{
+                let allowed:Bool
+                if let cached=mediaCORS[prepared.directURL]{allowed=cached}
+                else{allowed=await StandardCaptionHost.supportsDirectMedia(prepared.directURL)}
+                try validateSource(source);try Task.checkCancellation()
+                guard subtitleChoices.accepts(choice),subtitleIdentity==identity,subtitleDelay==delay else{throw CancellationError()}
+                if mediaCORS.count>=8{mediaCORS.removeAll()};mediaCORS[prepared.directURL]=allowed
+                if allowed{
+                    let text:String
+                    if kind==2,let extractedCaptionText{text=extractedCaptionText}
+                    else if let url=kind==1 ? externalSubtitleURL:embeddedSubtitleURL,let loaded=await readCaption(url){text=loaded}
+                    else{throw CaptionFailure.network}
+                    try validateSource(source);try Task.checkCancellation()
+                    guard subtitleChoices.accepts(choice),subtitleIdentity==identity,subtitleDelay==delay else{throw CancellationError()}
+                    try await standardCaptions.prepare(text:text,kind:kind,identity:identity,delay:delay,peer:peer,localIP:EmbeddedMediaEngine.localAddress(to:peer))
+                    try validateSource(source);try Task.checkCancellation()
+                    subtitleIssue=nil;subtitlePlaybackWarning=nil
+                }
+                PlaybackDiagnostics.record(.tracks,["phase":"caption_route","mode":allowed ? "direct":"media_proxy"])
+                if hasLoaded,!loading,!checkingStream,!loadPending,timeline.target==nil,timeline.queuedTarget==nil{load(preservePosition:true)}
+            }catch{
+                guard !Task.isCancelled,sourceRequests.accepts(source),subtitleChoices.accepts(choice),directCaptionAttempt==key else{return}
+                subtitleIssue="Non riesco a collegare questi sottotitoli. Il video continua; puoi riprovare."
+                subtitlePlaybackWarning=subtitleIssue
+                PlaybackDiagnostics.record(.tracks,["phase":"direct_caption_failed","code":(error as? CaptionFailure).map{String(describing:$0)} ?? "network"])
+            }
+        }
+    }
     private func beginEmbeddedTextPreparation(){
         guard selectedEmbeddedText else{return}
         embeddedCaptionTask?.cancel();attemptedEmbeddedCaptions.insert(selectedSubtitle)
@@ -1079,22 +1166,49 @@ import UIKit
         do{
             try Task.checkCancellation()
             let text:String
-            if let cached=completeCaptionCache[selected]{text=cached}
+            let cacheKey=CaptionDocumentCache.key(input:prepared.directURL,track:selected)
+            if let cached=completeCaptionCache.get(cacheKey){
+                text=cached
+                PlaybackDiagnostics.record(.tracks,["phase":"full_caption_cache","subtitle":selected])
+            }
             else{
+                subtitlePreparation="Leggo i sottotitoli dal file. Il video può continuare…"
                 PlaybackDiagnostics.record(.tracks,["phase":"full_caption_request","subtitle":selected,"codec":track.codec])
-                let catalog=try await CaptionExtractor.catalog(prepared.directURL)
+                let catalog:CaptionCatalog
+                if let cached=cachedCaptionCatalog,cached.0==prepared.directURL{catalog=cached.1}
+                else{catalog=try await CaptionExtractor.catalog(prepared.directURL);try validateSource(token);cachedCaptionCatalog=(prepared.directURL,catalog)}
                 let actual=try catalog.selected(ordinal:ordinal,vlcID:Int(selected.dropFirst(4)),language:track.language,codec:track.codec)
-                text=try await CaptionExtractor.fullDocument(input:prepared.directURL,track:actual)
+                var batch:[(String,CaptionTrack)]=[(selected,actual)]
+                let candidates=prepared.subtitles.enumerated().sorted{a,b in
+                    let first=a.element.language==track.language,second=b.element.language==track.language
+                    return first==second ? a.offset<b.offset:first
+                }
+                for (index,candidate) in candidates where candidate.key != selected && batch.count<4{
+                    guard completeCaptionCache.get(CaptionDocumentCache.key(input:prepared.directURL,track:candidate.key))==nil,
+                          let mapped=try? catalog.selected(ordinal:index,vlcID:Int(candidate.key.dropFirst(4)),language:candidate.language,codec:candidate.codec),
+                          ["ass","ssa","subrip","srt","webvtt"].contains(mapped.codec),!batch.contains(where:{$0.1.index==mapped.index}) else{continue}
+                    batch.append((candidate.key,mapped))
+                }
+                let documents=try await CaptionExtractor.fullDocuments(input:prepared.directURL,tracks:batch.map{$0.1}){[weak self] elapsed in
+                    guard let self,self.sourceRequests.accepts(token),self.subtitleChoices.accepts(choice) else{return}
+                    let seconds=Int(elapsed)
+                    self.subtitlePreparation=seconds<8 ? "Preparo i sottotitoli dal file…":"Leggo i sottotitoli · \(seconds) s. Il video può continuare."
+                }
+                try validateSource(token);try Task.checkCancellation()
+                guard let selectedText=documents[actual.index] else{throw CaptionFailure.process};text=selectedText
+                for (key,mapped) in batch{if let document=documents[mapped.index]{completeCaptionCache.put(document,key:CaptionDocumentCache.key(input:prepared.directURL,track:key))}}
+                PlaybackDiagnostics.record(.tracks,["phase":"full_caption_batch","tracks":String(documents.count)])
             }
             try validateSource(token)
             guard !Task.isCancelled,subtitleChoices.accepts(choice),selectedSubtitle==selected else{throw CancellationError()}
-            if completeCaptionCache.count>=6{completeCaptionCache.removeAll()};completeCaptionCache[selected]=text
             extractedCaptionText=text;extractedCaptionKey=selected;extractedCaptionLanguage=track.language
+            subtitlePlaybackWarning=nil
             PlaybackDiagnostics.record(.tracks,["phase":"full_caption_ready","subtitle":selected,"codec":track.codec,"bytes":String(text.utf8.count)])
         }catch{
             guard !Task.isCancelled,sourceRequests.accepts(token),subtitleChoices.accepts(choice),selectedSubtitle==selected else{return}
             subtitleIssue="Non riesco a preparare questa traccia testuale. Il video continua: puoi riprovare o scegliere i sottotitoli da Stremio e OpenSubtitles."
-            PlaybackDiagnostics.record(.tracks,["phase":"full_caption_failed","subtitle":selected,"kind":String(describing:type(of:error))])
+            subtitlePlaybackWarning=subtitleIssue
+            PlaybackDiagnostics.record(.tracks,["phase":"full_caption_failed","subtitle":selected,"kind":String(describing:type(of:error)),"code":(error as? CaptionFailure).map{String(describing:$0)} ?? "other"])
         }
     }
     func applySubtitleAppearance() {
@@ -1182,7 +1296,7 @@ import UIKit
             return
         }
         if request == commandRequest { finishCommand(true); return }
-        if request == loadRequest { loadAccepted = true; message = "Attendo l’avvio sulla TV…"; loadRequest = nil }
+        if request == loadRequest { standardCaptions.acknowledge();loadAccepted = true; message = "Attendo l’avvio sulla TV…"; loadRequest = nil }
     }
     func request(_ request: GCKRequest, didFailWithError error: GCKError) {
         PlaybackDiagnostics.record(.error,["phase":"cast_request","code":String(error.code),"kind":request == loadRequest ? "load" : request == subtitleRequest ? "subtitle" : "command"])
@@ -1300,6 +1414,8 @@ import UIKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        directCaptionTask?.cancel();directCaptionTask=nil;directCaptionAttempt=""
+        standardCaptions.stop();loadedDirectCaptionURLs=[:];loadedDirectCaptionIdentity=""
         independentCaptions.clearSource();loadedAudioKey="";loadedSourceInput=nil
         processingDetail = "Automatico"
         sourceRequests.invalidate(); streamRequests.invalidate(); controlRequests.invalidate(); playbackIntent.reset()
