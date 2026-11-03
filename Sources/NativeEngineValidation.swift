@@ -4,6 +4,7 @@ import MobileVLCKit
 import UIKit
 import MediaPlayer
 import GoogleCast
+import ObjectiveC
 
 /// Exercises the actual iOS binary on synthetic fixtures in CI, without accounts or Cast devices.
 @MainActor enum NativeEngineValidation {
@@ -20,8 +21,16 @@ import GoogleCast
         let input = documents.appendingPathComponent("h264-ac3.mkv")
         let output = documents.appendingPathComponent("converted.mp4")
         var result: [String:Any] = ["passed":false]
-        let suspendSelector=#selector(GCKSessionManagerListener.sessionManager(_:didSuspend:with:))
-        let suspensionDelegate=CastController.instancesRespond(to:suspendSelector)
+        // Google Cast imports both the generic GCKSession and GCKCastSession
+        // callbacks under the same Swift name. An untyped protocol #selector
+        // chooses the Cast-only overload, which this controller does not use.
+        // Validate the generic selector against the SDK protocol at runtime.
+        let suspendSelector=NSSelectorFromString("sessionManager:didSuspendSession:withReason:")
+        let advertised=NSProtocolFromString("GCKSessionManagerListener").map {
+            protocol_getMethodDescription($0,suspendSelector,false,true).name != nil
+        } ?? false
+        let suspensionDelegate=advertised && CastController.instancesRespond(to:suspendSelector)
+        result["castSuspendProtocol"]=advertised
         result["castSuspendDelegate"]=suspensionDelegate
         result["castSuspendSelector"]=NSStringFromSelector(suspendSelector)
         let controls = LockScreenPlayback()
