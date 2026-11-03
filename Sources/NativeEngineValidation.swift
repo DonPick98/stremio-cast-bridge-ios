@@ -20,8 +20,10 @@ import GoogleCast
         let input = documents.appendingPathComponent("h264-ac3.mkv")
         let output = documents.appendingPathComponent("converted.mp4")
         var result: [String:Any] = ["passed":false]
-        let suspensionDelegate=CastController.instancesRespond(to:#selector(GCKSessionManagerListener.sessionManager(_:didSuspend:with:)))
+        let suspendSelector=#selector(GCKSessionManagerListener.sessionManager(_:didSuspend:with:))
+        let suspensionDelegate=CastController.instancesRespond(to:suspendSelector)
         result["castSuspendDelegate"]=suspensionDelegate
+        result["castSuspendSelector"]=NSStringFromSelector(suspendSelector)
         let controls = LockScreenPlayback()
         controls.update(title:"Playback validation",device:"Synthetic receiver",position:42,duration:240,playing:true,loading:false,local:true)
         let metadata = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
