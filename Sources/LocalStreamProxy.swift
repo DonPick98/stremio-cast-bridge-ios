@@ -98,8 +98,10 @@ final class MediaOutputChannel: @unchecked Sendable {
     func waitForDrain() async -> Bool {
         while !Task.isCancelled {
             let state:(Bool,Bool) = await withCheckedContinuation { c in queue.async {
-                var available:Int32 = 0
-                let empty = Darwin.ioctl(self.reader,FIONREAD,&available) == 0 && available == 0
+                guard !self.stopped else { c.resume(returning:(true,false)); return }
+                var byte:UInt8 = 0
+                let count = Darwin.recv(self.reader,&byte,1,MSG_PEEK)
+                let empty = count == 0 || (count < 0 && errno == EAGAIN)
                 c.resume(returning:(self.stopped,!self.suspended && empty && Date().timeIntervalSince(self.lastOutput) >= 1))
             } }
             if state.0 { return false }
@@ -426,4 +428,3 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
 }
-
