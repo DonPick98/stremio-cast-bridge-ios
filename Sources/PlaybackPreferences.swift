@@ -6,7 +6,7 @@ enum PlaybackPreferences {
         return ["eng":"en","ita":"it","fra":"fr","fre":"fr","deu":"de","ger":"de","spa":"es","jpn":"ja","kor":"ko","por":"pt","zho":"zh","chi":"zh","rus":"ru","ukr":"uk","ara":"ar","heb":"he","hin":"hi","pol":"pl","nld":"nl","dut":"nl","tur":"tr" ][code] ?? code
     }
     static func audio(_ tracks:[RDTrack],fallback:String,defaults:UserDefaults = .standard) -> String {
-        guard let wanted = defaults.string(forKey:"cast.preferred.audio") else { return fallback }
+        guard let wanted = defaults.string(forKey:"cast.preferred.audio"), wanted != "auto" else { return fallback }
         return tracks.first(where:{language($0.language) == wanted})?.key ?? fallback
     }
     static func remember(audio:RDTrack?,subtitle:String?,defaults:UserDefaults = .standard) {
@@ -14,7 +14,8 @@ enum PlaybackPreferences {
         if let subtitle, language(subtitle) != "und" { defaults.set(subtitle == "none" ? "none" : language(subtitle),forKey:"cast.preferred.subtitle") }
     }
     static func subtitle(_ tracks:[RDTrack],external:Bool,handoff:String?,defaults:UserDefaults = .standard) -> String {
-        let saved = defaults.string(forKey:"cast.preferred.subtitle")
+        let raw = defaults.string(forKey:"cast.preferred.subtitle")
+        let saved = raw == "auto" ? nil : raw
         if saved == "none" || (saved == nil && handoff == "off") { return "none" }
         let wanted = language(saved ?? handoff ?? "en")
         if let track = tracks.first(where:{language($0.language) == wanted}) { return track.key }
@@ -41,3 +42,47 @@ enum MediaDisplayTitle {
     }
 }
 
+
+
+struct SeriesEpisode: Decodable, Identifiable, Equatable {
+    let id:String
+    let title:String
+    let season:Int?
+    let episode:Int?
+    let released:String?
+    var label:String { "S\(season ?? 0) E\(episode ?? 0) · \(title)" }
+    func aired(at now:Date = Date()) -> Bool {
+        guard let released else { return false }
+        let iso=ISO8601DateFormatter()
+        iso.formatOptions=[.withInternetDateTime,.withFractionalSeconds]
+        let date=iso.date(from:released) ?? ISO8601DateFormatter().date(from:released)
+        return date.map{$0 <= now} ?? false
+    }
+}
+enum SeriesNavigation {
+    static func seriesID(_ videoID:String) -> String? {
+        let parts=videoID.split(separator:":",omittingEmptySubsequences:false)
+        guard parts.count==3,parts[0].range(of:#"^tt[0-9]+$"#,options:.regularExpression) != nil,
+              let season=Int(parts[1]),season>=0,let episode=Int(parts[2]),episode>=0 else{return nil}
+        return String(parts[0])
+    }
+    static func ordered(_ videos:[SeriesEpisode],series:String,includeSpecials:Bool) -> [SeriesEpisode] {
+        var seen=Set<String>()
+        return videos.filter {
+            guard seriesID($0.id)==series,let season=$0.season,let episode=$0.episode,
+                  season>=0,episode>=0,(includeSpecials || season>0),
+                  $0.id=="\(series):\(season):\(episode)" else{return false}
+            return seen.insert($0.id).inserted
+        }.sorted { ($0.season!,$0.episode!) < ($1.season!,$1.episode!) }
+    }
+    static func adjacent(_ videos:[SeriesEpisode],current:String,direction:Int) -> SeriesEpisode? {
+        guard [-1,1].contains(direction),let index=videos.firstIndex(where:{$0.id==current}),
+              videos.indices.contains(index+direction) else{return nil}
+        return videos[index+direction]
+    }
+    static func stremioURL(videoID:String,web:Bool) -> URL? {
+        guard let series=seriesID(videoID) else{return nil}
+        let base=web ? "https://web.stremio.com/#/detail/series/" : "stremio:///detail/series/"
+        return URL(string:base+series+"/"+videoID)
+    }
+}

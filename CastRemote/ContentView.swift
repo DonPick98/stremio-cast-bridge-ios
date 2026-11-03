@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var showSubtitleAppearance = false
     @State private var showOnlineSubtitles = false
     @State private var diagnosticsCopied = false
+    @State private var showPreferences=false
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -34,6 +35,7 @@ struct ContentView: View {
                             Label(warning,systemImage:"captions.bubble").font(.subheadline).foregroundStyle(.orange).multilineTextAlignment(.leading).fixedSize(horizontal:false,vertical:true).castCard()
                         }.buttonStyle(.plain)
                     }
+                    if cast.isSeries { episodeControls }
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
                     else { emptyState }
@@ -46,6 +48,7 @@ struct ContentView: View {
                     .frame(maxWidth:600).frame(maxWidth:.infinity)
             }.background(CastPalette.background).toolbar(.hidden,for:.navigationBar)
         }.preferredColorScheme(.dark).tint(CastPalette.accent)
+            .sheet(isPresented:$showPreferences) { AppPreferencesView() }
             .sheet(isPresented:$cast.showSetup) { AddonSetupView().environmentObject(cast) }
             .sheet(isPresented:$showTrackOptions) { TrackOptionsView().environmentObject(cast) }
             .sheet(isPresented:$showSubtitleAppearance) { SubtitleAppearanceView().environmentObject(cast) }
@@ -58,6 +61,24 @@ struct ContentView: View {
             } message: {
                 Text("Incollala nella chat con Codex. Contiene gli ultimi 2 minuti, senza link personali o credenziali.")
             }
+    }
+    private var episodeControls:some View {
+        VStack(alignment:.leading,spacing:12) {
+            Text(cast.orderedEpisodes.first(where:{$0.id==cast.currentEpisodeID})?.label ?? "Episodi").font(.headline)
+            HStack {
+                Button {cast.moveEpisode(-1)} label:{Label("Precedente",systemImage:"backward.end")}
+                    .disabled(cast.adjacentEpisode(-1)==nil || cast.episodeBusy || cast.busy || cast.loading)
+                Spacer()
+                if cast.episodeBusy {ProgressView()}
+                Button {cast.moveEpisode(1)} label:{Label("Successivo",systemImage:"forward.end")}
+                    .disabled(cast.adjacentEpisode(1)==nil || cast.episodeBusy || cast.busy || cast.loading)
+            }
+            if let issue=cast.episodeIssue {
+                Text(issue).font(.footnote).foregroundStyle(.orange)
+                if cast.fallbackEpisode != nil {Button("Continua da Stremio"){cast.openEpisodeInStremio()}}
+                else {Button("Ricarica episodi"){cast.refreshEpisodes()}}
+            }
+        }.castCard()
     }
     private var header: some View {
         HStack(spacing:12) {
@@ -75,6 +96,7 @@ struct ContentView: View {
                 Image(systemName:"terminal").font(.system(size:17)).frame(width:44,height:44).background(.white.opacity(0.045),in:Circle())
             }.foregroundStyle(.white).accessibilityLabel("Codex: copia diagnostica")
             Menu {
+                Button("Preferenze app") { showPreferences=true }
                 Button { showSubtitleAppearance = true } label: { Label("Aspetto sottotitoli",systemImage:"textformat.size") }
                 Button { cast.showSetup = true } label: { Label("Configura sorgenti",systemImage:"link") }
                 Link("Componenti open source",destination:URL(string:"https://github.com/DonPick98/stremio-cast-bridge-ios/blob/main/THIRD_PARTY_NOTICES.md")!)
@@ -431,3 +453,41 @@ private func playbackTime(_ seconds: Double) -> String {
 
 
 
+
+private struct AppPreferencesView:View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("cast.series.autoplay") private var autoplay=true
+    @AppStorage("cast.series.matchSource") private var matchSource=true
+    @AppStorage("cast.series.specials") private var specials=false
+    @AppStorage("cast.series.webFallback") private var webFallback=false
+    @AppStorage("cast.preferred.audio") private var audio="auto"
+    @AppStorage("cast.preferred.subtitle") private var subtitle="auto"
+    var body:some View {
+        NavigationStack {
+            Form {
+                Section("Serie") {
+                    Toggle("Avvia la puntata successiva",isOn:$autoplay)
+                    Toggle("Riutilizza una sorgente equivalente",isOn:$matchSource)
+                    Toggle("Includi episodi speciali",isOn:$specials)
+                }
+                Section {
+                    Toggle("Preferisci Stremio Web",isOn:$webFallback)
+                } header:{Text("Continua da Stremio")} footer:{Text("Se la puntata non può partire, usa il pulsante nel player. Il supporto ai collegamenti varia fra app e dispositivi.")}
+                Section {
+                    Picker("Audio preferito",selection:$audio) {languages(disabled:false)}
+                    Picker("Sottotitoli preferiti",selection:$subtitle) {languages(disabled:true)}
+                } header:{Text("Lingue")} footer:{Text("Le preferenze si applicano alle prossime selezioni. Puoi cambiare traccia per il video corrente dal player.")}
+                Section { Text("Le scelte sono salvate su questo iPhone. Aspetto e sincronizzazione dei sottotitoli restano disponibili nel menu Audio e sottotitoli.").font(.footnote) }
+            }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
+        }
+    }
+    @ViewBuilder private func languages(disabled:Bool)->some View {
+        Text(disabled ? "Dal collegamento Stremio":"Dalla sorgente").tag("auto")
+        if disabled {Text("Disattivati").tag("none")}
+        ForEach(["en","it","fr","de","es","ja","ko","pt","zh","ru"],id:\.self) {code in
+            Text(Locale(identifier:"it").localizedString(forLanguageCode:code) ?? code).tag(code)
+        }
+        let current=disabled ? subtitle:audio
+        if !["en","it","fr","de","es","ja","ko","pt","zh","ru","none","auto"].contains(current) {Text(current).tag(current)}
+    }
+}

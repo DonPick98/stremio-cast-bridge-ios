@@ -1,3 +1,20 @@
+# 0.8.0 (21) — episodi e preferenze, in verifica
+
+FT-001: catalogo Cinemeta per ID IMDb canonici, precedente/successivo, ordine
+stagione/episodio da metadati reali, nessuna invenzione degli episodi mancanti.
+FT-002 parziale: autoplay serie attivo di default solo verso episodio con data
+nota già trascorsa e sorgente con stesso bingeGroup. Altrimenti azione esplicita
+Stremio app/web; origine originale non ancora nel contratto handoff. Non è
+implementata una ricerca automatica fra fonti alternative dopo fallimento.
+FT-003 parziale: area Preferenze con autoplay, continuità sorgente, speciali,
+app/web di ritorno e lingue. Aspetto sottotitoli resta nella schermata esistente;
+non tutte le decisioni interne sono ancora configurabili. FT-004 non implementato.
+CB-018: guardia contro callback di fine ripetuti dopo fine già consumata.
+Test nuovo: ordine, buchi, cambio stagione, limiti, future/ignote date e deep link.
+Build/test CI da verificare; nessun collaudo fisico o integrazione account dichiarati.
+
+---
+
 # Build 20 — contesto diagnostico periodico
 
 Follow-up su CB-012/018/019: contesto formato/modalità/generazione/sessione ogni 15 s

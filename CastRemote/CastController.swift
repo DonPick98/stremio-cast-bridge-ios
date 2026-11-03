@@ -7,6 +7,75 @@ import UIKit
 import AVFAudio
 
 @MainActor final class CastController: NSObject, ObservableObject, GCKRequestDelegate, GCKSessionManagerListener, GCKRemoteMediaClientListener {
+    @Published private(set) var episodes:[SeriesEpisode]=[]
+    @Published private(set) var episodeIssue:String?
+    @Published private(set) var episodeBusy=false
+    @Published private(set) var fallbackEpisode:SeriesEpisode?
+    private var episodeTask:Task<Void,Never>?
+    private var episodeRequest=UUID()
+    private var requireEpisodeLanguage=false
+    var isSeries:Bool { handoff?.type=="series" }
+    var currentEpisodeID:String { handoff?.id ?? "" }
+    var orderedEpisodes:[SeriesEpisode] {
+        guard let id=SeriesNavigation.seriesID(currentEpisodeID) else{return []}
+        return SeriesNavigation.ordered(episodes,series:id,includeSpecials:UserDefaults.standard.bool(forKey:"cast.series.specials"))
+    }
+    func adjacentEpisode(_ direction:Int) -> SeriesEpisode? { SeriesNavigation.adjacent(orderedEpisodes,current:currentEpisodeID,direction:direction) }
+    func refreshEpisodes() {
+        episodeTask?.cancel();episodes=[];episodeIssue=nil
+        guard isSeries,SeriesNavigation.seriesID(currentEpisodeID) != nil else{return}
+        let id=currentEpisodeID
+        episodeTask=Task { [weak self] in
+            do {
+                let videos=try await BridgeClient.shared.episodes(videoID:id)
+                guard !Task.isCancelled,let self,self.currentEpisodeID==id else{return}
+                self.episodes=videos
+                if self.orderedEpisodes.isEmpty {self.episodeIssue="Nessun elenco episodi disponibile."}
+            } catch {
+                guard !Task.isCancelled,let self,self.currentEpisodeID==id else{return}
+                self.episodeIssue="Elenco episodi non disponibile. Puoi riprovare."
+            }
+        }
+    }
+    func openEpisodeInStremio() {
+        guard let target=fallbackEpisode,let url=SeriesNavigation.stremioURL(videoID:target.id,web:UserDefaults.standard.bool(forKey:"cast.series.webFallback")) else{return}
+        UIApplication.shared.open(url,options:[:]) { success in
+            if !success,let web=SeriesNavigation.stremioURL(videoID:target.id,web:true) {
+                Task { @MainActor in UIApplication.shared.open(web) }
+            }
+        }
+    }
+    func moveEpisode(_ direction:Int,automatic:Bool=false) {
+        guard !busy,!loading,!episodeBusy,let current=handoff,let target=adjacentEpisode(direction),
+              !automatic || target.aired() else{return}
+        let family=selectedSource?.behaviorHints?.bingeGroup
+        let next=BridgeHandoff(version:current.version,status:current.status,provider:current.provider,type:current.type,id:target.id,selection:nil,subtitleLanguage:current.subtitleLanguage,externalSubtitleURL:nil)
+        guard let config=configuration else{fallbackEpisode=target;episodeIssue="Configura le sorgenti oppure continua da Stremio.";return}
+        episodeRequest=UUID();let token=episodeRequest
+        episodeBusy=true;episodeIssue=nil;fallbackEpisode=nil
+        work=Task { [weak self] in
+            do {
+                let found=try await BridgeClient.shared.sources(next,manifest:config.manifest)
+                try Task.checkCancellation()
+                guard let self,self.episodeRequest==token,self.currentEpisodeID==current.id else{return}
+                self.episodeBusy=false
+                let matching=family.flatMap{group in group.isEmpty ? nil:found.first{$0.behaviorHints?.bingeGroup==group}}
+                let useMatch=UserDefaults.standard.object(forKey:"cast.series.matchSource") as? Bool ?? true
+                if automatic && (!useMatch || matching==nil) {
+                    self.fallbackEpisode=target;self.episodeIssue="Nessuna sorgente equivalente scelta automaticamente. Continua da Stremio o scegli l’episodio manualmente.";return
+                }
+                self.capturePosition();self.resetPlayback();self.clearSubtitleChoices()
+                self.sourceResume=nil;self.handoff=next;self.sources=found;self.selectedSource=nil;self.prepared=nil
+                self.sourceRevision=UUID();self.position=0;self.duration=0;self.hasLoaded=false;self.busy=false
+                if useMatch,let matching {self.choose(matching);self.fallbackEpisode=target;self.requireEpisodeLanguage=automatic}
+                else {self.message="\(target.label): scegli una sorgente."}
+            } catch {
+                guard !Task.isCancelled,let self,self.episodeRequest==token else{return}
+                self.episodeBusy=false;self.fallbackEpisode=target
+                self.episodeIssue="Non riesco a trovare la sorgente della puntata. La riproduzione corrente è conservata. Puoi continuare da Stremio."
+            }
+        }
+    }
     @Published var showSetup = false
     @Published private(set) var sourceRevision = UUID()
     @Published var setupMessage = "Inserisci i tuoi collegamenti personali una sola volta."
@@ -405,6 +474,7 @@ import AVFAudio
         }
     }
     private func finishOwnedPlayback() {
+        guard wantsPlayback || hasLoaded else{return}
         PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
         stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished")
         loadPending=false;loading=false;loadTimeout?.cancel();loadRequest=nil
@@ -412,6 +482,9 @@ import AVFAudio
         sourceResume=nil;hasLoaded=false;lastGoodPosition=0;lastConfirmedPosition=nil
         loadedMediaSessionID=nil;timeline.reset();recovery.reset();progress.reset()
         stopLocalProcessing();message="Riproduzione terminata."
+        if UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true {
+            moveEpisode(1,automatic:true)
+        }
     }
     private func prepareDirectControls() {
         guard connected, ownsCurrentMedia, let session = castSession,
@@ -434,6 +507,7 @@ import AVFAudio
             if client == nil { message = "Riconnetti Chromecast per usare i controlli." }
             return
         }
+        episodeRequest=UUID();episodeBusy=false;episodeTask?.cancel();episodes=[];fallbackEpisode=nil;episodeIssue=nil
         work?.cancel()
         clearSubtitleChoices()
         sourceResume = nil
@@ -458,6 +532,7 @@ import AVFAudio
         } catch { busy = false; message = (error as? BridgeError)?.localizedDescription ?? "Collegamento non valido." }
     }
     private func beginSources(_ data: BridgeHandoff) {
+        refreshEpisodes()
         work?.cancel()
         sourceRequests.invalidate()
         let sourceToken = sourceRequests.generation
@@ -518,6 +593,7 @@ import AVFAudio
         message = "Scegli una sorgente."
     }
     func choose(_ source: AddonStream) {
+        episodeRequest=UUID();episodeBusy=false;fallbackEpisode=nil;episodeIssue=nil;requireEpisodeLanguage=false
         clearSubtitleChoices()
         if selectedSource != nil { captureSourceResume() }
         resetPlayback()
@@ -571,6 +647,11 @@ import AVFAudio
                 }
                 try validateSource(sourceToken)
                 guard !result.audio.isEmpty else { throw BridgeError.cannotResolve }
+                if requireEpisodeLanguage,let language=UserDefaults.standard.string(forKey:"cast.preferred.audio"),language != "auto",
+                   !result.audio.contains(where:{PlaybackPreferences.language($0.language)==language}) {
+                    busy=false;episodeIssue="La sorgente della prossima puntata non contiene l’audio preferito. Continua da Stremio o scegli un’altra sorgente."
+                    message="Scegli una sorgente con la lingua desiderata.";return
+                }
                 prepared = result; selectedAudio = PlaybackPreferences.audio(result.audio,fallback:result.defaultAudioKey)
                 PlaybackDiagnostics.record(.metadata,["codec":result.video?.codec ?? "unknown","width":String(result.video?.width ?? 0),"height":String(result.video?.height ?? 0),"fps":PlaybackDiagnostics.number(result.video?.frameRate ?? 0),"duration":PlaybackDiagnostics.number(result.duration),"tracks":String(result.audio.count),"subtitle":String(result.subtitles.count)])
                 for track in result.audio { PlaybackDiagnostics.record(.metadata,["kind":"audio","audio":track.key,"codec":track.codec,"tracks":String(track.channels ?? 0)]) }
@@ -603,6 +684,7 @@ import AVFAudio
                     }
                 }
                 busy = false
+                if fallbackEpisode != nil {episodeIssue="La sorgente della puntata non si è avviata. Continua da Stremio o scegli un’altra sorgente."}
                 message = (error as? RDResolverError)?.localizedDescription ?? (error as? BridgeError)?.localizedDescription ?? "Non riesco a leggere le tracce di questo file. Scegli un’altra sorgente."
             }
         }
@@ -1603,6 +1685,8 @@ import AVFAudio
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        if episodeBusy {work?.cancel()}
+        episodeRequest=UUID();episodeBusy=false
         sourceRevision = UUID()
         trackChangePending = false
         stopCaptionDelivery()

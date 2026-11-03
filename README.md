@@ -1,4 +1,4 @@
-# Cast Bridge iOS 0.7.2 (20) — diagnostic context candidate
+# Cast Bridge iOS 0.8.0 (21) — episode navigation candidate
 
 Candidate on `fix/playback-recovery-20261103`, based on 0.7.1 (18). See [issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1) and [HANDOFF.md](HANDOFF.md) for verification status. Physical background/subtitle/battery acceptance is pending. The candidate includes a direct FFmpeg PGS overlay path. Native CI passed the synthetic startup/seek bitmap checks; the user’s physical source still needs validation.
 

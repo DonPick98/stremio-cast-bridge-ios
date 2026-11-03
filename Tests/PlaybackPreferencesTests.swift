@@ -17,10 +17,15 @@ import Foundation
         precondition(PlaybackPreferences.subtitle(changed,external:false,handoff:"ita",defaults:defaults) == "new")
         PlaybackPreferences.remember(audio:nil,subtitle:"none",defaults:defaults)
         precondition(PlaybackPreferences.subtitle(changed,external:true,handoff:"ita",defaults:defaults) == "none")
+        defaults.set("auto",forKey:"cast.preferred.audio")
+        defaults.set("auto",forKey:"cast.preferred.subtitle")
+        precondition(PlaybackPreferences.audio(tracks,fallback:"b",defaults:defaults)=="b")
+        precondition(PlaybackPreferences.subtitle(tracks,external:true,handoff:"eng",defaults:defaults)=="a")
         precondition(MediaDisplayTitle.clean("[Provider] Example.Movie.2025.1080p.WEB-DL.AC3.mkv") == "Example Movie 2025")
         precondition(MediaDisplayTitle.clean("Example.Series.S02E03.1080p.mkv") == "Example Series · S2 E3")
         precondition(MediaDisplayTitle.clean("...") == "Video da Stremio")
         print("Playback preferences passed: language aliases, new track IDs, embedded captions first, external fallback, persistent off, clean titles")
     }
 }
+
 

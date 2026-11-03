@@ -33,6 +33,10 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/RewindableInputStream.swift Tests/RewindableInputStreamTests.swift -o "$RUNNER_TEMP/rewind-input-tests"
           "$RUNNER_TEMP/rewind-input-tests"
+      - name: Test episode navigation
+        run: |
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/SeriesNavigationTests.swift -o "$RUNNER_TEMP/series-tests"
+          "$RUNNER_TEMP/series-tests"
       - name: Install Cast and embedded media engines
         env:
           LANG: en_US.UTF-8
