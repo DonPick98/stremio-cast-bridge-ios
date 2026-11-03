@@ -73,6 +73,7 @@ struct ContentView: View {
                 Button {cast.moveEpisode(1)} label:{Label("Successivo",systemImage:"forward.end")}
                     .disabled(cast.adjacentEpisode(1)==nil || cast.episodeBusy || cast.busy || cast.loading)
             }
+            if cast.episodeIssue==nil,cast.fallbackEpisode != nil,cast.playbackIssue != nil {Button("Continua da Stremio"){cast.openEpisodeInStremio()}}
             if let issue=cast.episodeIssue {
                 Text(issue).font(.footnote).foregroundStyle(.orange)
                 if cast.fallbackEpisode != nil {Button("Continua da Stremio"){cast.openEpisodeInStremio()}}

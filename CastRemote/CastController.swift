@@ -68,7 +68,7 @@ import AVFAudio
                 self.episodeBusy=false
                 let matching=family.flatMap{group in group.isEmpty ? nil:found.first{$0.behaviorHints?.bingeGroup==group}}
                 let useMatch=UserDefaults.standard.object(forKey:"cast.series.matchSource") as? Bool ?? true
-                if automatic && (!useMatch || matching==nil) {
+                if automatic && useMatch && matching==nil {
                     self.fallbackEpisode=target;self.episodeIssue="Nessuna sorgente equivalente scelta automaticamente. Continua da Stremio o scegli l’episodio manualmente.";return
                 }
                 self.capturePosition();self.resetPlayback();self.clearSubtitleChoices()
