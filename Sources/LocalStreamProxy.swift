@@ -2,7 +2,7 @@ import Foundation
 import Network
 import Darwin
 
-enum LocalStreamError: Error { case address, listener, request, upstream, initialization }
+enum LocalStreamError: Error { case address, listener, request, upstream, initialization, header, endOfStream, unsupported, limit, network, timeout }
 
 /// An anonymous socket pair retains every encoder packet. Unlike VLC's live
 /// HTTP circular buffer, it cannot skip an initial GOP or overwrite a slow reader.
@@ -227,11 +227,15 @@ final class LocalStreamProxy: @unchecked Sendable {
                     } else if case .failed = state { self.failPreparation(error:.upstream) }
                 }
                 stream.connection.start(queue:self.queue)
-                self.queue.asyncAfter(deadline:.now()+15) { if self.preparing != nil { self.failPreparation() } }
+                self.queue.asyncAfter(deadline:.now()+15) { if self.preparing != nil { self.failPreparation(error:.timeout) } }
             }
         }
     }
     private func failPreparation(error:LocalStreamError = .initialization) {
+        if preparing != nil {
+            let bytes=warm?.body.count ?? 0
+            Task { @MainActor in PlaybackDiagnostics.record(.error,["phase":"proxy_prepare","code":String(describing:error),"bytes":String(bytes)]) }
+        }
         warm?.connection.stateUpdateHandler = nil; warm?.connection.cancel(); warm = nil
         let c = preparing; preparing = nil; c?.resume(throwing:error)
     }
@@ -244,9 +248,9 @@ final class LocalStreamProxy: @unchecked Sendable {
                     stream.header = header; stream.body = body; stream.complete = complete
                     onHeaders?()
                     self.validateWarm(stream)
-                } else if complete || error != nil { self.failPreparation() }
+                } else if complete || error != nil { self.failPreparation(error:error != nil ? .network:.endOfStream) }
                 else { self.readWarmHeader(stream,buffer:received,onHeaders:onHeaders) }
-            } catch { self.failPreparation() }
+            } catch { self.failPreparation(error:.header) }
         }
     }
     private func validateWarm(_ stream:Warm) {
@@ -255,13 +259,15 @@ final class LocalStreamProxy: @unchecked Sendable {
                 stream.ready = true
                 let c = preparing; preparing = nil; c?.resume(); return
             }
-            guard !stream.complete, stream.body.count < 1_048_576 else { failPreparation(); return }
+            guard !stream.complete, stream.body.count < 1_048_576 else { failPreparation(error:stream.complete ? .endOfStream:.limit); return }
             stream.connection.receive(minimumIncompleteLength:1,maximumLength:min(65_536,1_048_576-stream.body.count)) { [weak self] data,_,complete,error in
                 guard let self, self.warm === stream, self.preparing != nil else { return }
                 if let data { stream.body.append(data) }; stream.complete = complete
-                if error != nil { self.failPreparation() } else { self.validateWarm(stream) }
+                if error != nil { self.failPreparation(error:.network) } else { self.validateWarm(stream) }
             }
-        } catch { failPreparation() }
+        } catch StreamHeaderError.unsupported { failPreparation(error:.unsupported) }
+        catch StreamHeaderError.tooLarge { failPreparation(error:.limit) }
+        catch { failPreparation(error:.header) }
     }
     func producerDidEnd() { queue.async { self.producerEnded = true; self.finishDrainedStreams() } }
     private func finishDrainedStreams() {
@@ -428,3 +434,4 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
 }
+

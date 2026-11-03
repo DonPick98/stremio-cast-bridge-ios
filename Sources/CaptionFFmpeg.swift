@@ -78,11 +78,9 @@ import AVFAudio
         if !input.isFileURL{args += ["-rw_timeout","5000000","-tls_verify","1"]}
         args += ["-i",input.isFileURL ? input.path:input.absoluteString]
         for (track,file) in zip(tracks,files){args += ["-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-fs","1048577","-f","webvtt",file.path]}
-        let helper=VLCMediaPlayer(options:["--demux=rawaud"])
-        helper.media=VLCMedia(path:"/dev/zero")
-        try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        helper.play();defer{helper.stop()}
+        let audioOwner="caption-"+UUID().uuidString
+        CastAudioSession.shared.acquire(audioOwner)
+        defer{CastAudioSession.shared.release(audioOwner)}
         let process=try CaptionProcess(args);cleanupWithProcess=true
         defer{process.stop(afterRelease:{try? FileManager.default.removeItem(at:directory)})}
         let started=Date(),deadline=Date().addingTimeInterval(120)
@@ -167,3 +165,4 @@ import AVFAudio
         process = nil
     }
 }
+

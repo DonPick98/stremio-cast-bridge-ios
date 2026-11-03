@@ -41,7 +41,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var audioRepair: AudioRepairPipe?
     private var rewindInput:RewindableInputStream?
     private var proxy: LocalStreamProxy?
-    private var backgroundPlayer: VLCMediaPlayer?
+    private let audioOwner = "engine-" + UUID().uuidString
     private var observers: [NSObjectProtocol] = []
     private(set) var streamURL: URL?
     private(set) var captionURLs: [Int:URL] = [:]
@@ -55,11 +55,12 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var contentType = "video/mp4"
     private(set) var offset: Double = 0
     private(set) var running = false
+    private(set) var failed = false
     private var startedStream = false
     private var directRemux = false
     private var producerMonitor: Task<Void,Never>?
     private var producerDrain: Task<Void,Never>?
-    var onFailure: (() -> Void)?
+    var onFailure: ((Bool) -> Void)?
 
     static func inspect(_ url: URL) async throws -> RDPreparedMedia {
         let media = VLCMedia(url:url)
@@ -156,8 +157,9 @@ enum EmbeddedMediaError: LocalizedError {
                     guard let self, self.running else { return }
                     if repair.finished {
                         PlaybackDiagnostics.record(.producer,["phase":"finished","result":repair.failed ? "error" : "success"])
-                        if repair.failed { self.onFailure?() }
-                        self.producerEnded = true; channel.endWriting(); return
+                        self.producerEnded = true; channel.endWriting()
+                        if repair.failed { self.failProducer(allowVideoConversion:repair.exitCode != -32) }
+                        return
                     }
                     try? await Task.sleep(nanoseconds:50_000_000)
                 }
@@ -236,7 +238,7 @@ enum EmbeddedMediaError: LocalizedError {
                 if self.realState(player) == 6 { self.finishProducer(player); return }
                 if self.realState(player) == 7 {
                     PlaybackDiagnostics.record(.error,["phase":"vlc","code":"state7"])
-                    if self.streamURL == nil { self.proxy?.stop() } else { self.onFailure?() }
+                    if self.streamURL == nil { self.proxy?.stop() } else { self.failProducer(allowVideoConversion:true) }
                     return
                 }
                 try? await Task.sleep(nanoseconds:100_000_000)
@@ -269,7 +271,7 @@ enum EmbeddedMediaError: LocalizedError {
         producerDrain?.cancel(); producerDrain = nil
         let channel = outputChannel; outputChannel = nil
         channel?.stop()
-        backgroundPlayer?.stop(); backgroundPlayer = nil
+        CastAudioSession.shared.release(audioOwner)
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
         rewindInput?.close(); rewindInput = nil
@@ -298,7 +300,7 @@ enum EmbeddedMediaError: LocalizedError {
             guard let self, let origin, self.player === origin else { return }
             if state == .ended || self.realState(origin) == 6 { self.finishProducer(origin) }
             else if self.running && state == .error {
-                if self.streamURL == nil { self.proxy?.stop() } else { self.onFailure?() }
+                if self.streamURL == nil { self.proxy?.stop() } else { self.failProducer(allowVideoConversion:true) }
             }
         }
     }
@@ -310,6 +312,11 @@ enum EmbeddedMediaError: LocalizedError {
         // Pause is asynchronous and may still be queued under backpressure.
         // Always enqueue PLAYING, even if isPlaying has not changed yet.
         else { player.play() }
+    }
+    private func failProducer(allowVideoConversion:Bool) {
+        guard !failed else { return }
+        failed = true; running = false
+        onFailure?(allowVideoConversion)
     }
     private func finishProducer(_ origin:VLCMediaPlayer) {
         guard !producerEnded, player === origin else { return }
@@ -342,31 +349,11 @@ enum EmbeddedMediaError: LocalizedError {
         return function(pointer)
     }
     private func observeLifecycle() {
-        for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
-            observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
-                Task { @MainActor in self?.updateBackground() }
-            })
-        }
+        // CastAudioSession owns lifecycle and audio interruption observers.
     }
     private func updateBackground() {
         guard running else { return }
-        do {
-            // Same remote-playback mechanism used by the official VLC iOS app.
-            // Its lifetime is restricted to an active local Cast pipeline.
-            if AVAudioSession.sharedInstance().category != .playback || AVAudioSession.sharedInstance().mode != .moviePlayback {
-                try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
-            }
-            try? AVAudioSession.sharedInstance().setActive(true)
-            if backgroundPlayer == nil {
-                let helper = VLCMediaPlayer(options:["--demux=rawaud"])
-#if CAST_ENGINE_TESTING
-                let folder = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
-                NativeEngineValidation.log(helper,to:folder.appendingPathComponent("gateway-background-helper.log"))
-#endif
-                helper.media = VLCMedia(path:"/dev/zero"); backgroundPlayer = helper
-            }
-            if backgroundPlayer?.isPlaying != true { backgroundPlayer?.play() }
-        }
+        CastAudioSession.shared.acquire(audioOwner)
     }
     func refreshBackground() { updateBackground() }
 #if CAST_ENGINE_TESTING
@@ -375,7 +362,7 @@ enum EmbeddedMediaError: LocalizedError {
     var testingStopCompleted: Bool { testingVideoStopped && (testingStoppedRepair?.testingStopCompleted ?? true) }
     func testingDeliveredBytes() async -> Int { await proxy?.testingDeliveredBytes() ?? 0 }
     func testingPauseDrained() async -> Bool { await proxy?.testingPauseDrained() ?? false }
-    var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
+    var testingBackgroundHelperPlaying: Bool { CastAudioSession.shared.isPlaying }
     var testingProducerPlaying: Bool { player?.isPlaying == true }
     var testingProducerState: String { player.map { String($0.state.rawValue) } ?? "nil" }
 #endif
@@ -402,4 +389,5 @@ enum EmbeddedMediaError: LocalizedError {
         let ip = String(cString:buffer); guard CastWire.localIPv4(ip) else { throw EmbeddedMediaError.address }; return ip
     }
 }
+
 

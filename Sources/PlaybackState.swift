@@ -46,6 +46,48 @@ struct PlaybackIntent {
     mutating func reset() { pending = nil }
 }
 
+/// Recovery intent survives a disconnected Cast socket. Only an actual start
+/// consumes a retry; repeated callbacks for the same outage coalesce.
+struct PlaybackRecoveryState {
+    private(set) var pending = false
+    private(set) var attempts = 0
+    let limit = 2
+    mutating func request() -> Bool {
+        guard attempts < limit else { return false }
+        pending = true; return true
+    }
+    mutating func begin(connected:Bool, blocked:Bool) -> Bool {
+        guard pending, connected, !blocked, attempts < limit else { return false }
+        pending = false; attempts += 1; return true
+    }
+    mutating func reset() { pending = false; attempts = 0 }
+}
+
+/// Receiver state acknowledgements do not reset a stall unless its actual
+/// media clock advances. User pauses and new timelines explicitly reset it.
+struct PlaybackProgressMonitor {
+    private var lastPosition:Double?
+    private var lastProgress:Date?
+    private var healthySince:Date?
+    private(set) var stable = false
+    mutating func observe(position:Double, now:Date, expectedToAdvance:Bool) -> Bool {
+        guard expectedToAdvance, position.isFinite, position >= 0 else { reset(); return false }
+        guard let previous = lastPosition, let progress = lastProgress else {
+            lastPosition = position; lastProgress = now; healthySince = now; return false
+        }
+        if position < previous - 3 { reset(); return observe(position:position,now:now,expectedToAdvance:true) }
+        if position >= previous + 0.25 {
+            if now.timeIntervalSince(progress) > 5 { healthySince = now }
+            lastPosition = position; lastProgress = now
+            stable = now.timeIntervalSince(healthySince ?? now) >= 15
+            return false
+        }
+        if now.timeIntervalSince(progress) > 5 { healthySince = nil; stable = false }
+        return now.timeIntervalSince(progress) >= 20
+    }
+    mutating func reset() { lastPosition = nil; lastProgress = nil; healthySince = nil; stable = false }
+}
+
 /// Keep the requested original-media position until the receiver confirms it.
 /// An old status or a zero position during LOAD is not a seek confirmation.
 struct PlaybackTimeline {
@@ -68,3 +110,4 @@ struct PlaybackTimeline {
     }
     mutating func reset() { target = nil; queuedTarget = nil }
 }
+

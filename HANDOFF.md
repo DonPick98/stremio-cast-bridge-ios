@@ -1,8 +1,18 @@
+# Candidate 0.7.2 (19) — recovery work in progress
+
+Branch: `fix/playback-recovery-20261103`, baseline `b9a17b0` / 0.7.1 (18).
+
+Implemented for validation: queued bounded recovery across reconnects, failed-producer health, clock-based stall detection, restoration of the previous stream after candidate preparation fails, a shared background audio coordinator with interruption/route/reset handling, structured request/output/subtitle errors and battery/thermal snapshots. Regression cases cover disconnected recovery and a stationary receiver clock.
+
+Build/CI and native integration results must be appended after they actually run. No physical iPhone/Chromecast acceptance or battery improvement is claimed. The codec/cause of the user's vlc_3 overlay failure remains unknown; new diagnostics preserve more detail. Keep CB-005/010/011/014 open until their evidence and acceptance are complete.
+
+---
+
 # Stato corrente e registro condiviso — 2026-11-03
 
 Prima di riprendere il progetto, leggere [AGENTS.md](AGENTS.md) e il
 [registro canonico dei problemi, issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1).
-Il registro contiene 13 voci iniziali con evidenze, priorità, criteri di accettazione
+Il registro contiene 14 voci iniziali con evidenze, priorità, criteri di accettazione
 e istruzioni per aggiornarle durante ogni sessione. Il numero delle voci può crescere:
 consultare sempre la issue corrente.
 
@@ -131,3 +141,4 @@ Out-of-range or completed saved positions restart instead of clamping playback t
 The local ten-minute diagnostic report still excludes credentials, URLs, titles and subtitle content. New events include track codecs, catalogue/download stages and the requested delay. Numeric raw receiver position is recorded separately from the estimated position.
 
 Physical iPhone UI, long locked-screen playback and synchronization of privately sourced content remain user acceptance checks. The protocol test does not certify the exact private video or subtitle release. Keep the phone powered and on the receiver network for local serving/conversion. See THIRD_PARTY_NOTICES.md for pinned LGPL media dependencies and relinking information.
+

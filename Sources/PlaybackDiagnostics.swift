@@ -16,7 +16,7 @@ import Foundation
     private var entries:[Entry] = []
     private var flushTask:Task<Void,Never>?
     private var changes:[String:String] = [:]
-    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","raw","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build"]
+    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","raw","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build","domain","request","action","confirmed","battery","thermal","lowPower","power"]
 
     init(retention:TimeInterval = 600,limit:Int = 600,file:URL? = nil,clock:@escaping () -> Date = Date.init) {
         self.retention = retention; self.limit = limit; self.file = file; self.clock = clock
@@ -75,5 +75,12 @@ import Foundation
     static let shared = DiagnosticRecorder(file:FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask).first?.appendingPathComponent("CastBridge/playback-diagnostics.json"))
     static func record(_ event:DiagnosticRecorder.Event,_ fields:[String:String] = [:]) { shared.record(event,fields) }
     static func number(_ value:Double) -> String { value.isFinite ? String(format:"%.3f",locale:Locale(identifier:"en_US_POSIX"),value) : "unknown" }
+    static func errorFields(_ error:Error,phase:String) -> [String:String] {
+        let error = error as NSError
+        // Never log localizedDescription, userInfo or arbitrary vendor domains.
+        let known = ["NSURLErrorDomain","NSOSStatusErrorDomain","AVFoundationErrorDomain","NSCocoaErrorDomain","com.google.cast.GCKError"]
+        return ["phase":phase,"domain":known.contains(error.domain) ? error.domain:"other","code":String(error.code)]
+    }
 }
+
 

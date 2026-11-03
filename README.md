@@ -1,4 +1,6 @@
-# Cast Bridge iOS 0.6.4
+# Cast Bridge iOS 0.7.2 (19) — recovery candidate
+
+Candidate on `fix/playback-recovery-20261103`, based on 0.7.1 (18). See [issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1) and [HANDOFF.md](HANDOFF.md) for verification status. Physical background/subtitle/battery acceptance is pending.
 
 iOS sender for Stremio video sources and Google Cast receivers. The app reads media tracks with MobileVLCKit and chooses direct playback, remuxing or local conversion automatically.
 
@@ -39,3 +41,4 @@ Production builds must leave CAST_ENGINE_VALIDATION empty. CAST_ENGINE_TESTING e
 The separate validation workflow covers 31 synthetic codec combinations through the actual playback gateway, five gateway cases, ten resolution/cadence/seek cases and 65 seconds of continuous network transfer in background with pause/resume and cancellation. Two post-seek tests select the second SRT/ASS track and alternate audio, then check actual caption pixels at absent/present/absent times on a black picture; successful video decoding alone is insufficient. The copied 1080p test compares every decoded frame with its source. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
 
 See [HANDOFF.md](HANDOFF.md) for technical validation status, [BUILD-WINDOWS.md](BUILD-WINDOWS.md) for build steps and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licenses and upstream sources.
+

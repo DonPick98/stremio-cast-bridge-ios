@@ -28,6 +28,38 @@ import Foundation
         intent.request(false); precondition(!intent.accepts(true))
         precondition(intent.accepts(false))
 
+        // The reported outage: failure while disconnected, repeated failure
+        // callbacks, then reconnect. Only the real restart consumes a retry.
+        var recovery=PlaybackRecoveryState()
+        precondition(recovery.request())
+        precondition(!recovery.begin(connected:false,blocked:false))
+        precondition(recovery.request() && recovery.attempts == 0)
+        precondition(!recovery.begin(connected:true,blocked:true))
+        precondition(recovery.begin(connected:true,blocked:false))
+        precondition(!recovery.pending && recovery.attempts == 1)
+        precondition(!recovery.begin(connected:true,blocked:false))
+        precondition(recovery.request() && recovery.begin(connected:true,blocked:false))
+        precondition(!recovery.request(),"A persistent failure must not loop forever")
+        recovery.reset();precondition(recovery.request())
+
+        // Transient PLAYING/BUFFERING acknowledgements without an advancing
+        // receiver clock cannot conceal the second stall from the user log.
+        var progress=PlaybackProgressMonitor()
+        let start=Date(timeIntervalSince1970:1000)
+        precondition(!progress.observe(position:2013.665,now:start,expectedToAdvance:true))
+        for second in 1..<20 {
+            precondition(!progress.observe(position:2013.665,now:start.addingTimeInterval(Double(second)),expectedToAdvance:true))
+        }
+        precondition(progress.observe(position:2013.665,now:start.addingTimeInterval(20),expectedToAdvance:true))
+        precondition(!progress.observe(position:2013.665,now:start.addingTimeInterval(21),expectedToAdvance:false),"An intentional pause is not a stall")
+        progress.reset()
+        for second in 0...16 {
+            precondition(!progress.observe(position:Double(second),now:start.addingTimeInterval(Double(second)),expectedToAdvance:true))
+        }
+        precondition(progress.stable,"Retry budget resets only after sustained real progress")
+        precondition(!progress.observe(position:2,now:start.addingTimeInterval(17),expectedToAdvance:true),"A new backwards timeline restarts monitoring")
+        precondition(!progress.stable)
+
         var timeline = PlaybackTimeline()
         timeline.begin(at:600)
         precondition(!timeline.observe(0,ready:false))
@@ -71,3 +103,4 @@ import Foundation
         print("Playback generation, seek confirmation and original frame-rate regressions passed")
     }
 }
+

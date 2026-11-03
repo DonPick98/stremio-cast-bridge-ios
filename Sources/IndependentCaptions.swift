@@ -48,7 +48,7 @@ enum ReceiverConfiguration {
     private var fontURLs:[URL]=[],fontSource=""
     private var visibleRevision=0
     private var fallbackVTT=false
-    private var helper:VLCMediaPlayer?
+    private let audioOwner="independent-caption-"+UUID().uuidString
     private var pendingRefresh=false
     private var lastRestart=Date.distantPast
     private var failedUntil=Date.distantPast
@@ -199,11 +199,10 @@ enum ReceiverConfiguration {
     }
     func retry(){failedUntil = .distantPast;work?.cancel();work=nil;extractor.stop();catalogTask?.cancel();catalogTask=nil;choice=UUID();prepare(at:position)}
     private func keepAlive(_ active:Bool){
-        if !active{helper?.stop();helper=nil;return}
-        guard helper==nil else{return}
-        try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback);try? AVAudioSession.sharedInstance().setActive(true)
-        let player=VLCMediaPlayer(options:["--demux=rawaud"]);player.media=VLCMedia(path:"/dev/zero");helper=player;player.play()
+        if active{CastAudioSession.shared.acquire(audioOwner)}
+        else{CastAudioSession.shared.release(audioOwner)}
     }
     func clearSource(){choice=UUID();work?.cancel();work=nil;extractor.stop();catalogTask?.cancel();catalogTask=nil;source="";key="";chosen="none";snapshot=nil;snapshotURL=nil;fontURLs=[];fontSource="";visibleRevision=0;gateway?.clearAssets();publishState();keepAlive(false)}
     func stop(){clearSource();helloTask?.cancel();serverTask?.cancel();session?.remove(channel);session=nil;gateway?.stop();gateway=nil;stateURL=nil;epoch=""}
 }
+

@@ -16,6 +16,7 @@ import Darwin
     private(set) var url: URL?
     private(set) var failed = false
     private(set) var finished = false
+    private(set) var exitCode:Int64?
 #if CAST_ENGINE_TESTING
     private(set) var testingStopCompleted = true
     var testingOutput: URL?
@@ -95,8 +96,9 @@ import Darwin
                 guard let self, let h = self.handle else { return }
                 let state = ffmpeg_kit_session_get_state(h)
                 if state == 2 || state == 3 {
+                    self.exitCode = ffmpeg_kit_session_get_return_code(h)
+                    self.failed = state == 3 || self.exitCode != 0
                     self.finished = true
-                    self.failed = state == 3 || ffmpeg_kit_session_get_return_code(h) != 0
                     PlaybackDiagnostics.record(.producer,["phase":"ffmpeg_exit","status":String(state),"code":String(ffmpeg_kit_session_get_return_code(h))])
 #if CAST_ENGINE_TESTING
                     self.record(h)
@@ -146,4 +148,5 @@ import Darwin
         handle = nil; url = nil
     }
 }
+
 

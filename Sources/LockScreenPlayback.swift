@@ -4,13 +4,83 @@ import UIKit
 import AVFAudio
 import MobileVLCKit
 
+/// One audio session/helper for all local producers and caption workers.
+/// Owners are reference-counted by identity so a replaced engine cannot stop
+/// the background support already acquired by its successor.
+@MainActor final class CastAudioSession {
+    static let shared = CastAudioSession()
+    private var owners = Set<String>()
+    private var helper:VLCMediaPlayer?
+    private var interrupted = false
+    private var observers:[NSObjectProtocol] = []
+    var isPlaying:Bool { helper?.isPlaying == true }
+    private init() {
+        let center = NotificationCenter.default
+        for name in [UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
+            observers.append(center.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
+                Task { @MainActor in self?.activate(cause:"lifecycle") }
+            })
+        }
+        observers.append(center.addObserver(forName:AVAudioSession.interruptionNotification,object:nil,queue:.main) { [weak self] note in
+            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue ?? 0
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
+            Task { @MainActor in
+                guard let self else { return }
+                self.interrupted = type == AVAudioSession.InterruptionType.began.rawValue
+                PlaybackDiagnostics.record(.app,["phase":"audio_interruption","code":String(type),"status":String(options),"tracks":String(self.owners.count)])
+                if !self.interrupted { self.activate(cause:"interruption_end") }
+            }
+        })
+        for name in [AVAudioSession.routeChangeNotification,AVAudioSession.mediaServicesWereResetNotification] {
+            observers.append(center.addObserver(forName:name,object:nil,queue:.main) { [weak self] note in
+                let reset = note.name == AVAudioSession.mediaServicesWereResetNotification
+                let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue ?? 0
+                Task { @MainActor in
+                    guard let self else { return }
+                    PlaybackDiagnostics.record(.app,["phase":reset ? "audio_reset":"audio_route","code":String(reason)])
+                    if reset { self.helper?.stop(); self.helper = nil; self.interrupted = false }
+                    self.activate(cause:reset ? "reset":"route")
+                }
+            })
+        }
+    }
+    func acquire(_ owner:String) {
+        let inserted = owners.insert(owner).inserted
+        if inserted || !isPlaying { activate(cause:"acquire") }
+    }
+    func release(_ owner:String) {
+        guard owners.remove(owner) != nil, owners.isEmpty else { return }
+        helper?.stop(); helper = nil
+        do { try AVAudioSession.sharedInstance().setActive(false,options:.notifyOthersOnDeactivation) }
+        catch { PlaybackDiagnostics.record(.error,PlaybackDiagnostics.errorFields(error,phase:"audio_deactivate")) }
+        PlaybackDiagnostics.record(.app,["phase":"audio_idle"])
+    }
+    private func activate(cause:String) {
+        guard !owners.isEmpty, !interrupted else { return }
+        let session = AVAudioSession.sharedInstance()
+        do {
+            // The audible output is on the TV. Other iPhone apps may play
+            // audio without intentionally interrupting this local Cast service.
+            if session.category != .playback || session.mode != .moviePlayback || !session.categoryOptions.contains(.mixWithOthers) {
+                try session.setCategory(.playback,mode:.moviePlayback,options:[.mixWithOthers])
+            }
+            try session.setActive(true)
+            if helper == nil {
+                let player = VLCMediaPlayer(options:["--demux=rawaud"])
+                player.media = VLCMedia(path:"/dev/zero"); helper = player
+            }
+            if !isPlaying { helper?.play() }
+            PlaybackDiagnostics.shared.changed("audio_session",event:.app,["phase":"audio_active","kind":cause,"tracks":String(owners.count)])
+        } catch { PlaybackDiagnostics.record(.error,PlaybackDiagnostics.errorFields(error,phase:"audio_activate")) }
+    }
+}
+
 /// The system media card provides the draggable Lock Screen/Control Center
 /// scrubber. It is the only playback surface on the Lock Screen.
 @MainActor final class LockScreenPlayback {
     var handler: ((String) async -> Bool)?
     private(set) var active = false
     private var local = false
-    private var helper: VLCMediaPlayer?
     private var observers: [NSObjectProtocol] = []
     private var targets: [(MPRemoteCommand,Any)] = []
     private var seekTask: Task<Void,Never>?
@@ -77,18 +147,16 @@ import MobileVLCKit
         MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled = duration.isFinite && duration > 0
         updateBackground()
     }
-    func clear() {
+    func clear(reason:String = "clear") {
+        PlaybackDiagnostics.record(.app,["phase":"now_playing_clear","kind":reason])
         active = false; seekTask?.cancel(); seekTask = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         for (command,_) in targets { command.isEnabled = false }
-        helper?.stop(); helper = nil
+        CastAudioSession.shared.release("now_playing")
     }
     private func updateBackground() {
-        guard active, !local else { helper?.stop(); helper = nil; return }
-        if helper?.isPlaying == true { return }
-        try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        if helper == nil { let player = VLCMediaPlayer(options:["--demux=rawaud"]); player.media = VLCMedia(path:"/dev/zero"); helper = player }
-        if helper?.isPlaying != true { helper?.play() }
+        guard active, !local else { CastAudioSession.shared.release("now_playing"); return }
+        CastAudioSession.shared.acquire("now_playing")
     }
 }
+

@@ -1,5 +1,16 @@
 import Foundation
 
+enum SubtitleFetchError:LocalizedError {
+    case http(Int),format,limit
+    var errorDescription:String? {
+        switch self {
+        case .http(let status):return "La sorgente sottotitoli ha risposto con HTTP \(status). Prova un’altra versione o riprova più tardi."
+        case .format:return "Il file ricevuto non contiene sottotitoli SRT, ASS o WebVTT leggibili."
+        case .limit:return "Il file sottotitoli supera il limite supportato di 1 MiB."
+        }
+    }
+}
+
 enum WebVTTTimeline {
     static func rebased(_ text:String, offset:Double, delay:Double = 0) throws -> Data {
         let source = text.hasPrefix("\u{feff}") ? String(text.dropFirst()) : text
@@ -54,10 +65,12 @@ enum WebVTTTimeline {
         let session = URLSession(configuration:config,delegate:CaptionRedirectGuard(),delegateQueue:nil)
         defer { session.invalidateAndCancel() }
         let (bytes,response) = try await session.bytes(from:url)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw StreamHeaderError.network }
+        guard let http=response as? HTTPURLResponse else { throw StreamHeaderError.network }
+        guard http.statusCode == 200 else { throw SubtitleFetchError.http(http.statusCode) }
         var data = Data()
-        for try await byte in bytes { guard data.count < 1_048_576 else { throw StreamHeaderError.tooLarge }; data.append(byte) }
-        return try SubtitleDocument.normalize(data)
+        for try await byte in bytes { guard data.count < 1_048_576 else { throw SubtitleFetchError.limit }; data.append(byte) }
+        do { return try SubtitleDocument.normalize(data) }
+        catch { throw SubtitleFetchError.format }
     }
 }
 private final class CaptionRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -66,4 +79,5 @@ private final class CaptionRedirectGuard: NSObject, URLSessionTaskDelegate, @unc
         completionHandler(request)
     }
 }
+
 

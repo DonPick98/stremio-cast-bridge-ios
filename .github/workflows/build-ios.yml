@@ -2,7 +2,7 @@ name: Build unsigned iOS app
 
 on:
   push:
-    branches: [main, native/embedded-media-engine]
+    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103]
   workflow_dispatch:
     inputs:
       receiver_app_id:
@@ -40,6 +40,8 @@ jobs:
 
       - name: Test resolver without personal credentials
         run: |
+          swiftc -parse-as-library Sources/PlaybackDiagnostics.swift Tests/PlaybackDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostics-tests"
+          "$RUNNER_TEMP/diagnostics-tests"
           swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"
           "$RUNNER_TEMP/subtitle-catalog-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-regressions"
@@ -54,9 +56,9 @@ jobs:
           "$RUNNER_TEMP/control-tests"
           swiftc -parse-as-library Sources/RDStreamProbe.swift Tests/StreamProbeTests.swift -o "$RUNNER_TEMP/stream-probe-tests"
           "$RUNNER_TEMP/stream-probe-tests"
-          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/PlaybackDiagnostics.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
           "$RUNNER_TEMP/local-stream-tests"
-          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/PlaybackDiagnostics.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
           "$RUNNER_TEMP/output-channel-tests"
           swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
           "$RUNNER_TEMP/caption-timeline-tests"
@@ -119,3 +121,4 @@ jobs:
           path: Receiver/dist/
           if-no-files-found: error
           retention-days: 7
+

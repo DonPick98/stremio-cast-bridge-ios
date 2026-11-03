@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active { controller.refreshConnection() }
-                    else { controller.savePlaybackPosition() }
+                    else { controller.savePlaybackPosition(phase:phase == .inactive ? "inactive":"background") }
                 }
         }
     }
@@ -42,4 +42,5 @@ struct CastButton: UIViewRepresentable {
     }
     func updateUIView(_ uiView: GCKUICastButton, context: Context) {}
 }
+
 

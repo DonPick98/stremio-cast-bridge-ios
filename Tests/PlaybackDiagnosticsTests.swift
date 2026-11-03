@@ -8,6 +8,14 @@ import Foundation
         let clean = log.report()
         precondition(!clean.contains("secret.example") && !clean.contains("url="))
         precondition(clean.contains("phase=start"))
+        let privateError=NSError(domain:"private-provider-token",code:34,userInfo:[NSLocalizedDescriptionKey:"https://secret.example/token"])
+        let fields=PlaybackDiagnostics.errorFields(privateError,phase:"audio_activate")
+        precondition(fields["domain"]=="other" && fields["code"]=="34")
+        precondition(!fields.values.contains(where:{$0.contains("secret") || $0.contains("token")}))
+        let structured=DiagnosticRecorder(clock:{now})
+        structured.record(.command,["phase":"cast_abort","request":"12","action":"pause","generation":"ABC123","code":"1"])
+        structured.record(.snapshot,["phase":"energy","battery":"72.5","thermal":"0","power":"1","lowPower":"false"])
+        precondition(structured.report().contains("request=12") && structured.report().contains("battery=72.5"))
         log.changed("cast",event:.cast,["status":"playing"])
         log.changed("cast",event:.cast,["status":"playing"])
         precondition(log.report().components(separatedBy:"status=playing").count == 2)
@@ -25,3 +33,4 @@ import Foundation
         print("Diagnostics: redaction, deduplication, bounded history, expiry and restoration passed")
     }
 }
+
