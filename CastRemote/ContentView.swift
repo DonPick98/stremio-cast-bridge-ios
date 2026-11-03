@@ -206,7 +206,7 @@ struct ContentView: View {
         Button { cast.load(preservePosition:cast.hasLoaded) } label: {
             HStack(spacing:9) { Image(systemName:"play.rectangle"); Text(cast.loading ? "Attendo la TV…" : "Riproduci sulla TV") }.font(.subheadline.weight(.semibold)).frame(maxWidth:.infinity).padding(.vertical,17)
         }.buttonStyle(.plain).foregroundStyle(CastPalette.background).background(Color.white,in:RoundedRectangle(cornerRadius:18))
-            .opacity(!cast.connected || cast.busy || cast.loading ? 0.45 : 1).disabled(!cast.connected || cast.busy || cast.loading || cast.selectedAudio.isEmpty)
+            .opacity(!cast.connected || cast.busy || cast.loading ? 0.45 : 1).disabled(!cast.connected || cast.busy || cast.loading || cast.episodeBusy || cast.selectedAudio.isEmpty)
     }
     private func quickTrackLabel(_ title:String,selection:String,icon:String) -> some View {
         VStack(alignment:.leading,spacing:7) {

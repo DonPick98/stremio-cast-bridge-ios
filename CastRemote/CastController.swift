@@ -54,6 +54,13 @@ import AVFAudio
         episodeRequest=UUID();let token=episodeRequest
         episodeBusy=true;episodeIssue=nil;fallbackEpisode=nil
         work=Task { [weak self] in
+            let owner="episode-prepare-"+UUID().uuidString
+            CastAudioSession.shared.acquire(owner)
+            let background=UIApplication.shared.beginBackgroundTask(withName:"Choose next episode")
+            defer {
+                CastAudioSession.shared.release(owner)
+                if background != .invalid {UIApplication.shared.endBackgroundTask(background)}
+            }
             do {
                 let found=try await BridgeClient.shared.sources(next,manifest:config.manifest)
                 try Task.checkCancellation()
@@ -614,7 +621,14 @@ import AVFAudio
         let sourceToken = sourceRequests.generation
         PlaybackDiagnostics.record(.source,["phase":"choose","generation":String(sourceToken.uuidString.prefix(8)),"position":PlaybackDiagnostics.number(lastGoodPosition)])
         busy = true; message = "Leggo audio e sottotitoli del file…"
+        let owner="source-prepare-"+UUID().uuidString
+        CastAudioSession.shared.acquire(owner)
         work = Task {
+            let background=UIApplication.shared.beginBackgroundTask(withName:"Prepare episode source")
+            defer {
+                CastAudioSession.shared.release(owner)
+                if background != .invalid {UIApplication.shared.endBackgroundTask(background)}
+            }
             do {
                 guard let key = configuration?.realDebridKey, !key.isEmpty else { throw BridgeError.cannotResolve }
                 let resolver = RDNativeResolver(apiKey:key, session:URLSession(configuration:.ephemeral))
@@ -712,6 +726,7 @@ import AVFAudio
         }
     }
     func load(preservePosition: Bool = false) {
+        guard !episodeBusy else{return}
         wantsPlayback = true
         transportRetries = 0; recovery.reset()
         startPlayback(requestedPosition:nil,autoplay:playWhenReady)
