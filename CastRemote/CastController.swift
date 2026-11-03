@@ -216,7 +216,7 @@ import AVFAudio
     }
     func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager: GCKSessionManager, didResumeSession session: GCKSession) { refreshConnection() }
-    func sessionManager(_ manager:GCKSessionManager,didSuspend session:GCKSession,withReason reason:GCKConnectionSuspendReason) {
+    func sessionManager(_ manager:GCKSessionManager,didSuspend session:GCKSession,with reason:GCKConnectionSuspendReason) {
         PlaybackDiagnostics.record(.cast,["phase":"suspend","code":String(reason.rawValue)])
         guard wantsPlayback else { return }
         connected = false; message = "Ricollego i controlli alla TV…"

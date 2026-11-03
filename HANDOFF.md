@@ -2,7 +2,7 @@
 
 Branch: `fix/playback-recovery-20261103`, baseline `b9a17b0` / 0.7.1 (18).
 
-Implemented for validation: queued bounded recovery across reconnects, failed-producer health, clock-based stall detection, restoration of the previous stream after candidate preparation fails, a shared background audio coordinator with interruption/route/reset handling, structured request/output/subtitle errors and battery/thermal snapshots. Regression cases cover disconnected recovery and a stationary receiver clock.
+Implemented for validation: queued bounded recovery across reconnects, failed-producer health, clock-based stall detection, restoration of the previous stream after candidate preparation fails, a shared background audio coordinator with interruption/route/reset handling, structured request/output/subtitle errors and battery/thermal snapshots. Regression cases cover disconnected recovery, a stationary receiver clock and failed-seek rollback. The previously misnamed Cast suspension callback now implements the exact imported SDK signature; native validation checks its Objective-C selector at runtime.
 
 Build/CI and native integration results must be appended after they actually run. No physical iPhone/Chromecast acceptance or battery improvement is claimed. The codec/cause of the user's vlc_3 overlay failure remains unknown; new diagnostics preserve more detail. Keep CB-005/010/011/014 open until their evidence and acceptance are complete.
 
@@ -12,7 +12,7 @@ Build/CI and native integration results must be appended after they actually run
 
 Prima di riprendere il progetto, leggere [AGENTS.md](AGENTS.md) e il
 [registro canonico dei problemi, issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1).
-Il registro contiene 14 voci iniziali con evidenze, priorità, criteri di accettazione
+Il registro contiene i problemi CB-001–CB-016 e il backlog Features FT-001–FT-003 con evidenze, priorità, criteri di accettazione
 e istruzioni per aggiornarle durante ogni sessione. Il numero delle voci può crescere:
 consultare sempre la issue corrente.
 

@@ -3,6 +3,7 @@ import Foundation
 import MobileVLCKit
 import UIKit
 import MediaPlayer
+import GoogleCast
 
 /// Exercises the actual iOS binary on synthetic fixtures in CI, without accounts or Cast devices.
 @MainActor enum NativeEngineValidation {
@@ -19,6 +20,8 @@ import MediaPlayer
         let input = documents.appendingPathComponent("h264-ac3.mkv")
         let output = documents.appendingPathComponent("converted.mp4")
         var result: [String:Any] = ["passed":false]
+        let suspensionDelegate=CastController.instancesRespond(to:#selector(GCKSessionManagerListener.sessionManager(_:didSuspend:with:)))
+        result["castSuspendDelegate"]=suspensionDelegate
         let controls = LockScreenPlayback()
         controls.update(title:"Playback validation",device:"Synthetic receiver",position:42,duration:240,playing:true,loading:false,local:true)
         let metadata = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
@@ -64,7 +67,7 @@ import MediaPlayer
             }
             result["tracks"] = tracks
             result["bytes"] = (try FileManager.default.attributesOfItem(atPath:output.path)[.size] as? NSNumber)?.intValue ?? 0
-            result["passed"] = mediaControls && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
+            result["passed"] = suspensionDelegate && mediaControls && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
             let inspected = try await EmbeddedMediaEngine.inspect(input)
             result["inputAudio"] = inspected.audioCodecsDescription
             result["inputVideoConversion"] = inspected.requiresVideoConversion
@@ -253,4 +256,5 @@ final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Se
     }
 }
 #endif
+
 
