@@ -197,6 +197,21 @@ import AVFAudio
         recordEnergySnapshot(); PlaybackDiagnostics.shared.flush()
     }
     private func recordEnergySnapshot() {
+        if let prepared {
+            let video=prepared.video
+            let audio=prepared.audio.first(where:{$0.key==selectedAudio})
+            let subtitle=prepared.subtitles.first(where:{$0.key==selectedSubtitle})
+            var format:[String:String]=["phase":"context","codec":video?.codec ?? "unknown",
+                "audio":audio?.codec ?? "unknown","channels":String(audio?.channels ?? 0),
+                "subtitle":subtitle?.codec ?? selectedSubtitle,"mode":nativeEngine.map{String(describing:$0.diagnosticMode)} ?? "direct",
+                "local":String(localProcessing),"generation":String(streamRequests.generation.uuidString.prefix(8)),
+                "session":String(client?.mediaStatus?.mediaSessionID ?? 0),"previousSession":String(loadedMediaSessionID ?? 0)]
+            if let video {
+                format["width"]=String(video.width);format["height"]=String(video.height)
+                format["fps"]=PlaybackDiagnostics.number(video.frameRate)
+            }
+            PlaybackDiagnostics.record(.metadata,format)
+        }
         let device=UIDevice.current
         PlaybackDiagnostics.record(.snapshot,["phase":"energy","battery":device.batteryLevel < 0 ? "unknown":PlaybackDiagnostics.number(Double(device.batteryLevel)*100),"power":String(device.batteryState.rawValue),"thermal":String(ProcessInfo.processInfo.thermalState.rawValue),"lowPower":String(ProcessInfo.processInfo.isLowPowerModeEnabled),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
         guard let engine=nativeEngine else { return }
@@ -207,7 +222,7 @@ import AVFAudio
             if let old=self.transferCheckpoint,old.engine==identity {
                 let seconds=now.timeIntervalSince(old.time)
                 if seconds>0 {
-                    PlaybackDiagnostics.record(.producer,["phase":"transfer","bytes":String(metrics.bytes),"seconds":PlaybackDiagnostics.number(seconds),"rate":PlaybackDiagnostics.number(Double(max(0,metrics.bytes-old.metrics.bytes))*8/seconds),"upstreamWait":PlaybackDiagnostics.number(max(0,metrics.upstreamWait-old.metrics.upstreamWait)),"downstreamWait":PlaybackDiagnostics.number(max(0,metrics.downstreamWait-old.metrics.downstreamWait)),"paused":String(!self.playWhenReady)])
+                    PlaybackDiagnostics.record(.producer,["phase":"transfer","bytes":String(metrics.bytes),"seconds":PlaybackDiagnostics.number(seconds),"rate":PlaybackDiagnostics.number(Double(max(0,metrics.bytes-old.metrics.bytes))*8/seconds),"upstreamWait":PlaybackDiagnostics.number(max(0,metrics.upstreamWait-old.metrics.upstreamWait)),"downstreamWait":PlaybackDiagnostics.number(max(0,metrics.downstreamWait-old.metrics.downstreamWait)),"paused":String(!self.playWhenReady),"mode":String(describing:engine.diagnosticMode),"generation":String(self.streamRequests.generation.uuidString.prefix(8))])
                 }
             }
             self.transferCheckpoint=(identity,now,metrics)
@@ -267,7 +282,7 @@ import AVFAudio
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         deviceMuted = session.currentDeviceMuted
         if let status = client.mediaStatus {
-            PlaybackDiagnostics.shared.changed("receiver",event:.cast,["status":String(status.playerState.rawValue),"idle":String(status.idleReason.rawValue),"owned":String(ownsCurrentMedia),"pending":String(loadPending),"local":String(localProcessing)])
+            PlaybackDiagnostics.shared.changed("receiver",event:.cast,["status":String(status.playerState.rawValue),"idle":String(status.idleReason.rawValue),"owned":String(ownsCurrentMedia),"pending":String(loadPending),"local":String(localProcessing),"session":String(status.mediaSessionID),"previousSession":String(loadedMediaSessionID ?? 0)])
             if Date().timeIntervalSince(lastDiagnosticSnapshot) >= 15 {
                 lastDiagnosticSnapshot = Date()
                 PlaybackDiagnostics.record(.snapshot,["position":PlaybackDiagnostics.number(position),"reported":PlaybackDiagnostics.number(client.approximateStreamPosition()+streamOffset),"raw":PlaybackDiagnostics.number(status.streamPosition+streamOffset),"confirmed":PlaybackDiagnostics.number(lastConfirmedPosition ?? -1),"offset":PlaybackDiagnostics.number(streamOffset),"duration":PlaybackDiagnostics.number(duration),"target":PlaybackDiagnostics.number(timeline.target ?? -1)])

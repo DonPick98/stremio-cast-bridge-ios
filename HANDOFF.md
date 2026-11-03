@@ -1,3 +1,15 @@
+# Build 20 — contesto diagnostico periodico (in verifica)
+
+Follow-up su CB-012/018/019: contesto formato/modalità/generazione/sessione ogni 15 s
+anche dopo la scadenza di prepare; modalità/generazione associate ai campioni transfer;
+ID sessione corrente/precedente negli eventi di stato. Retention resta 120 s.
+Test aggiunto: contesto di un guasto tardivo dopo scadenza della preparazione,
+con numeri di sessione/canali mantenuti e URL esclusi. Build iPhone/CI da verificare.
+Non dimostra ancora la causa dei micro-buffering o un risparmio energetico.
+Il checkpoint build19 sottostante conserva le prove precedenti e la relativa IPA.
+
+---
+
 # Candidata 0.7.2 (19) — recupero, seek PGS e diagnostica
 
 Branch: `fix/playback-recovery-20261103`; sorgente candidata `cafbaa979c42024137b4e141828ffde733721def`.

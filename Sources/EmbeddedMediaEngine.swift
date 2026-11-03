@@ -58,6 +58,7 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var running = false
     private(set) var failed = false
     private(set) var usesBitmapOverlay = false
+    private(set) var diagnosticMode = VideoMode.copy
     private var startedStream = false
     private var directRemux = false
     private var producerMonitor: Task<Void,Never>?
@@ -130,6 +131,7 @@ enum EmbeddedMediaError: LocalizedError {
     }
     func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
+        diagnosticMode = videoMode
         offset = start.isFinite ? max(0,start) : 0
         PlaybackDiagnostics.record(.producer,["phase":"start","mode":String(describing:videoMode),"offset":PlaybackDiagnostics.number(offset),"burn":String(subtitleID != nil),"copyAudio":String(copyAudio)])
         let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
