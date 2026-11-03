@@ -11,6 +11,7 @@ struct ContentView: View {
     @EnvironmentObject private var cast: CastController
     @State private var showTrackOptions = false
     @State private var showSubtitleAppearance = false
+    @State private var showOnlineSubtitles = false
     @State private var diagnosticsCopied = false
     var body: some View {
         NavigationStack {
@@ -48,6 +49,10 @@ struct ContentView: View {
             .sheet(isPresented:$cast.showSetup) { AddonSetupView().environmentObject(cast) }
             .sheet(isPresented:$showTrackOptions) { TrackOptionsView().environmentObject(cast) }
             .sheet(isPresented:$showSubtitleAppearance) { SubtitleAppearanceView().environmentObject(cast) }
+            .sheet(isPresented:$showOnlineSubtitles) { SubtitleBrowserView().environmentObject(cast) }
+            .onChange(of:cast.sourceRevision) { _ in
+                showTrackOptions = false; showSubtitleAppearance = false; showOnlineSubtitles = false
+            }
             .alert("Diagnostica copiata",isPresented:$diagnosticsCopied) {
                 Button("OK",role:.cancel) { }
             } message: {
@@ -147,7 +152,25 @@ struct ContentView: View {
     }
     private func optionsCard(_ media: RDPreparedMedia) -> some View {
         VStack(spacing:0) {
-            Button { showTrackOptions = true } label: { optionRow(icon:"waveform",title:"Audio e sottotitoli",detail:audioSummary(media) + " · " + subtitleSummary(media)) }.buttonStyle(.plain)
+            HStack(spacing:16) {
+                Menu {
+                    Picker("Audio",selection:Binding(get:{cast.selectedAudio},set:{cast.selectAudio($0)})) {
+                        ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) }
+                    }
+                } label: { quickTrackLabel("Audio",selection:audioSummary(media),icon:"waveform") }
+                Divider().frame(height:40)
+                Menu {
+                    Picker("Sottotitoli",selection:Binding(get:{cast.selectedSubtitle},set:{cast.selectSubtitle($0)})) {
+                        Text("Disattivati").tag("none")
+                        if cast.externalSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · esterni").tag("external") }
+                        if cast.hasExtractedCaption { Text(cast.embeddedSubtitleLabel).tag("embedded") }
+                        ForEach(media.subtitles) { Text(trackLabel($0,in:media.subtitles) + " · nel file").tag($0.key) }
+                    }
+                    Button { showOnlineSubtitles = true } label: { Label("Stremio e OpenSubtitles",systemImage:"magnifyingglass") }
+                    Button { showTrackOptions = true } label: { Label("Sincronizza sottotitoli",systemImage:"clock") }
+                } label: { quickTrackLabel("Sottotitoli",selection:subtitleSummary(media),icon:"captions.bubble") }
+            }.padding(.vertical,18).id(cast.sourceRevision)
+            Button { showTrackOptions = true } label: { optionRow(icon:"slider.horizontal.3",title:"Opzioni tracce",detail:"Sincronizzazione e dettagli") }.buttonStyle(.plain)
             Divider().padding(.leading,38)
             Button { showSubtitleAppearance = true } label: { optionRow(icon:"textformat.size",title:"Aspetto sottotitoli",detail:"Anteprima e preferenze") }.buttonStyle(.plain)
             Divider()
@@ -162,6 +185,17 @@ struct ContentView: View {
             HStack(spacing:9) { Image(systemName:"play.rectangle"); Text(cast.loading ? "Attendo la TV…" : "Riproduci sulla TV") }.font(.subheadline.weight(.semibold)).frame(maxWidth:.infinity).padding(.vertical,17)
         }.buttonStyle(.plain).foregroundStyle(CastPalette.background).background(Color.white,in:RoundedRectangle(cornerRadius:18))
             .opacity(!cast.connected || cast.busy || cast.loading ? 0.45 : 1).disabled(!cast.connected || cast.busy || cast.loading || cast.selectedAudio.isEmpty)
+    }
+    private func quickTrackLabel(_ title:String,selection:String,icon:String) -> some View {
+        VStack(alignment:.leading,spacing:7) {
+            Label(title,systemImage:icon).font(.subheadline.weight(.medium))
+            HStack(spacing:4) {
+                Text(selection).lineLimit(2).multilineTextAlignment(.leading)
+                Spacer(minLength:0)
+                Image(systemName:"chevron.down").font(.caption2)
+            }.font(.caption).foregroundStyle(CastPalette.accent)
+        }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())
+            .accessibilityElement(children:.combine)
     }
     private var emptyState: some View {
         VStack(spacing:16) {
@@ -209,7 +243,7 @@ private struct TrackOptionsView: View {
             Form {
                 if let media = cast.prepared {
                     Section {
-                        Picker("Audio",selection:$cast.selectedAudio) { ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) } }.disabled(cast.loading).onChange(of:cast.selectedAudio) { _ in cast.tracksChanged(audio:true) }
+                        Picker("Audio",selection:Binding(get:{cast.selectedAudio},set:{cast.selectAudio($0)})) { ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) } }
                     } header: { Text("Audio") }
                     Section("Sottotitoli") {
                         Picker("Traccia",selection:Binding(get:{cast.selectedSubtitle},set:{cast.selectSubtitle($0)})) {
@@ -217,7 +251,7 @@ private struct TrackOptionsView: View {
                             if cast.externalSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · esterni").tag("external") }
                             if cast.hasExtractedCaption { Text(cast.embeddedSubtitleLabel).tag("embedded") }
                             ForEach(media.subtitles) { Text(trackLabel($0,in:media.subtitles) + " · nel file").tag($0.key) }
-                        }.disabled(cast.loading)
+                        }
                         Button { showAppearance = true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
                         Button { showOnline = true } label: { Label("Scegli da Stremio e OpenSubtitles",systemImage:"captions.bubble") }
                         if cast.supportsOriginalSubtitleStyle,media.subtitles.contains(where:{["ssa","ass"].contains($0.codec.lowercased())}){
@@ -265,6 +299,7 @@ private struct TrackOptionsView: View {
         }.preferredColorScheme(.dark).tint(CastPalette.accent)
             .sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
             .sheet(isPresented:$showOnline) { SubtitleBrowserView().environmentObject(cast) }
+            .onChange(of:cast.sourceRevision) { _ in showAppearance = false; showOnline = false; dismiss() }
     }
 }
 

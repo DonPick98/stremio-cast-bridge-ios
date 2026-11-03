@@ -7,6 +7,7 @@ import UIKit
 
 @MainActor final class CastController: NSObject, ObservableObject, GCKRequestDelegate, GCKSessionManagerListener, GCKRemoteMediaClientListener {
     @Published var showSetup = false
+    @Published private(set) var sourceRevision = UUID()
     @Published var setupMessage = "Inserisci i tuoi collegamenti personali una sola volta."
     @Published var sources: [AddonStream] = []
     @Published var selectedSource: AddonStream?
@@ -1076,6 +1077,11 @@ import UIKit
         attemptedEmbeddedCaptions.remove(key)
         tracksChanged(audio:false)
     }
+    func selectAudio(_ key:String) {
+        guard key != selectedAudio else { return }
+        selectedAudio = key
+        tracksChanged(audio:true)
+    }
     func tracksChanged(audio:Bool) {
         PlaybackDiagnostics.record(.tracks,["kind":audio ? "audio" : "subtitle","audio":selectedAudio,"subtitle":selectedSubtitle,"position":PlaybackDiagnostics.number(position)])
         guard let prepared, !busy else { return }
@@ -1441,6 +1447,7 @@ import UIKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        sourceRevision = UUID()
         trackChangePending = false
         stopCaptionDelivery()
         independentCaptions.clearSource();loadedAudioKey="";loadedSourceInput=nil
@@ -1474,3 +1481,5 @@ import UIKit
         }
     }
 }
+
+
