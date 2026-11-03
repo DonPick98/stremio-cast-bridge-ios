@@ -58,6 +58,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var startedStream = false
     private var directRemux = false
     private var producerMonitor: Task<Void,Never>?
+    private var producerDrain: Task<Void,Never>?
     var onFailure: (() -> Void)?
 
     static func inspect(_ url: URL) async throws -> RDPreparedMedia {
@@ -265,6 +266,7 @@ enum EmbeddedMediaError: LocalizedError {
         PlaybackDiagnostics.record(.producer,["phase":"stop"])
         running = false; startedStream = false; onFailure = nil; producerEnded = true
         producerMonitor?.cancel(); producerMonitor = nil
+        producerDrain?.cancel(); producerDrain = nil
         let channel = outputChannel; outputChannel = nil
         channel?.stop()
         backgroundPlayer?.stop(); backgroundPlayer = nil
@@ -317,7 +319,13 @@ enum EmbeddedMediaError: LocalizedError {
         // the receiver is applying backpressure. Keep the player alive and let
         // its output duplicate close naturally after the trailer is delivered.
         // Explicit user stop/cancellation still tears down the channel promptly.
-        outputChannel?.endWriting()
+        let channel = outputChannel
+        producerDrain = Task { [weak self, weak origin] in
+            guard let channel, await channel.waitForDrain(), !Task.isCancelled,
+                  let self, let origin, self.player === origin else { return }
+            self.player = nil
+            DispatchQueue.global(qos:.utility).async { origin.stop(); channel.endWriting() }
+        }
     }
     private typealias StateFunction = @convention(c) (UnsafeMutableRawPointer) -> Int32
     private typealias PlayerPointer = @convention(c) (AnyObject,Selector) -> UnsafeMutableRawPointer?

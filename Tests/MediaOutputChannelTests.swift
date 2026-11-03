@@ -29,7 +29,11 @@ import Darwin
                     offset += n
                 }
             }
-            channel.endWriting()
+            Task {
+                let drained = await channel.waitForDrain()
+                precondition(drained,"Output did not drain before producer teardown")
+                channel.endWriting()
+            }
         }
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 5; config.timeoutIntervalForResource = 10

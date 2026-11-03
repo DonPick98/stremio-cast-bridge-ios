@@ -15,6 +15,7 @@ final class MediaOutputChannel: @unchecked Sendable {
     private var source:DispatchSourceRead?
     private var suspended = false
     private var stopped = false
+    private var lastOutput = Date()
     private var opening:CheckedContinuation<Void,Error>?
     init() throws {
         var pair:[Int32] = [-1,-1]
@@ -78,6 +79,7 @@ final class MediaOutputChannel: @unchecked Sendable {
         var bytes = [UInt8](repeating:0,count:16_384)
         let count = Darwin.read(reader,&bytes,16_384)
         if count > 0 {
+            lastOutput = Date()
             client.send(content:Data(bytes.prefix(count)),completion:.contentProcessed { [weak self] error in
                 guard let self, !self.stopped else { return }
                 if error != nil { self.finish() }
@@ -91,6 +93,21 @@ final class MediaOutputChannel: @unchecked Sendable {
     // Close only our descriptor. VLC's duplicate must remain writable until
     // the muxer has flushed its last fragment and closed that duplicate.
     func endWriting() { queue.async { if self.writer >= 0 { Darwin.close(self.writer); self.writer = -1 } } }
+    /// END_S precedes VLC's mux cleanup. Do not interrupt a blocked writer or
+    /// a Network.framework send when asking VLC to release the final muxer.
+    func waitForDrain() async -> Bool {
+        while !Task.isCancelled {
+            let state:(Bool,Bool) = await withCheckedContinuation { c in queue.async {
+                var available:Int32 = 0
+                let empty = Darwin.ioctl(self.reader,FIONREAD,&available) == 0 && available == 0
+                c.resume(returning:(self.stopped,!self.suspended && empty && Date().timeIntervalSince(self.lastOutput) >= 1))
+            } }
+            if state.0 { return false }
+            if state.1 { return true }
+            try? await Task.sleep(nanoseconds:100_000_000)
+        }
+        return false
+    }
     func stop() { queue.async { self.finish() } }
     private func finish() {
         guard !stopped else { return }; stopped = true
