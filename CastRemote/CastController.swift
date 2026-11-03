@@ -639,6 +639,7 @@ import AVFAudio
         let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity)
         // Burning a subtitle is not a permanent reason to re-encode the movie.
         // Re-evaluate the original-video route when the selected tracks change.
+        let previousFallback=localFallbackLevel
         if selection != nativeSelection { localFallbackLevel = 0 }
         let requiredCaption = separateCaption ? nil:subtitle == "external" ? 1 : subtitle == "embedded" ? 2 : nil
         let delay = subtitleDelay
@@ -651,7 +652,7 @@ import AVFAudio
         let sourceToken = sourceRequests.generation
         let previousRequests=streamRequests,previousTimeline=timeline
         let previousLoaded=hasLoaded && ownsCurrentMedia
-        let previousDetail=processingDetail,previousFallback=localFallbackLevel
+        let previousDetail=processingDetail
         let previousChoice=confirmedChoice
         let previousEngine=nativeEngine
         streamRequests.invalidate()
@@ -752,9 +753,7 @@ import AVFAudio
                 // old receiver updates and the next selection remain blocked.
                 if previousLoaded,previousEngine?.failed != true,self.ownsCurrentMedia {
                     let latestChoiceChanged=self.selectedAudio != audio || self.selectedSubtitle != subtitle
-                    let queued=self.timeline.queuedTarget
-                    self.streamRequests=previousRequests;self.timeline=previousTimeline
-                    if let queued { self.timeline.queue(at:queued) }
+                    self.streamRequests=previousRequests;self.timeline=self.timeline.restoring(previousTimeline)
                     self.hasLoaded=true;self.processingDetail=previousDetail;self.localFallbackLevel=previousFallback
                     if !latestChoiceChanged,let previousChoice {
                         self.selectedAudio=previousChoice.audio;self.selectedSubtitle=previousChoice.subtitle

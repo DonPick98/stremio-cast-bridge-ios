@@ -86,6 +86,16 @@ import Foundation
         precondition(timeline.observe(450,ready:true))
         timeline.queue(at:30); timeline.reset(); precondition(timeline.queuedTarget == nil)
 
+        var checkpoint=PlaybackTimeline()
+        checkpoint.begin(at:600)
+        var failedReplacement=checkpoint
+        failedReplacement.queue(at:900)
+        let restored=failedReplacement.restoring(checkpoint)
+        precondition(restored.target == nil && restored.queuedTarget == 900)
+        var accepted=restored
+        precondition(accepted.observe(100,ready:true),"Failed seek rollback must accept the still-playing old timeline")
+        precondition(accepted.consumeQueued() == 900,"A newer queued seek must survive rollback")
+
         for rate in [24000.0/1001,24,25,30000.0/1001,30] {
             let video = VideoFormat(codec:"h264",width:1920,height:1080,frameRate:rate,profile:100,level:41)
             precondition(!video.requiresConversion)

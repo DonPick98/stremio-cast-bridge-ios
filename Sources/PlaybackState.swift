@@ -96,6 +96,14 @@ struct PlaybackTimeline {
     mutating func queue(at value:Double) { if value.isFinite { queuedTarget = max(0,value) } }
     mutating func consumeQueued() -> Double? { let value = queuedTarget; queuedTarget = nil; return value }
     mutating func cancelActive() { target = nil }
+    func restoring(_ checkpoint:PlaybackTimeline) -> PlaybackTimeline {
+        var restored=checkpoint
+        // The failed replacement never reached its requested position. Accept
+        // the previous receiver clock again, retaining only newer queued intent.
+        restored.target=nil
+        restored.queuedTarget=queuedTarget ?? checkpoint.queuedTarget
+        return restored
+    }
     mutating func begin(at value: Double) {
         guard value.isFinite else { return }
         target = max(0,value)
