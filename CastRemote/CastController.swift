@@ -1074,7 +1074,7 @@ import AVFAudio
             return OnlineSubtitle(id:item.id ?? "source-"+String(contentDigest(url.absoluteString).prefix(16)),url:url,lang:item.lang ?? "und",label:item.label ?? "Sottotitoli Stremio \(index+1)",provider:"Stremio")
         }
     }
-    var defaultSubtitleLanguage:String { SubtitleLanguage.code(UserDefaults.standard.string(forKey:"cast.preferred.subtitle") ?? handoff?.subtitleLanguage ?? "en") }
+    var defaultSubtitleLanguage:String { PlaybackPreferences.subtitleLanguage(handoff:handoff?.subtitleLanguage) }
     private func clearSubtitleChoices() {
         independentCaptions.clearSource()
         subtitleChoices.invalidate(); subtitleSearchTask?.cancel(); subtitlePickTask?.cancel()
