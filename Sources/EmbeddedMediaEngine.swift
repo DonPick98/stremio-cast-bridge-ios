@@ -246,6 +246,9 @@ enum EmbeddedMediaError: LocalizedError {
             if player.state == .error || audioRepair?.failed == true { stop(); throw EmbeddedMediaError.encoder }
             do {
                 try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()})
+                // VLC's fd output has already duplicated this descriptor before
+                // writing the validated header. Let that duplicate own EOF.
+                channel.endWriting()
                 updateBackground()
                 streamURL = url; startedStream = true
                 return url
@@ -309,9 +312,12 @@ enum EmbeddedMediaError: LocalizedError {
     private func finishProducer(_ origin:VLCMediaPlayer) {
         guard !producerEnded, player === origin else { return }
         producerEnded = true; producerMonitor?.cancel(); producerMonitor = nil
-        player = nil
-        let channel = outputChannel
-        DispatchQueue.global(qos:.utility).async { origin.stop(); channel?.endWriting() }
+        // VLC announces END_S before deleting decoders and flushing the muxer
+        // (src/input/input.c, End). stop() here can cancel the final write while
+        // the receiver is applying backpressure. Keep the player alive and let
+        // its output duplicate close naturally after the trailer is delivered.
+        // Explicit user stop/cancellation still tears down the channel promptly.
+        outputChannel?.endWriting()
     }
     private typealias StateFunction = @convention(c) (UnsafeMutableRawPointer) -> Int32
     private typealias PlayerPointer = @convention(c) (AnyObject,Selector) -> UnsafeMutableRawPointer?

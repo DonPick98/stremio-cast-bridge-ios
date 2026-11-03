@@ -28,6 +28,9 @@ function sound(file,tone){
 const rows=(report.quality||[]).map(item=>{
  try {
   const original=path.join(root,item.source),output=path.join(root,item.file),input=probe(original),actual=probe(output);
+  // ffprobe and ffmpeg normally tolerate a corrupt final packet. A duration
+  // within tolerance is not enough: decode every packet with errors fatal.
+  exec(ffmpeg,['-v','error','-xerror','-i',output,'-map','0:v:0','-map','0:a:0','-f','null','-']);
   const sameDimensions=input.width===actual.width&&input.height===actual.height;
   const sameRate=Math.abs(input.fps-actual.fps)<0.005&&actual.cadenceError<0.002;
   const durationOK=Math.abs(item.duration-actual.duration)<0.35;
@@ -41,3 +44,4 @@ const rows=(report.quality||[]).map(item=>{
 const result={passed:rows.length===10&&rows.every(x=>x.passed),rows};
 fs.writeFileSync(path.join(root,'video-quality-check.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));
 if(!result.passed)process.exitCode=1;
+

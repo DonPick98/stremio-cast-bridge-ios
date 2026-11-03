@@ -150,13 +150,14 @@ import MediaPlayer
                 let id = Int(audio.key.dropFirst(4))
                 let copyAudio = audio.codec == "aac" && (audio.channels ?? 0) <= 2
                 let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:offset,videoMode:mode,audioID:id,subtitleID:nil,style:SubtitleAppearance(),copyAudio:copyAudio,repairAudio:repair,audioIndex:audioIndex,video:original.video,selfTest:true)
-                let (body,_,eof) = try await NativeStreamCapture().read(url)
+                let capture = NativeStreamCapture()
+                let (body,_,eof) = try await capture.read(url)
                 let suffix = mode == .softwareVP8 ? "webm" : "mp4"
                 let file = "quality-output-\(name).\(suffix)"
                 try body.write(to:documents.appendingPathComponent(file))
                 let source = "quality-input-\(fixture).mkv"
                 if !FileManager.default.fileExists(atPath:documents.appendingPathComponent(source).path) { try FileManager.default.copyItem(at:input,to:documents.appendingPathComponent(source)) }
-                rows.append(["name":name,"file":file,"source":source,"offset":offset,"copyVideo":mode == .copy,"tone":audioIndex == 1 ? 440 : 880,"duration":max(0,original.duration-offset),"passed":eof && body.count > 4096])
+                rows.append(["name":name,"file":file,"source":source,"offset":offset,"copyVideo":mode == .copy,"tone":audioIndex == 1 ? 440 : 880,"duration":max(0,original.duration-offset),"passed":eof && body.count > 4096,"bytes":body.count,"eof":eof,"transportError":capture.errorCode])
             } catch { rows.append(["name":name,"passed":false,"error":error.localizedDescription]) }
         }
         return rows
@@ -218,6 +219,7 @@ import MediaPlayer
 }
 
 final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private(set) var errorCode = 0
     private var continuation: CheckedContinuation<(Data,Bool,Bool),Error>?
     private var body = Data()
     private var cors = false
@@ -243,6 +245,7 @@ final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Se
         if body.count >= 33_554_432 { dataTask.cancel() }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        errorCode = (error as NSError?)?.code ?? 0
         let c = continuation; continuation = nil
         if body.count > 4096 { c?.resume(returning:(body,cors,error == nil)) }
         else { c?.resume(throwing:EmbeddedMediaError.encoder) }

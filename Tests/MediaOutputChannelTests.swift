@@ -37,6 +37,34 @@ import Darwin
         let (actual,response) = try await session.data(from:URL(string:"http://127.0.0.1:\(port)/test-stream")!)
         session.invalidateAndCancel()
         precondition((response as? HTTPURLResponse)?.statusCode == 200 && actual == expected,"Media bytes lost or reordered")
+        // VLC duplicates the fd before emitting a header and announces its
+        // logical end before flushing the trailer. Closing our original must
+        // neither signal premature EOF nor discard a late, backpressured tail.
+        for _ in 0..<8 {
+            let retained = try MediaOutputChannel(), p = try Self.port()
+            try await retained.start(port:p,path:"/drain",type:"video/mp4")
+            let duplicate = Darwin.dup(retained.writer)
+            precondition(duplicate >= 0)
+            retained.endWriting()
+            DispatchQueue.global().async {
+                defer { Darwin.close(duplicate) }
+                expected.withUnsafeBytes { raw in
+                    var offset = 0
+                    while offset < expected.count {
+                        if offset >= expected.count - 65_536 { Thread.sleep(forTimeInterval:0.01) }
+                        let count = min(16_384,expected.count-offset)
+                        let n = Darwin.send(duplicate,raw.baseAddress!.advanced(by:offset),count,0)
+                        precondition(n > 0)
+                        offset += n
+                    }
+                }
+            }
+            let client = URLSession(configuration:config)
+            let (drained,_) = try await client.data(from:URL(string:"http://127.0.0.1:\(p)/drain")!)
+            client.invalidateAndCancel()
+            precondition(drained == expected,"Duplicate writer trailer lost")
+            retained.stop()
+        }
         let blocked = try MediaOutputChannel()
         try await blocked.start(port:try Self.port(),path:"/blocked",type:"video/mp4")
         let released = DispatchSemaphore(value:0)
@@ -51,3 +79,4 @@ import Darwin
         print("Media output channel passed: 2 MB byte-exact transfer, EOF and cancellation of a blocked encoder")
     }
 }
+
