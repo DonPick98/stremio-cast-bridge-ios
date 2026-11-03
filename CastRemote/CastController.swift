@@ -123,6 +123,7 @@ import UIKit
     private let lockScreen = LockScreenPlayback()
     private var lastDevice: GCKDevice?
     private var reconnectTask: Task<Void,Never>?
+    private var trackChangePending = false
     private var trackApplyTask: Task<Void,Never>?
     private var seekDispatchTask: Task<Void,Never>?
     private var wantsPlayback = false
@@ -278,6 +279,7 @@ import UIKit
                 updateActivity(status: playing ? "In riproduzione" : "In pausa")
                 prepareDirectControls()
                 flushQueuedSeek()
+                applyPendingTrackChange()
                 applySubtitleTiming()
             } else if status.playerState == .buffering {
                 if bufferingSince == nil { bufferingSince = Date() }
@@ -1077,6 +1079,7 @@ import UIKit
     func tracksChanged(audio:Bool) {
         PlaybackDiagnostics.record(.tracks,["kind":audio ? "audio" : "subtitle","audio":selectedAudio,"subtitle":selectedSubtitle,"position":PlaybackDiagnostics.number(position)])
         guard let prepared, !busy else { return }
+        trackChangePending = true
         if audio { PlaybackPreferences.remember(audio:prepared.audio.first(where:{$0.key == selectedAudio}),subtitle:nil) }
         else {
             subtitleChoices.invalidate(); subtitlePickTask?.cancel(); subtitleDownloadBusy = false
@@ -1091,11 +1094,23 @@ import UIKit
             try? await Task.sleep(nanoseconds:400_000_000)
             guard !Task.isCancelled else { return }
             trackApplyTask = nil
-            if !audio,captionIsIndependent,(nativeSelection?.subtitle == nil || nativeSelection?.subtitle == "none"){syncIndependentCaptions();return}
-            if !audio,!captionIsIndependent,selectedEmbeddedText{beginEmbeddedTextPreparation();return}
-            guard !Task.isCancelled, hasLoaded, !loading else { return }
-            load(preservePosition:true)
+            applyPendingTrackChange()
         }
+    }
+    private func applyPendingTrackChange() {
+        // A track selection during LOAD/seek is an intent, not a disposable
+        // callback. Use the latest audio and subtitle together after the receiver
+        // is ready; a subtitle tap must not erase an earlier queued audio change.
+        guard trackChangePending, trackApplyTask == nil, hasLoaded, ownsCurrentMedia,
+              !loading, !loadPending, !checkingStream, subtitleRequest == nil,
+              timeline.target == nil, timeline.queuedTarget == nil else { return }
+        trackChangePending = false
+        if loadedAudioKey != selectedAudio { load(preservePosition:true); return }
+        if captionIsIndependent, nativeSelection?.subtitle == nil || nativeSelection?.subtitle == "none" {
+            syncIndependentCaptions(); return
+        }
+        if !captionIsIndependent, selectedEmbeddedText { beginEmbeddedTextPreparation(); return }
+        load(preservePosition:true)
     }
     private var selectedEmbeddedText:Bool{
         guard selectedSubtitle.hasPrefix("vlc_"),let track=prepared?.subtitles.first(where:{$0.key==selectedSubtitle}) else{return false}
@@ -1426,6 +1441,7 @@ import UIKit
         if success { updateStatus() }
     }
     private func resetPlayback() {
+        trackChangePending = false
         stopCaptionDelivery()
         independentCaptions.clearSource();loadedAudioKey="";loadedSourceInput=nil
         processingDetail = "Automatico"
@@ -1458,5 +1474,3 @@ import UIKit
         }
     }
 }
-
-
