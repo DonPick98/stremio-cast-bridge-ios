@@ -1,3 +1,32 @@
+# Stato corrente e registro condiviso — 2026-11-03
+
+Prima di riprendere il progetto, leggere [AGENTS.md](AGENTS.md) e il
+[registro canonico dei problemi, issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1).
+Il registro contiene 13 voci iniziali con evidenze, priorità, criteri di accettazione
+e istruzioni per aggiornarle durante ogni sessione. Il numero delle voci può crescere:
+consultare sempre la issue corrente.
+
+Baseline analizzata: **0.7.1 (18)** sul branch **native/embedded-media-engine**,
+commit **1e1965632597594ab6a6574f70732ba3e9d15560**. Il branch main è ancora
+basato sulla **0.7.0 (17)**. Verificare versione e HEAD attuali prima di lavorare.
+
+L'utente segnala interruzioni durante il normale uso di altre app, sottotitoli
+integrati non funzionanti, errore con esterni della fonte e scomparsa dei controlli.
+Il log del 2026-11-03 mostra una perdita della sessione con uscita FFmpeg -32,
+recupero ritardato e quattro preparazioni overlay fallite per vlc_3. OpenSubtitles
+funziona. La causa iniziale dell'interruzione e il codec di vlc_3 restano da accertare.
+
+Questa attività ha salvato diagnosi e istruzioni di continuità: **non ha applicato
+correzioni funzionali né eseguito un nuovo collaudo fisico**. Aggiornare gli stati
+nella issue quando viene implementata o verificata una correzione.
+
+---
+
+## Checkpoint storici
+
+Le sezioni seguenti sono conservate come storia delle verifiche dichiarate nei
+checkpoint precedenti. Non certificano automaticamente la baseline 0.7.1 o build successive.
+
 # Technical checkpoint: Cast Bridge 0.7.0 (17) - FREE receiver
 
 ## Current user decision
