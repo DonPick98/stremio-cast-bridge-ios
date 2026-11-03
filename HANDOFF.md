@@ -1,12 +1,22 @@
-# Build 20 — contesto diagnostico periodico (in verifica)
+# Build 20 — contesto diagnostico periodico
 
 Follow-up su CB-012/018/019: contesto formato/modalità/generazione/sessione ogni 15 s
 anche dopo la scadenza di prepare; modalità/generazione associate ai campioni transfer;
 ID sessione corrente/precedente negli eventi di stato. Retention resta 120 s.
 Test aggiunto: contesto di un guasto tardivo dopo scadenza della preparazione,
-con numeri di sessione/canali mantenuti e URL esclusi. Build iPhone/CI da verificare.
+con numeri di sessione/canali mantenuti e URL esclusi. Sorgente 6c55e92c646f1b01be0660f9a34ae8981b01363d.
+Build iPhone e regressioni riuscite: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41717008862
+IPA build20: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41717008862/artifacts/13270898945
+Il test di scadenza/contesto tardivo e sanitizzazione è passato. Workflow nativo
+esteso 41717007554 annullato: non dichiararlo superato per build20. La modifica
+riguarda diagnostica e identificazione build; il precedente collaudo multimediale
+build19 rimane distinto. Nessuna verifica fisica o risoluzione del buffering dichiarata.
 Non dimostra ancora la causa dei micro-buffering o un risparmio energetico.
 Il checkpoint build19 sottostante conserva le prove precedenti e la relativa IPA.
+Prossimo passo CB-019: verificare statistiche del produttore e loro ABI nel binario
+fissato; header upstream v0.11.2-ios FFmpegKit/src/ffmpegkit_wrapper.h espone
+statistics_count/at e statistiche frames/fps/time/speed. Prima dei binding Swift
+accertare simboli effettivi e durata degli handle. Nessun binding ancora aggiunto.
 
 ---
 
