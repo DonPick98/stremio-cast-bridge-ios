@@ -41,6 +41,11 @@ import Foundation
         precondition(recovery.request() && recovery.begin(connected:true,blocked:false))
         precondition(!recovery.request(),"A persistent failure must not loop forever")
         recovery.reset();precondition(recovery.request())
+        precondition(PlaybackCompletion.detachedEnd(finished:true,hasLoaded:true,pending:false,informationPresent:false,currentSession:12,lastSession:12))
+        precondition(!PlaybackCompletion.detachedEnd(finished:true,hasLoaded:true,pending:false,informationPresent:false,currentSession:13,lastSession:12),"Another media session must not complete this episode")
+        precondition(!PlaybackCompletion.detachedEnd(finished:true,hasLoaded:true,pending:true,informationPresent:false,currentSession:12,lastSession:12),"An old finish during replacement must be ignored")
+        precondition(!PlaybackCompletion.detachedEnd(finished:true,hasLoaded:true,pending:false,informationPresent:true,currentSession:12,lastSession:12),"Known media still requires content ownership")
+        precondition(!PlaybackCompletion.detachedEnd(finished:true,hasLoaded:true,pending:false,informationPresent:false,currentSession:0,lastSession:nil))
 
         // Transient PLAYING/BUFFERING acknowledgements without an advancing
         // receiver clock cannot conceal the second stall from the user log.

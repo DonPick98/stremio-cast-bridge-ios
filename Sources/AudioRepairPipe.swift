@@ -31,7 +31,7 @@ import Darwin
     }
 #endif
 
-    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil) async throws -> URL {
+    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0) async throws -> URL {
         _ = Self.initialized
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
               audioIndex >= 0, position.isFinite, position >= 0 else { throw EmbeddedMediaError.encoder }
@@ -62,7 +62,11 @@ import Darwin
         // Discard negative preroll before rebasing, or an audio change can
         // replay seconds before the requested point and shift its timeline.
         if position > 0 { args += ["-ss","0"] }
-        args += ["-map","0:v:0","-map","0:a:\(audioIndex)"]
+        let scale="scale=w=min(1920\\,iw):h=min(1080\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2"
+        if let bitmapSubtitleIndex {
+            guard bitmapSubtitleIndex>=0,transcodeVideo != nil,subtitleDelay.isFinite,abs(subtitleDelay)<=300 else { throw EmbeddedMediaError.encoder }
+            args += ["-filter_complex","[0:s:\(bitmapSubtitleIndex)]setpts=PTS+\(subtitleDelay)/TB[caption];[0:v:0][caption]overlay=eof_action=pass:repeatlast=0,\(scale)[picture]","-map","[picture]","-map","0:a:\(audioIndex)"]
+        } else { args += ["-map","0:v:0","-map","0:a:\(audioIndex)"] }
         if let subtitleIndex { args += ["-map","0:s:\(subtitleIndex)","-c:s","copy"] }
         else { args += ["-sn"] }
         args += ["-dn"]
@@ -71,8 +75,8 @@ import Darwin
             // H.264 stream directly. Do not force 30 fps or upscale SD sources.
             args += ["-c:v","h264_videotoolbox","-allow_sw","1","-realtime","1","-pix_fmt","yuv420p",
                      "-profile:v","high","-level:v","4.1","-b:v",String(video.conversionBitrate * 1000),
-                     "-vf","scale=w=min(1920\\,iw):h=min(1080\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2",
                      "-fps_mode","passthrough","-g",String(Int((video.conversionFrameRate ?? (video.frameRate > 0 ? video.frameRate : 30)) * 2))]
+            if bitmapSubtitleIndex == nil { args += ["-vf",scale] }
             if let rate = video.conversionFrameRate { args += ["-r",String(rate)] }
         } else { args += ["-c:v","copy"] }
         if copyAudio { args += ["-c:a","copy"] }

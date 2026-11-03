@@ -63,6 +63,13 @@ struct PlaybackRecoveryState {
     mutating func reset() { pending = false; attempts = 0 }
 }
 
+enum PlaybackCompletion {
+    static func detachedEnd(finished:Bool,hasLoaded:Bool,pending:Bool,informationPresent:Bool,currentSession:Int,lastSession:Int?) -> Bool {
+        guard let lastSession,lastSession>0 else { return false }
+        return finished && hasLoaded && !pending && !informationPresent && currentSession==lastSession
+    }
+}
+
 /// Receiver state acknowledgements do not reset a stall unless its actual
 /// media clock advances. User pauses and new timelines explicitly reset it.
 struct PlaybackProgressMonitor {

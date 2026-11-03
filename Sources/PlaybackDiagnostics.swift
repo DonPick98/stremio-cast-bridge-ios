@@ -16,9 +16,9 @@ import Foundation
     private var entries:[Entry] = []
     private var flushTask:Task<Void,Never>?
     private var changes:[String:String] = [:]
-    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","raw","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build","domain","request","action","confirmed","battery","thermal","lowPower","power"]
+    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","raw","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build","domain","request","action","confirmed","battery","thermal","lowPower","power","rate","upstreamWait","downstreamWait"]
 
-    init(retention:TimeInterval = 600,limit:Int = 600,file:URL? = nil,clock:@escaping () -> Date = Date.init) {
+    init(retention:TimeInterval = 120,limit:Int = 400,file:URL? = nil,clock:@escaping () -> Date = Date.init) {
         self.retention = retention; self.limit = limit; self.file = file; self.clock = clock
         if let file, let size = try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize, size <= 262144,
            let data = try? Data(contentsOf:file), let saved = try? JSONDecoder().decode([Entry].self,from:data) {
@@ -65,7 +65,7 @@ import Foundation
         let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime,.withFractionalSeconds]
         let version = Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "dev"
         let build = Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String ?? "dev"
-        return "Cast Bridge \(version) (\(build)) - diagnostica locale, ultimi 10 minuti\nSistema: \(ProcessInfo.processInfo.operatingSystemVersionString)\nNessun invio automatico. Link, credenziali e titoli esclusi.\n\n" + entries.map {
+        return "Cast Bridge \(version) (\(build)) - diagnostica locale, ultimi \(max(1,Int(retention/60))) minuti\nSistema: \(ProcessInfo.processInfo.operatingSystemVersionString)\nNessun invio automatico. Link, credenziali e titoli esclusi.\n\n" + entries.map {
             formatter.string(from:$0.time) + " " + $0.event.rawValue + " " + $0.fields.sorted{$0.key < $1.key}.map{"\($0.key)=\($0.value)"}.joined(separator:" ")
         }.joined(separator:"\n")
     }

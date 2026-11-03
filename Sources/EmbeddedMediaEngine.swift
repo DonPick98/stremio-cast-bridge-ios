@@ -19,7 +19,8 @@ enum EmbeddedMediaError: LocalizedError {
 
 @MainActor final class EmbeddedMediaEngine: NSObject, VLCMediaPlayerDelegate {
     enum VideoMode: Equatable { case copy, ffmpegH264, hardwareH264, softwareVP8 }
-    static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false) -> [VideoMode] {
+    static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false,bitmap:Bool = false) -> [VideoMode] {
+        if burn,bitmap,fallbackLevel < 2 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
         let legacy = ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "")
         // The pinned LGPL FFmpeg build lacks a working software AV1 decoder
         // on this platform; VLC's bundled decoder handles this source instead.
@@ -56,6 +57,7 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var offset: Double = 0
     private(set) var running = false
     private(set) var failed = false
+    private(set) var usesBitmapOverlay = false
     private var startedStream = false
     private var directRemux = false
     private var producerMonitor: Task<Void,Never>?
@@ -126,7 +128,7 @@ enum EmbeddedMediaError: LocalizedError {
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false) async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         offset = start.isFinite ? max(0,start) : 0
         PlaybackDiagnostics.record(.producer,["phase":"start","mode":String(describing:videoMode),"offset":PlaybackDiagnostics.number(offset),"burn":String(subtitleID != nil),"copyAudio":String(copyAudio)])
@@ -145,13 +147,14 @@ enum EmbeddedMediaError: LocalizedError {
         try await channel.start(port:port,path:bridge.path,type:contentType)
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
-        if (videoMode == .copy || videoMode == .ffmpegH264) && subtitleID == nil {
+        usesBitmapOverlay = videoMode == .ffmpegH264 && bitmapSubtitle && subtitleID != nil
+        if ((videoMode == .copy || videoMode == .ffmpegH264) && subtitleID == nil) || usesBitmapOverlay {
             // VLC's H.264 packetizer can drop/reorder B frames on remux. FFmpeg
             // copies every original packet and normalizes the selected audio.
             directRemux = true; running = true; producerEnded = false
             observeLifecycle(); updateBackground()
             let repair = AudioRepairPipe(); audioRepair = repair
-            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:videoMode == .ffmpegH264 ? video : nil)
+            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:videoMode == .ffmpegH264 ? video : nil,bitmapSubtitleIndex:usesBitmapOverlay ? subtitleIndex:nil,subtitleDelay:subtitleDelay)
             producerMonitor = Task { [weak self] in
                 while !Task.isCancelled {
                     guard let self, self.running else { return }
@@ -356,6 +359,7 @@ enum EmbeddedMediaError: LocalizedError {
         CastAudioSession.shared.acquire(audioOwner)
     }
     func refreshBackground() { updateBackground() }
+    func transferMetrics() async -> LocalTransferMetrics? { await proxy?.transferMetrics() }
 #if CAST_ENGINE_TESTING
     private var testingVideoStopped = true
     private var testingStoppedRepair: AudioRepairPipe?

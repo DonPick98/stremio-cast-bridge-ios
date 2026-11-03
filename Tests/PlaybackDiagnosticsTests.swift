@@ -16,6 +16,12 @@ import Foundation
         structured.record(.command,["phase":"cast_abort","request":"12","action":"pause","generation":"ABC123","code":"1"])
         structured.record(.snapshot,["phase":"energy","battery":"72.5","thermal":"0","power":"1","lowPower":"false"])
         precondition(structured.report().contains("request=12") && structured.report().contains("battery=72.5"))
+        var shortNow=now
+        let short=DiagnosticRecorder(clock:{shortNow})
+        short.record(.app,["phase":"old_marker"])
+        precondition(short.report().contains("ultimi 2 minuti"))
+        shortNow=shortNow.addingTimeInterval(121)
+        precondition(!short.report().contains("old_marker"),"Default diagnostics must expire after two minutes")
         log.changed("cast",event:.cast,["status":"playing"])
         log.changed("cast",event:.cast,["status":"playing"])
         precondition(log.report().components(separatedBy:"status=playing").count == 2)

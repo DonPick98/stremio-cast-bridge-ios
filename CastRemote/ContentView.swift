@@ -56,7 +56,7 @@ struct ContentView: View {
             .alert("Diagnostica copiata",isPresented:$diagnosticsCopied) {
                 Button("OK",role:.cancel) { }
             } message: {
-                Text("Incollala nella chat con Codex. Contiene gli ultimi 10 minuti, senza link personali o credenziali.")
+                Text("Incollala nella chat con Codex. Contiene gli ultimi 2 minuti, senza link personali o credenziali.")
             }
     }
     private var header: some View {
@@ -428,5 +428,6 @@ private func playbackTime(_ seconds: Double) -> String {
     let n = Int(seconds)
     return n >= 3600 ? String(format:"%d:%02d:%02d",n/3600,(n/60)%60,n%60) : String(format:"%d:%02d",n/60,n%60)
 }
+
 
 

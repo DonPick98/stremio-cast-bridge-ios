@@ -1,6 +1,6 @@
 # Cast Bridge iOS 0.7.2 (19) — recovery candidate
 
-Candidate on `fix/playback-recovery-20261103`, based on 0.7.1 (18). See [issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1) and [HANDOFF.md](HANDOFF.md) for verification status. Physical background/subtitle/battery acceptance is pending.
+Candidate on `fix/playback-recovery-20261103`, based on 0.7.1 (18). See [issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1) and [HANDOFF.md](HANDOFF.md) for verification status. Physical background/subtitle/battery acceptance is pending. The candidate includes a direct FFmpeg PGS overlay path and startup/seek bitmap fixtures; iOS validation must pass before claiming PGS recovery.
 
 iOS sender for Stremio video sources and Google Cast receivers. The app reads media tracks with MobileVLCKit and chooses direct playback, remuxing or local conversion automatically.
 
@@ -10,7 +10,7 @@ FFmpeg remux and VLC conversion output travel through a bounded anonymous socket
 
 Legacy MPEG-4 ASP, MPEG-2 and WMV2 sources can use software decoding plus H.264 VideoToolbox encoding through FFmpeg, retaining SD dimensions and fractional frame rate. VLC H.264 and VP8 remain bounded fallback attempts; embedded subtitle overlay uses VLC.
 
-The Codex terminal button beside Settings copies the last ten minutes of local playback diagnostics. A bounded cache records safe event codes, track choices, media format, timeline requests, receiver state and numeric errors. Credentials, personal URLs, titles, subtitles and raw server/error text are excluded. The report is copied locally and never sent automatically.
+The Codex terminal button beside Settings copies the last two minutes of local playback diagnostics. A bounded cache records safe event codes, track choices, media format, timeline requests, receiver state and numeric errors. Credentials, personal URLs, titles, subtitles and raw server/error text are excluded. The report is copied locally and never sent automatically.
 
 The interface includes source sizes, automatic playback after source selection, remembered audio/subtitle languages and persistent subtitle appearance settings. The iOS system media card is the single playback surface on the Lock Screen and in Control Center, with a draggable timeline and 30-second controls through MPNowPlayingInfoCenter and MPRemoteCommandCenter. Version 0.6.1 closes legacy ActivityKit cards when opened.
 

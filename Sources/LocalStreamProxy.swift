@@ -4,6 +4,12 @@ import Darwin
 
 enum LocalStreamError: Error { case address, listener, request, upstream, initialization, header, endOfStream, unsupported, limit, network, timeout }
 
+struct LocalTransferMetrics:Sendable {
+    let bytes:Int
+    let upstreamWait:TimeInterval
+    let downstreamWait:TimeInterval
+}
+
 /// An anonymous socket pair retains every encoder packet. Unlike VLC's live
 /// HTTP circular buffer, it cannot skip an initial GOP or overwrite a slow reader.
 final class MediaOutputChannel: @unchecked Sendable {
@@ -141,6 +147,8 @@ final class LocalStreamProxy: @unchecked Sendable {
     private var producerEnded = false
     private var paused = false
     private var deliveredBytes = 0
+    private var upstreamWait:TimeInterval = 0
+    private var downstreamWait:TimeInterval = 0
     private func trace(_ message:String) {
 #if CAST_ENGINE_TESTING
         FileHandle.standardOutput.write(Data("Cast proxy \(Date().timeIntervalSince1970): \(message)\n".utf8))
@@ -202,6 +210,11 @@ final class LocalStreamProxy: @unchecked Sendable {
                 for (id,pair) in self.pairs where pair.streaming && !pair.waiting && !pair.sending { self.pipe(id) }
             }
         }
+    }
+    func transferMetrics() async -> LocalTransferMetrics {
+        await withCheckedContinuation { c in queue.async {
+            c.resume(returning:LocalTransferMetrics(bytes:self.deliveredBytes,upstreamWait:self.upstreamWait,downstreamWait:self.downstreamWait))
+        } }
     }
 #if CAST_ENGINE_TESTING
     func testingDeliveredBytes() async -> Int { await withCheckedContinuation { c in queue.async { c.resume(returning:self.deliveredBytes) } } }
@@ -422,11 +435,15 @@ final class LocalStreamProxy: @unchecked Sendable {
         pair.streaming = true
         guard !paused else { return }
         pair.waiting = true
+        let readBegan=Date()
         upstream.receive(minimumIncompleteLength:1,maximumLength:65_536) { [weak self] data,_,complete,error in
             guard let self, let pair = self.pairs[id] else { return }
+            self.upstreamWait += Date().timeIntervalSince(readBegan)
             pair.waiting = false; pair.lastData = Date(); pair.sending = true
             if error != nil { self.close(id); return }
+            let sendBegan=Date()
             pair.client.send(content:data,contentContext:complete ? .finalMessage : .defaultMessage,isComplete:complete,completion:.contentProcessed { error in
+                self.downstreamWait += Date().timeIntervalSince(sendBegan)
                 pair.sending = false
                 if error == nil { self.deliveredBytes += data?.count ?? 0 }
                 if error != nil || complete { self.close(id) } else { self.pipe(id) }

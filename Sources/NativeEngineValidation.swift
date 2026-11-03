@@ -111,7 +111,7 @@ import GoogleCast
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
                 result["matrix"] = matrix
-                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 33 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 35 && matrix.allSatisfy { $0["passed"] as? Bool == true }
                 trace("background conversion")
                 let background = try await backgroundProbe(documents:documents)
                 result["background"] = background

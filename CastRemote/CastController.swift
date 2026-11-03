@@ -95,6 +95,7 @@ import AVFAudio
     private var expectedContentID: String?
     private var loadedSignature: String?
     private var loadedStreamGeneration: UUID?
+    private var loadedMediaSessionID:Int?
     private var loadedSubtitle: String?
     private var subtitleRequest: GCKRequest?
     private var pendingSubtitle: String?
@@ -118,6 +119,7 @@ import AVFAudio
         let external: URL?
         let extracted: URL?
         let captionIdentity:String
+        let bitmapDelay:Double
     }
     private var nativeSelection: NativeSelection?
     private var streamOffset: Double { nativeEngine?.offset ?? 0 }
@@ -138,6 +140,7 @@ import AVFAudio
     private var seekDispatchTask: Task<Void,Never>?
     private var wantsPlayback = false
     private var lastDiagnosticSnapshot = Date.distantPast
+    private var transferCheckpoint:(engine:ObjectIdentifier,time:Date,metrics:LocalTransferMetrics)?
     var displayTitle: String { MediaDisplayTitle.clean(selectedSource?.filename ?? selectedSource?.descriptionText.components(separatedBy:.newlines).first ?? "Video da Stremio") }
     var deviceName: String { castSession?.device.friendlyName ?? lastDevice?.friendlyName ?? "Chromecast" }
 
@@ -196,6 +199,19 @@ import AVFAudio
     private func recordEnergySnapshot() {
         let device=UIDevice.current
         PlaybackDiagnostics.record(.snapshot,["phase":"energy","battery":device.batteryLevel < 0 ? "unknown":PlaybackDiagnostics.number(Double(device.batteryLevel)*100),"power":String(device.batteryState.rawValue),"thermal":String(ProcessInfo.processInfo.thermalState.rawValue),"lowPower":String(ProcessInfo.processInfo.isLowPowerModeEnabled),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
+        guard let engine=nativeEngine else { return }
+        let source=sourceRequests.generation
+        Task { [weak self,weak engine] in
+            guard let self,let engine,let metrics=await engine.transferMetrics(),self.nativeEngine === engine,self.sourceRequests.accepts(source) else { return }
+            let now=Date(),identity=ObjectIdentifier(engine)
+            if let old=self.transferCheckpoint,old.engine==identity {
+                let seconds=now.timeIntervalSince(old.time)
+                if seconds>0 {
+                    PlaybackDiagnostics.record(.producer,["phase":"transfer","bytes":String(metrics.bytes),"seconds":PlaybackDiagnostics.number(seconds),"rate":PlaybackDiagnostics.number(Double(max(0,metrics.bytes-old.metrics.bytes))*8/seconds),"upstreamWait":PlaybackDiagnostics.number(max(0,metrics.upstreamWait-old.metrics.upstreamWait)),"downstreamWait":PlaybackDiagnostics.number(max(0,metrics.downstreamWait-old.metrics.downstreamWait)),"paused":String(!self.playWhenReady)])
+                }
+            }
+            self.transferCheckpoint=(identity,now,metrics)
+        }
     }
     func copyDiagnostics() {
         PlaybackDiagnostics.record(.snapshot,["phase":"copy","connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position),"duration":PlaybackDiagnostics.number(duration),"pending":String(loading || loadPending || checkingStream)])
@@ -260,6 +276,9 @@ import AVFAudio
             // requested position, autoplay intent and any new preparation intact.
             if checkingStream { return }
             if let loadedStreamGeneration, !streamRequests.accepts(loadedStreamGeneration) { return }
+            if PlaybackCompletion.detachedEnd(finished:status.playerState == .idle && status.idleReason == .finished,hasLoaded:hasLoaded,pending:loadPending,informationPresent:status.mediaInformation != nil,currentSession:status.mediaSessionID,lastSession:loadedMediaSessionID) {
+                finishOwnedPlayback();return
+            }
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
             guard ownsCurrentMedia else {
@@ -315,6 +334,7 @@ import AVFAudio
             if ready && confirmed && currentLoad {
                 if loadPending || !hasLoaded { playbackIssue = nil }
                 hasLoaded = true; wantsPlayback = true
+                loadedMediaSessionID=status.mediaSessionID
                 if loadedAudioKey==selectedAudio,loadedSubtitle==selectedSubtitle {
                     confirmedChoice=(selectedAudio,selectedSubtitle,selectedOnlineSubtitle,subtitleDelay)
                 }
@@ -345,16 +365,7 @@ import AVFAudio
                 message = "La riproduzione si è interrotta. Riprova: la posizione è conservata."
                 updateActivity(status: "Errore: apri l’app per riprovare")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .finished {
-                stopCaptionDelivery()
-                wantsPlayback = false; lockScreen.clear()
-                loadPending = false; loading = false; loadTimeout?.cancel()
-                message = "Riproduzione terminata."
-                if let positionKey { UserDefaults.standard.set(0,forKey:positionKey) }
-                sourceResume = nil
-                hasLoaded = false; lastGoodPosition = duration
-                stopLocalProcessing()
-                updateActivity(status: "Riproduzione terminata")
-                lastGoodPosition = 0
+                finishOwnedPlayback()
             } else if status.playerState == .idle && currentLoad && status.idleReason == .cancelled {
                 stopCaptionDelivery()
                 wantsPlayback = false; lockScreen.clear()
@@ -376,6 +387,15 @@ import AVFAudio
             }
             self?.reconnectTask = nil
         }
+    }
+    private func finishOwnedPlayback() {
+        PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
+        stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished")
+        loadPending=false;loading=false;loadTimeout?.cancel();loadRequest=nil
+        if let positionKey { UserDefaults.standard.set(0,forKey:positionKey) }
+        sourceResume=nil;hasLoaded=false;lastGoodPosition=0;lastConfirmedPosition=nil
+        loadedMediaSessionID=nil;timeline.reset();recovery.reset();progress.reset()
+        stopLocalProcessing();message="Riproduzione terminata."
     }
     private func prepareDirectControls() {
         guard connected, ownsCurrentMedia, let session = castSession,
@@ -636,7 +656,8 @@ import AVFAudio
             if embeddedCaptionTask==nil{subtitleDownloadBusy=false}
         }
         let appearance = burnedSubtitle == "none" ? SubtitleAppearance() : SubtitleAppearance.load()
-        let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity)
+        let bitmapSubtitle=prepared.subtitles.first(where:{$0.key==burnedSubtitle})?.codec.lowercased()=="bdpg"
+        let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity,bitmapDelay:bitmapSubtitle ? subtitleDelay:0)
         // Burning a subtitle is not a permanent reason to re-encode the movie.
         // Re-evaluate the original-video route when the selected tracks change.
         let previousFallback=localFallbackLevel
@@ -689,7 +710,7 @@ import AVFAudio
                     return
                 }
                 let convertVideo = prepared.requiresVideoConversion || burnedSubtitle != "none"
-                let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel,video:prepared.video,burn:burnedSubtitle != "none")
+                let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel,video:prepared.video,burn:burnedSubtitle != "none",bitmap:bitmapSubtitle)
                 var lastError: Error = EmbeddedMediaError.encoder
                 for mode in modes {
                     PlaybackDiagnostics.record(.prepare,["phase":"attempt","mode":String(describing:mode),"generation":String(streamToken.uuidString.prefix(8)),"offset":PlaybackDiagnostics.number(start)])
@@ -704,7 +725,7 @@ import AVFAudio
                         let repairAudio = AudioRepairPipe.required(audioTrack?.codec ?? "")
                         let audioIndex = prepared.audio.firstIndex(where:{$0.key == audio}) ?? 0
                         let subtitleIndex = prepared.subtitles.firstIndex(where:{$0.key == burnedSubtitle})
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video)
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video,bitmapSubtitle:bitmapSubtitle)
                         try self.validateStream(source:sourceToken,stream:streamToken)
                         guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, separateCaption ? self.captionIsIndependent:self.selectedSubtitle == subtitle,
                               separateCaption || (self.externalSubtitleURL == selection.external && self.subtitleIdentity == selection.captionIdentity),
@@ -1056,7 +1077,10 @@ import AVFAudio
         if let nativeSelection, nativeSelection.external != externalSubtitleURL || nativeSelection.captionIdentity != subtitleIdentity {
             guard subtitleRequest == nil else { return }; load(preservePosition:true); return
         }
-        if selectedSubtitle.hasPrefix("vlc_") { nativeEngine?.setBurnedSubtitleDelay(subtitleDelay); lastAppliedSubtitleDelay = subtitleDelay; return }
+        if selectedSubtitle.hasPrefix("vlc_") {
+            if nativeEngine?.usesBitmapOverlay == true,lastAppliedSubtitleDelay != subtitleDelay { load(preservePosition:true);return }
+            nativeEngine?.setBurnedSubtitleDelay(subtitleDelay); lastAppliedSubtitleDelay = subtitleDelay; return
+        }
         guard subtitleRequest == nil else { return }
         let kind = selectedSubtitle == "embedded" ? 2 : 1
         if let id = nativeEngine?.captionID(kind:kind,delay:subtitleDelay), let client {
@@ -1570,6 +1594,7 @@ import AVFAudio
         processingDetail = "Automatico"
         sourceRequests.invalidate(); streamRequests.invalidate(); controlRequests.invalidate(); playbackIntent.reset()
         recovery.reset();progress.reset();lastConfirmedPosition=nil;confirmedChoice=nil;intentCorrection=nil
+        transferCheckpoint=nil
         intentCorrectionRequest?.cancel();intentCorrectionRequest=nil
         wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil
         trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear()
@@ -1585,7 +1610,7 @@ import AVFAudio
         positionKey = nil
         finishCommand(false)
         loadTimeout?.cancel(); loadPending = false; loading = false; loadAccepted = false; loadRequest = nil; bufferingSince = nil
-        expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil; loadedStreamGeneration = nil
+        expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil; loadedStreamGeneration = nil;loadedMediaSessionID=nil
         subtitleRequest = nil; pendingSubtitle = nil
         UserDefaults.standard.removeObject(forKey: "cast.session.content")
         UserDefaults.standard.removeObject(forKey: "cast.session.positionKey")

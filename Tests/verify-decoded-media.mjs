@@ -30,8 +30,9 @@ const captionRows=files.filter(r=>r.name.startsWith('caption_')).map(item=>{
  });
  return {name:item.name,checks,passed:checks.every(c=>c.passed)};
 });
-const result={passed:report.passed&&!report.error&&report.background?.passed===true&&report.captionSync?.passed===true&&rows.length===38&&rows.every(r=>r.passed)&&captionRows.length===4&&captionRows.every(r=>r.passed),rows,captionRows};
+const result={passed:report.passed&&!report.error&&report.background?.passed===true&&report.captionSync?.passed===true&&rows.length===40&&rows.every(r=>r.passed)&&captionRows.length===6&&captionRows.every(r=>r.passed),rows,captionRows};
 fs.writeFileSync(path.join(root,'decoded-output-check.json'),JSON.stringify(result,null,2));
 console.log(JSON.stringify(result));
 if(!result.passed)process.exitCode=1;
+
 
