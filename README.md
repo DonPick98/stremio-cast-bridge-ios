@@ -1,6 +1,6 @@
 # Cast Bridge iOS 0.7.2 (19) — recovery candidate
 
-Candidate on `fix/playback-recovery-20261103`, based on 0.7.1 (18). See [issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1) and [HANDOFF.md](HANDOFF.md) for verification status. Physical background/subtitle/battery acceptance is pending. The candidate includes a direct FFmpeg PGS overlay path and startup/seek bitmap fixtures; iOS validation must pass before claiming PGS recovery.
+Candidate on `fix/playback-recovery-20261103`, based on 0.7.1 (18). See [issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1) and [HANDOFF.md](HANDOFF.md) for verification status. Physical background/subtitle/battery acceptance is pending. The candidate includes a direct FFmpeg PGS overlay path. Native CI passed the synthetic startup/seek bitmap checks; the user’s physical source still needs validation.
 
 iOS sender for Stremio video sources and Google Cast receivers. The app reads media tracks with MobileVLCKit and chooses direct playback, remuxing or local conversion automatically.
 
@@ -8,7 +8,7 @@ Compatible H.264 video packets are copied by the pinned LGPL FFmpegKit backend, 
 
 FFmpeg remux and VLC conversion output travel through a bounded anonymous socket into the local HTTP gateway. The same upstream connection is retained from initialization through playback, and natural end of stream waits for the muxer to close its output descriptor. Copy-mode pause applies backpressure without closing the connection.
 
-Legacy MPEG-4 ASP, MPEG-2 and WMV2 sources can use software decoding plus H.264 VideoToolbox encoding through FFmpeg, retaining SD dimensions and fractional frame rate. VLC H.264 and VP8 remain bounded fallback attempts; embedded subtitle overlay uses VLC.
+Legacy MPEG-4 ASP, MPEG-2 and WMV2 sources can use software decoding plus H.264 VideoToolbox encoding through FFmpeg, retaining SD dimensions and fractional frame rate. VLC H.264 and VP8 remain bounded fallback attempts. PGS bitmap subtitles first use direct FFmpeg overlay plus H.264; other compatibility overlay paths use VLC.
 
 The Codex terminal button beside Settings copies the last two minutes of local playback diagnostics. A bounded cache records safe event codes, track choices, media format, timeline requests, receiver state and numeric errors. Credentials, personal URLs, titles, subtitles and raw server/error text are excluded. The report is copied locally and never sent automatically.
 
@@ -18,7 +18,7 @@ Compatible video is copied without re-encoding. Local video conversion preserves
 
 When local conversion is active, the phone must remain powered on and connected to the receiver's network. Force-quitting interrupts conversion. Background support uses an audio playback session restricted to active casting. Controls reconnect without reloading owned media; a pinned direct Cast connection provides a fallback for media commands. Simulator results do not certify physical-device screen-lock behavior.
 
-Subtitle text can be rendered into locally converted video. External WebVTT is served through the selected-device-only gateway and retimed after seeks. Graphic subtitles and styled ASS tracks can retain their source appearance.
+Separate subtitle text is served as WebVTT through the selected-device-only gateway and retimed after seeks. Bitmap subtitles require video overlay. ASS/SSA exported as standard text does not retain its original styling on the free default receiver.
 
 ## Subtitles
 
@@ -38,7 +38,7 @@ Use CastRemote.xcworkspace, scheme CastRemote, Release and iphoneos. CocoaPods p
 
 Production builds must leave CAST_ENGINE_VALIDATION empty. CAST_ENGINE_TESTING enables the synthetic simulator validation only.
 
-The separate validation workflow covers 31 synthetic codec combinations through the actual playback gateway, five gateway cases, ten resolution/cadence/seek cases and 65 seconds of continuous network transfer in background with pause/resume and cancellation. Two post-seek tests select the second SRT/ASS track and alternate audio, then check actual caption pixels at absent/present/absent times on a black picture; successful video decoding alone is insufficient. The copied 1080p test compares every decoded frame with its source. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
+The separate validation workflow covers 35 synthetic codec combinations through the actual playback gateway, five gateway cases, ten resolution/cadence/seek cases and over 60 seconds of continuous offscreen network transfer with pause/resume and cancellation. Six subtitle cases check SRT/ASS/PGS startup and post-seek output, selecting the second subtitle track and alternate audio and checking actual caption pixels at absent/present/absent times on a black picture; successful video decoding alone is insufficient. The copied 1080p test compares every decoded frame with its source. Compatibility depends on file integrity, source availability and hardware capacity; DRM is outside the supported path.
 
 See [HANDOFF.md](HANDOFF.md) for technical validation status, [BUILD-WINDOWS.md](BUILD-WINDOWS.md) for build steps and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licenses and upstream sources.
 

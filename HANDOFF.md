@@ -1,14 +1,63 @@
-# Candidate 0.7.2 (19) — recovery work in progress
+# Candidata 0.7.2 (19) — recupero, seek PGS e diagnostica
 
-Branch: `fix/playback-recovery-20261103`, baseline `b9a17b0` / 0.7.1 (18).
+Branch: `fix/playback-recovery-20261103`; sorgente candidata `cafbaa979c42024137b4e141828ffde733721def`.
+Baseline: `b9a17b0` / 0.7.1 (18). [PR #2](https://github.com/DonPick98/stremio-cast-bridge-ios/pull/2).
 
-Implemented for validation: queued bounded recovery across reconnects, failed-producer health, clock-based stall detection, restoration of the previous stream after candidate preparation fails, a shared background audio coordinator with interruption/route/reset handling, structured request/output/subtitle errors and battery/thermal snapshots. Regression cases cover disconnected recovery, a stationary receiver clock and failed-seek rollback. The previously misnamed Cast suspension callback now implements the exact imported SDK signature; native validation checks its Objective-C selector at runtime.
+Il recupero conserva un intento accodato durante la disconnessione, con retry limitati,
+controllo del produttore fallito e rilevamento dello stallo dal clock reale. Una preparazione
+fallita ripristina generazione/timeline/scelte del flusso precedente e conserva i nuovi seek
+pendenti. La sessione audio e il supporto background sono coordinati fra i proprietari,
+con osservazione di interruzioni, route e reset. Il callback Cast di sospensione è esportato
+esplicitamente al runtime Objective-C; il test nativo deve verificarne il selettore.
 
-Build/CI and native integration results must be appended after they actually run. No physical iPhone/Chromecast acceptance or battery improvement is claimed. The first source's vlc_3 codec remains unknown. A later source is confirmed HEVC/AAC6/PGS and fails on seek. The candidate adds a direct FFmpeg PGS overlay route and synthetic startup/seek bitmap pixel checks. Diagnostics now retain two minutes as requested; iOS validation of these latest changes is pending. Keep CB-005/010/011/014 open until their evidence and acceptance are complete.
+I PGS usano un percorso FFmpeg diretto di overlay/H264, con fixture sintetica HEVC10,
+AAC a sei canali, due tracce PGS e selezione della seconda traccia anche dopo seek.
+Il riconoscimento della fine naturale richiede ownership corrente o la stessa media session.
+La diagnostica conserva due minuti e aggiunge codici/errori distinti, ciclo di vita,
+correlazione richieste, batteria/temperatura e byte/attese di trasferimento locale.
+Queste attese non misurano direttamente la banda Internet o il tempo CPU.
+
+## Verifiche della sorgente candidata
+
+- [Build iPhone finale 41711298197](https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41711298197): RIUSCITA, inclusi i test di regressione previsti dal workflow.
+- [IPA senza firma](https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41711298197/artifacts/13266759875): artefatto `CastRemote-unsigned`, commit cafbaa9, 32.962.495 byte. Digest SHA256 dell'archivio artefatto (non del singolo IPA): `1922d2816089cf48e4e5e16300634ef5d4d066eb6ad150393c0801f1227f4018`.
+- IPA ispezionata realmente: app ed estensione 0.7.2(19), receiver CC1AD845, Bonjour coerente, background audio, icona e framework ffmpegkit presenti. SHA256 del singolo IPA: `e24521b54162dc22a070a47798ba6405e6c341e8d0fecf5e785c92c3fecdcbb5`.
+- [Integrazione nativa finale 41711298250](https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41711298250): RIUSCITA. Passati 35 casi codec, 40 output A/V decodificati indipendentemente, sei controlli pixel sottotitoli (PGS da zero/dopo seek inclusi) e dieci controlli stretti di qualità/cadenza/audio/seek, incluso confronto esatto dei frame del video 1080p copiato.
+- Callback generico: `castSuspendProtocol=true`, `castSuspendDelegate=true`, selettore `sessionManager:didSuspendSession:withReason:`.
+- Prova offscreen: 65,070 s, 7.274.169 byte letti esternamente, pausa/ripresa confermate e arresto pulito. Non certifica iOS su hardware fisico o il blocco schermo.
+- [Evidenze native](https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41711298250/artifacts/13269276761): report, media sintetici e controlli decodifica/qualità. Nessuna sorgente o credenziale personale utilizzata.
+- Prova locale FFmpeg Linux della fixture PGS: bitmap assente/presente/assente dopo seek 3,25 s, uscita H264/AAC stereo. Non sostituisce il test della libreria iOS fissata nel progetto.
+
+Un test intermedio non tipizzato ha scelto il callback specifico GCKCastSession,
+mentre il controller usa quello generico GCKSession con lo stesso nome Swift.
+La risposta false non provava quindi l’assenza del callback generico corretto.
+Il tentativo 29fa336 ha fallito la compilazione associando il selettore Cast al parametro
+generico. La candidata cafbaa9 ripristina il selettore generico coerente e verifica
+sia che il protocollo SDK lo dichiari sia che la classe risponda: entrambi true nel run
+finale riuscito. Vedere la rettifica CB-015 nella issue e non riapplicare l’equivoco.
+
+## Verifiche residue e ripresa
+
+Nessun collaudo fisico iPhone/Chromecast o miglioramento della batteria è dichiarato.
+Il codec vlc_3 della prima sorgente resta sconosciuto; una sorgente successiva è confermata
+HEVC/AAC6/PGS e fallisceva dopo seek sulla 0.7.1. Gli snapshot durante lo stallo a 146,376 s
+continuano: non provano una rimozione dalla RAM. Il recupero dopo circa 45 s coincide con
+il vecchio timeout; il ritorno all'app non è prova sufficiente della causa. Restano da
+identificare le cause dei micro-buffering e dell'errore degli esterni della fonte.
+
+Leggere la issue #1 corrente, quindi collaudare su hardware: PGS da zero/dopo seek,
+rollback del cambio traccia, ripresa dopo disconnessione/stallo, cambio app/blocco schermo,
+interruzioni audio, controlli di sistema e fine naturale. Raccogliere la nuova diagnostica
+di due minuti dopo un problema e misure energetiche confrontabili per ciascuna modalità.
+Il registro CB-019 annota il limite residuo degli snapshot di modalità/formato dopo la
+scadenza dell’evento prepare e la necessità di misure più complete del produttore; CB-018
+richiede anche evidenza della media session del receiver nel caso fisico.
+Le features FT-001–004 sono registrate ma non implementate. Conservare gli stati e i limiti
+nella issue; non chiudere le voci solo perché i workflow sono verdi.
 
 ---
 
-# Stato corrente e registro condiviso — 2026-11-03
+# Registro condiviso e baseline iniziale — 2026-11-03
 
 Prima di riprendere il progetto, leggere [AGENTS.md](AGENTS.md) e il
 [registro canonico dei problemi, issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1).
@@ -26,9 +75,9 @@ Il log del 2026-11-03 mostra una perdita della sessione con uscita FFmpeg -32,
 recupero ritardato e quattro preparazioni overlay fallite per vlc_3. OpenSubtitles
 funziona. La causa iniziale dell'interruzione e il codec di vlc_3 restano da accertare.
 
-Questa attività ha salvato diagnosi e istruzioni di continuità: **non ha applicato
-correzioni funzionali né eseguito un nuovo collaudo fisico**. Aggiornare gli stati
-nella issue quando viene implementata o verificata una correzione.
+Il primo checkpoint documentale aveva salvato diagnosi e istruzioni di continuità,
+senza modifiche funzionali. La candidata e le verifiche successive sono descritte
+in apertura; consultare sempre la issue corrente per gli stati aggiornati.
 
 ---
 
