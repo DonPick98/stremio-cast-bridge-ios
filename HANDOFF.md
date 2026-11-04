@@ -1,3 +1,29 @@
+# Player nativo iOS — build44 candidata, 2026-11-04
+
+CB011 riaperto da screenshot43: scheda progressoBG presente, vecchia ActivityKit
+custom ancora mostrata e playerNowPlaying assente. Causa concreta nel codice:
+CastAudioSession sempre.mixWithOthers; AppleWWDC2022/110338 richiede categoria
+nonmixable per eligibilityNowPlaying. Non basta pubblicare metadata. La causa
+non è la schedaBG in sé. Non pubblicare screenshot o suoi titoli/notifiche.
+
+44: ownernow_playing anche conproducerlocale, categoria.playback nonmixable
+prima di metadata; worker solo preparazione restamixable e torna tale alclear.
+VecchieActivity custom chiuse all'avvio pertipoCastActivityAttributes; nessuna
+nuova richiestaActivityKit, rimosse UIduplicata e opzioneinattiva. Il vecchio
+bundlewidget rimane per compatibilità aggiornamenti, non viene riattivato.
+Scheda BGContinuedProcessing di iOS43 conservata: non è il player multimediale.
+Audio altrui può essere interrotto attivando una sessione primaria; iOS può dare
+il player a un'altra app quando ne parte l'audio. Collaudare cambioapp/interruzioni.
+
+Verifiche44: nativeprobe aggiunge assertcategoria nonmixable/metadata/seek e
+ritorno mixable dopo clear conworker vivo. FastSDK typecheck classeproduzione
+contro vere APIUIKit/AVFAudio/MediaPlayer/ActivityKit (soloVLChelper stub non
+modificato), oltre a regressioni43. Non equivale alla visibilitàsuLockScreen.
+Build44 e collaudo fisico da acquisire. Non cancellare nativo43/41910000713 con
+pushmain prematuro: preparare branchtest, integrare dopo che termina43.
+
+---
+
 # IPA43 pronta per collaudo background — 2026-11-04
 
 Codice390685200eb596b1e04b5411197497bd9a23faa0 integrato in

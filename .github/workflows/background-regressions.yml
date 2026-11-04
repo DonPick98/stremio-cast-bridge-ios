@@ -35,3 +35,19 @@ jobs:
           Path(os.environ['RUNNER_TEMP'],'BackgroundAdapter.swift').write_text(source)
           PY
           swiftc -swift-version 5 -typecheck -target arm64-apple-ios26.0-simulator -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" Sources/RDNativeResolver.swift Sources/PlaybackState.swift Sources/PlaybackDiagnostics.swift "$RUNNER_TEMP/BackgroundAdapter.swift"
+
+      - name: Typecheck production audio session and system media controls
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          source=Path('Sources/LockScreenPlayback.swift').read_text().replace('import MobileVLCKit\n','')
+          # Only the unchanged VLC helper dependency is stubbed here. UIKit,
+          # AVAudioSession, MediaPlayer and ActivityKit use the real iOS SDK.
+          source += "\nclass VLCMedia {init(path:String){}}\nclass VLCMediaPlayer {var isPlaying=false;var media:VLCMedia?;init(options:[String]){};func play(){};func stop(){}}\n"
+          root=Path(os.environ['RUNNER_TEMP'])
+          (root/'MediaControls.swift').write_text(source)
+          attributes=Path('Shared/CastActivityAttributes.swift').read_text().split('@MainActor enum CastActivityCommands')[0]
+          (root/'MediaAttributes.swift').write_text(attributes)
+          PY
+          swiftc -swift-version 5 -typecheck -target arm64-apple-ios16.1-simulator -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/PlaybackState.swift Sources/PlaybackDiagnostics.swift "$RUNNER_TEMP/MediaAttributes.swift" "$RUNNER_TEMP/MediaControls.swift"

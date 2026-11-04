@@ -480,7 +480,6 @@ private struct AppPreferencesView:View {
     @AppStorage("cast.preferred.subtitle") private var subtitle="auto"
     @AppStorage("cast.preferred.subtitleSource") private var subtitleSource="internal"
     @AppStorage("cast.controls.seekStep") private var seekStep=30.0
-    @AppStorage("cast.activity.enabled") private var liveActivity=true
     @AppStorage("cast.updates.automatic") private var automaticUpdates=false
     @AppStorage("cast.sources.order") private var sourceOrder="addon"
     @AppStorage("cast.sources.resolution") private var sourceResolution=0
@@ -526,12 +525,7 @@ private struct AppPreferencesView:View {
                     Picker("Salto avanti e indietro",selection:$seekStep) {
                         ForEach(PlaybackPreferences.seekSteps,id:\.self){value in Text("\(Int(value)) secondi").tag(value)}
                     }
-                    Toggle("Attività in tempo reale",isOn:$liveActivity)
-                    if liveActivity && !cast.liveActivitiesAllowed {
-                        Text("Le attività in tempo reale sono disattivate nelle impostazioni di iOS.").font(.footnote).foregroundStyle(.secondary)
-                        Button("Apri impostazioni iOS"){UIApplication.shared.open(URL(string:UIApplication.openSettingsURLString)!)}
-                    }
-                    Text("Mostra lo stato del video nella schermata di blocco e nella Dynamic Island.").font(.footnote).foregroundStyle(.secondary)
+                    Text("I controlli di riproduzione usano il player nativo di iOS. La trasmissione in background può mostrare una scheda di avanzamento separata gestita dal sistema.").font(.footnote).foregroundStyle(.secondary)
                     Button("Ripristina controlli") {confirmControlReset=true}
                 }
                 Section("Sottotitoli") {
