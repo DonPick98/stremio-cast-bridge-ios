@@ -1,3 +1,20 @@
+# Checkpoint diagnostica produttore - PR3
+Sorgente ab61085e061e304b6f30b603e7ac757df066b986, branchseparato
+feat/producer-diagnostics-20261104 da33acb7f. Nessuna nuovaIPA consegnata.
+Prova DLLWindowsPinned0.11.2 riuscita:12000ms,288frames,2campioni;
+non sostituisce iOS. Controlli41858529137(iOSstats) e41858528925(iPhone)
+ancoraQUEUED senza step avviati al checkpoint; verificare esito prima diintegrare.
+Test iOS prevede3conversioniTrueHD/AAC conunitàtempo eownership,
+stopidempotente eannullamento prima delclientHTTP,decodificafataldeglioutput.
+Report ogni15s+fine:producerSession,processed/elapsed(s),speed,fps,frames,
+bytes,dup/drop,sampleAge(s). Primo evento collega producerSession aoffset/audio.
+Speedpuòrisentire diinput/rete/encoder/backpressure/pausa; non è diagnosicausale
+némisura CPU oconsumobatteria. NessunURL/titolo/testoinstatistiche.
+Issue1:commenticoordinamento6634531126 e passaggiosuccessivo, statoCB019/012.
+Lasciare sottotitoliCB005/010 eoverlayseekCB009/021 all’altroagente.
+Non sovrascrivere suoi cambi inAudioRepairPipe/NativeEngineValidation duranteintegrazione.
+
+---
 # Coordinamento CB-019/012 - diagnostica produttore
 Branch feat/producer-diagnostics-20261104 da33acb7f; PR3 verso branchfix.
 Questa sessione lascia sottotitoli/overlay/seek all’altro agente (issue1 comment6634531126).
