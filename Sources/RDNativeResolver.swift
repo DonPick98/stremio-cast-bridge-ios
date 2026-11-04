@@ -108,10 +108,13 @@ struct VideoFormat: Equatable {
     // VLC 3's avcodec encoder quantizes millisecond Matroska timestamps to
     // whole frame ticks. Explicit NTSC cadence activates its fps timestamp
     // filter instead of rejecting adjacent pictures with duplicate tick values.
-    var vlcFractionalRate:String? {
+    var vlcFrameRate:String? {
         guard conversionFrameRate==nil,frameRate.isFinite else{return nil}
         for rate in [24000,30000,60000] where abs(frameRate-Double(rate)/1001)<0.002 {
             return "\(rate)/1001"
+        }
+        for rate in [24,25,30,50,60] where abs(frameRate-Double(rate))<0.002 {
+            return String(rate)
         }
         return nil
     }
