@@ -180,7 +180,11 @@ enum EmbeddedMediaError: LocalizedError {
         // Overlays need the same selected-track/AAC input at time zero as
         // after a seek. Otherwise EAC3/FLAC + ASS starts on an entirely
         // different decoder path and may fail before a Cast LOAD is sent.
-        let repairInput = repairAudio || offset > 0 || subtitleID != nil
+        // AAC stereo overlays can decode the original GOP through VLC's accurate
+        // seek. Packet-copy normalization discards its preroll and delays the
+        // first decodable picture until the next keyframe (e.g. +0.79 s).
+        let originalOverlay = subtitleID != nil && copyAudio && !repairAudio
+        let repairInput = !originalOverlay && (repairAudio || offset > 0 || subtitleID != nil)
         PlaybackDiagnostics.record(.producer,["phase":"input","kind":repairInput ? "normalized" : "original","audio":String(audioIndex),"subtitle":subtitleIndex.map{String($0)} ?? "none"])
         if repairInput {
             let repair = AudioRepairPipe(); audioRepair = repair
