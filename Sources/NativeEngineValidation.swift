@@ -48,7 +48,10 @@ import ObjectiveC
                 _ = try await repair.start(input:documents.appendingPathComponent("CodecSamples/truehd.mkv"),position:0,audioIndex:0,subtitleIndex:nil)
                 for _ in 0..<300 { if repair.finished { break }; try await Task.sleep(nanoseconds:100_000_000) }
                 let checked = try await EmbeddedMediaEngine.inspect(repairedFile)
-                result["decoder"] = ["passed":!repair.failed && repair.finished,"audio":checked.audioCodecsDescription,"video":checked.videoDescription]
+                let metrics=repair.productionMetrics() ?? [:]
+                let measured=(Double(metrics["mediaSeconds"] ?? "") ?? 0)>0 && (Double(metrics["wallSeconds"] ?? "") ?? 0)>0 && (Int(metrics["bytes"] ?? "") ?? 0)>0
+                result["decoder"] = ["passed":!repair.failed && repair.finished && measured,"audio":checked.audioCodecsDescription,"video":checked.videoDescription,"metrics":metrics]
+                trace("producer statistics \(measured ? "passed":"failed")")
             } catch { result["decoder"] = ["passed":false,"error":error.localizedDescription] }
             repair.stop()
             trace("core conversion")
@@ -78,7 +81,8 @@ import ObjectiveC
             }
             result["tracks"] = tracks
             result["bytes"] = (try FileManager.default.attributesOfItem(atPath:output.path)[.size] as? NSNumber)?.intValue ?? 0
-            result["passed"] = suspensionDelegate && mediaControls && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
+            let decoderPassed=(result["decoder"] as? [String:Any])?["passed"] as? Bool == true
+            result["passed"] = decoderPassed && suspensionDelegate && mediaControls && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
             let inspected = try await EmbeddedMediaEngine.inspect(input)
             result["inputAudio"] = inspected.audioCodecsDescription
             result["inputVideoConversion"] = inspected.requiresVideoConversion

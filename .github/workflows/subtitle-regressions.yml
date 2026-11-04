@@ -5,6 +5,7 @@ on:
     paths:
       - 'Sources/CaptionModel.swift'
       - 'Sources/SubtitleDocument.swift'
+      - 'Sources/PlayableStreamHeader.swift'
       - 'Sources/SubtitleCatalog.swift'
       - 'Sources/WebVTTTimeline.swift'
       - 'Sources/PlaybackPreferences.swift'

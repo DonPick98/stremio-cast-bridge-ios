@@ -338,6 +338,12 @@ import AVFAudio
         let device=UIDevice.current
         PlaybackDiagnostics.record(.snapshot,["phase":"energy","battery":device.batteryLevel < 0 ? "unknown":PlaybackDiagnostics.number(Double(device.batteryLevel)*100),"power":String(device.batteryState.rawValue),"thermal":String(ProcessInfo.processInfo.thermalState.rawValue),"lowPower":String(ProcessInfo.processInfo.isLowPowerModeEnabled),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
         guard let engine=nativeEngine else { return }
+        if var metrics=engine.productionMetrics() {
+            metrics["mode"]=String(describing:engine.diagnosticMode)
+            metrics["generation"]=String(streamRequests.generation.uuidString.prefix(8))
+            metrics["paused"]=String(!playWhenReady)
+            PlaybackDiagnostics.record(.producer,metrics)
+        }
         let source=sourceRequests.generation
         Task { [weak self,weak engine] in
             guard let self,let engine,let metrics=await engine.transferMetrics(),self.nativeEngine === engine,self.sourceRequests.accepts(source) else { return }

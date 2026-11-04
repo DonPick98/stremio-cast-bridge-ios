@@ -12,6 +12,26 @@ import Darwin
     }()
     static func required(_ codec:String) -> Bool { ["trhd","truehd","mlp"].contains(codec.lowercased()) }
     private var handle: UnsafeMutableRawPointer?
+    // Read synchronously on MainActor, while this instance still owns session.
+    // No raw backend output or media identifiers enter the diagnostic report.
+    func productionMetrics()->[String:String]? {
+        guard let handle else{return nil}
+        let count=ffmpeg_kit_session_get_statistics_count(handle)
+        guard count>0,let stats=ffmpeg_kit_session_get_statistics_at(handle,count-1) else{return nil}
+        defer{ffmpeg_kit_handle_release(stats)}
+        let frames=ffmpeg_kit_statistics_get_video_frame_number(stats)
+        let fps=ffmpeg_kit_statistics_get_video_fps(stats)
+        let bytes=ffmpeg_kit_statistics_get_size(stats)
+        let media=ffmpeg_kit_statistics_get_time(stats)/1000
+        let wall=ffmpeg_kit_statistics_get_time_elapsed(stats)/1000
+        let speed=ffmpeg_kit_statistics_get_speed(stats)
+        let duplicate=ffmpeg_kit_statistics_get_dup_frames(stats),dropped=ffmpeg_kit_statistics_get_drop_frames(stats)
+        guard frames>=0,bytes>=0,duplicate>=0,dropped>=0,
+              [fps,media,wall,speed].allSatisfy({$0.isFinite && $0>=0}) else{return nil}
+        return ["phase":"encode","frames":String(frames),"fps":PlaybackDiagnostics.number(fps),"bytes":String(bytes),
+                "mediaSeconds":PlaybackDiagnostics.number(media),"wallSeconds":PlaybackDiagnostics.number(wall),
+                "speed":PlaybackDiagnostics.number(speed),"duplicate":String(duplicate),"dropped":String(dropped)]
+    }
     private var monitor: Task<Void,Never>?
     private(set) var url: URL?
     private(set) var failed = false

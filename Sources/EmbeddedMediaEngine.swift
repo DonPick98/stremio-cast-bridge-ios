@@ -373,6 +373,7 @@ enum EmbeddedMediaError: LocalizedError {
         CastAudioSession.shared.acquire(audioOwner)
     }
     func refreshBackground() { updateBackground() }
+    func productionMetrics()->[String:String]? { audioRepair?.productionMetrics() }
     func transferMetrics() async -> LocalTransferMetrics? { await proxy?.transferMetrics() }
 #if CAST_ENGINE_TESTING
     private var testingVideoStopped = true

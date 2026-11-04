@@ -1,3 +1,27 @@
+# Metriche produttore — build34 candidata, 2026-11-04
+
+CB019/014: campionamento statistico del produttore FFmpeg accanto al trasferimento
+esistente, ogni snapshot15s. Narrow ABI verificata su wrapper.h/cpp upstream
+fac2076d06a473b8e1c1ed5a1fabe52ee974a5c0 (v0.11.2-ios), simboli già rilevati
+nel framework arm64 della build28. Nuovo handle statistiche rilasciato sempre;
+lettura MainActor senza suspension mentre il session handle è posseduto.
+Tempi SDK in ms convertiti in secondi: mediaSeconds/wallSeconds; frame, fps,
+byte, speed, duplicate/drop. Valori sentinella/nonfiniti rifiutati. Nessun URL,
+argomento FFmpeg o output grezzo nei log utente. Nessuna metrica inventata per
+producer VLC o assenza campioni. Speed è rapporto cumulativo e include attese/
+backpressure: <1 non prova carenzaCPU o banda. Non misura consumo energetico.
+
+Smoke test nativo TrueHD ora richiede statistiche vere (tempo media/parete e byte
+positivi), include campione nel report ed esito decoder nel gate complessivo.
+Compilazione/link e ABI runtime ancora da verificare in CI; non dichiarare passati.
+Testhardware batteria/background/buffering e gate125ms restano aperti.
+Correzione WebM completa a d490eb0bd2a842a73aac346248d7b92fc58dabcc:
+il primo tentativo5cfde59 correggeva solo channels; il compilatore segnalava invece
+la riduzione del tipo traccia. Ora guard unwrap obbligatorio, nessun headerWebM
+senzaTrackType accettato. Non attribuire il fallimento precedente ai runner.
+
+---
+
 # Binge-watching e CI — build33 candidata, 2026-11-04
 
 Branch fix/playback-recovery-20261103, PR2 draft. FT002: fino a tre sorgenti
