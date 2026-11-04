@@ -19,7 +19,9 @@ Il valore si propaga a UI, diagnostica e parametri di conversione. avg/nominale
 non concordanti o uno solo presente non autorizzano il filtroCFR di VLC: non
 basta un numero medio per provare cadenza fissa. Il flag fixedCadence autorizza
 solo il percorso già previsto con valori concordanti, non certifica ogniPTS.
-FFmpeg resta passthrough. Il GOP di circa2s ora arrotonda:23.976→48frame,
+FFmpeg resta passthrough alle cadenze supportate. Se una sorgente supera il
+limite già previsto (30fps1080/60fps720), il -r di riduzione usa cfr anziché
+combinare -r con passthrough, opzioni incompatibili nelle versioni recenti. Il GOP di circa2s ora arrotonda:23.976→48frame,
 29.97→60,59.94→120 entro limiti di risoluzione, invece di troncare a47/59.
 
 Regressioni:24000/1001, frazioni nulle/negative/nonfinite, JSONtroppogrande,
