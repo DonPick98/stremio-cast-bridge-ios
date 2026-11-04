@@ -1,0 +1,25 @@
+name: Validate app update metadata
+on:
+  push:
+    branches: [fix/playback-recovery-20261103]
+    paths:
+      - Sources/AppUpdate.swift
+      - Tests/AppUpdateTests.swift
+      - .github/workflows/update-regressions.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    container: swift:6.0.3-noble
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compile production metadata policy and test release fixtures
+        run: |
+          swiftc -swift-version 5 -parse-as-library Sources/AppUpdate.swift Tests/AppUpdateTests.swift -o /tmp/update-tests
+          /tmp/update-tests

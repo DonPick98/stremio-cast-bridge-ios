@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var showOnlineSubtitles = false
     @State private var diagnosticsCopied = false
     @State private var showPreferences=false
+    @ObservedObject private var updater=AppUpdater.shared
     @AppStorage("cast.controls.seekStep") private var storedSeekStep=30.0
     private var configuredSeekStep:Double {PlaybackPreferences.seekSteps.contains(storedSeekStep) ? storedSeekStep:30}
     var body: some View {
@@ -50,6 +51,7 @@ struct ContentView: View {
                     .frame(maxWidth:600).frame(maxWidth:.infinity)
             }.background(CastPalette.background).toolbar(.hidden,for:.navigationBar)
         }.preferredColorScheme(.dark).tint(CastPalette.accent)
+            .task{await updater.checkIfNeeded()}
             .sheet(isPresented:$showPreferences) { AppPreferencesView() }
             .sheet(isPresented:$cast.showSetup) { AddonSetupView().environmentObject(cast) }
             .sheet(isPresented:$showTrackOptions) { TrackOptionsView().environmentObject(cast) }
@@ -474,6 +476,8 @@ private struct AppPreferencesView:View {
     @AppStorage("cast.preferred.subtitle") private var subtitle="auto"
     @AppStorage("cast.controls.seekStep") private var seekStep=30.0
     @AppStorage("cast.activity.enabled") private var liveActivity=true
+    @AppStorage("cast.updates.automatic") private var automaticUpdates=false
+    @ObservedObject private var updater=AppUpdater.shared
     var body:some View {
         NavigationStack {
             Form {
@@ -510,6 +514,19 @@ private struct AppPreferencesView:View {
                     Button { showAppearance=true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
                     Text("La sincronizzazione si regola per il video corrente dal menu Sottotitoli.").font(.footnote).foregroundStyle(.secondary)
                 }
+                Section {
+                    LabeledContent("Versione installata",value:updater.currentLabel)
+                    Toggle("Controlla automaticamente",isOn:$automaticUpdates)
+                    Button {Task{await updater.check()}} label:{
+                        HStack{Text("Controlla aggiornamenti");if updater.busy{Spacer();ProgressView()}}
+                    }.disabled(updater.busy)
+                    Text(updater.message).font(.footnote).foregroundStyle(.secondary)
+                    if let update=updater.available {
+                        Text("Versione \(update.version) (\(update.build))").font(.headline)
+                        if !update.notes.isEmpty {DisclosureGroup("Novità"){Text(update.notes).font(.footnote)}}
+                        Button("Aggiorna con SideStore"){updater.install()}
+                    }
+                } header:{Text("Aggiornamenti")} footer:{Text("Il controllo automatico avviene all’apertura dell’app, al massimo una volta al giorno. Firma e installazione si completano in SideStore.")}
                 Section("Memoria locale") {
                     LabeledContent("Cache sottotitoli",value:ByteCountFormatter.string(fromByteCount:Int64(cast.captionCacheBytes),countStyle:.file))
                     Button("Svuota cache sottotitoli",role:.destructive){confirmCacheClear=true}
@@ -521,6 +538,7 @@ private struct AppPreferencesView:View {
             }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
         }
         .onAppear{cast.refreshCaptionCacheInfo()}
+        .onChange(of:automaticUpdates){_ in Task{await updater.checkIfNeeded()}}
         .confirmationDialog("Ripristinare i controlli?",isPresented:$confirmControlReset,titleVisibility:.visible){
             Button("Ripristina"){PlaybackPreferences.resetControls()}
             Button("Annulla",role:.cancel){}

@@ -13,6 +13,9 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: macos-26
@@ -37,6 +40,10 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/SeriesNavigationTests.swift -o "$RUNNER_TEMP/series-tests"
           "$RUNNER_TEMP/series-tests"
+      - name: Test update metadata policy
+        run: |
+          swiftc -parse-as-library Sources/AppUpdate.swift Tests/AppUpdateTests.swift -o "$RUNNER_TEMP/update-tests"
+          "$RUNNER_TEMP/update-tests"
       - name: Test complete subtitles, transport and language selection
         run: |
           swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"

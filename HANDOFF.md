@@ -1,3 +1,22 @@
+# Aggiornamenti inapp — build36 candidata, 2026-11-04
+
+FT005: impostazioni Aggiornamenti con checkmanuale, automatico opt-in a24h
+persistito, versione corrente, note, apertura SideStore install?url= (docs ufficiali).
+Solo latestrelease pubblica stabile del repository; richiede assetmanifest
+cast-bridge-update.json, versione/tag/build/minIOS/bundle canonico coerenti,
+unicaIPA HTTPS di quel repo/tag, dimensione1–500MiB e SHA256manifest uguale a
+digestassetGitHub. La coerenza metadati non è un download/hashlocale dell'IPA e
+non certifica la firma. Manifest64KiB/release512KiB, timeout20s, sessioneeffimera.
+Nessun token, installazione automatica o canaleartifacttemporanei. SeSideStore
+assente messaggio esplicito; firma/installazione/in-place restano da provare.
+Nessuna release pubblicata. Senza releasemanifest UI spiegaassenza/incompletezza.
+Formato/guida per produrla in Docs/UPDATES.md. TestpolicyLinuxSwift6 + Apple
+aggiunti; compilazioneapp e risultati ancora da acquisire. NuoviworkflowiPhone/
+nativo hanno concurrency perworkflow/ref: solo l'ultima candidata futuracon
+questogruppo; runstorici senza gruppo non vengono cancellati da questa modifica.
+
+---
+
 # UTF16 senzaBOM — build35 candidata, 2026-11-04
 
 CI finalmente eseguita: coreLinux build34 d9d4fe7/run41869981576/job126714094202
