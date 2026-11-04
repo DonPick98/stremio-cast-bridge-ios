@@ -79,14 +79,29 @@ import AVFAudio
             }
         }
     }
-    func openEpisodeInStremio() {
-        if episodeAutoplay != nil && !hasLoaded {resetPlayback()}
-        guard let target=fallbackEpisode,let url=SeriesNavigation.stremioURL(videoID:target.id,web:UserDefaults.standard.bool(forKey:"cast.series.webFallback")) else{return}
-        UIApplication.shared.open(url,options:[:]) { success in
-            if !success,let web=SeriesNavigation.stremioURL(videoID:target.id,web:true) {
-                Task { @MainActor in UIApplication.shared.open(web) }
+    func returnToStremio() {
+        // This navigation does not reset or cancel the playing Cast session.
+        openStremio(type:handoff?.type,id:handoff?.id)
+    }
+    private func openStremio(type:String?,id:String?) {
+        let web=UserDefaults.standard.bool(forKey:"cast.series.webFallback")
+        let url=StremioReturnLink.url(type:type,id:id,web:web)
+        UIApplication.shared.open(url,options:[:]) { [weak self] success in
+            guard !success else{return}
+            Task { @MainActor [weak self] in
+                if !web {
+                    let fallback=StremioReturnLink.url(type:type,id:id,web:true)
+                    UIApplication.shared.open(fallback,options:[:]) { [weak self] opened in
+                        if !opened {Task { @MainActor [weak self] in self?.message="Non riesco ad aprire Stremio. Riprova dal pulsante."}}
+                    }
+                } else {self?.message="Non riesco ad aprire Stremio Web. Riprova dal pulsante."}
             }
         }
+    }
+    func openEpisodeInStremio() {
+        if episodeAutoplay != nil && !hasLoaded {resetPlayback()}
+        guard let target=fallbackEpisode else{return}
+        openStremio(type:"series",id:target.id)
     }
     func moveEpisode(_ direction:Int,automatic:Bool=false) {
         guard !busy,!loading,!episodeBusy,let current=handoff,let target=adjacentEpisode(direction),

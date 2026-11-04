@@ -18,6 +18,13 @@ import Foundation
         for invalid in ["tt1","tt1:-1:2","tt1:1:2:3","https://private.example/token","tt1:one:2"] {precondition(SeriesNavigation.seriesID(invalid)==nil)}
         precondition(SeriesNavigation.stremioURL(videoID:"tt1:2:1",web:false)?.absoluteString == "stremio:///detail/series/tt1/tt1:2:1")
         precondition(SeriesNavigation.stremioURL(videoID:"tt1:2:1",web:true)?.host == "web.stremio.com")
+        precondition(StremioReturnLink.url(type:"movie",id:"tt123",web:false).absoluteString=="stremio:///detail/movie/tt123")
+        precondition(StremioReturnLink.url(type:"movie",id:"tt123",web:true).fragment=="/detail/movie/tt123")
+        precondition(StremioReturnLink.url(type:"series",id:"tt1:2:1",web:true).fragment=="/detail/series/tt1/tt1:2:1")
+        precondition(StremioReturnLink.url(type:nil,id:nil,web:true).absoluteString=="https://web.stremio.com/")
+        for id in ["https://example.test/private","../bad","tt1:1:2?secret=x","tt1:1:2#frag"] {
+            precondition(StremioReturnLink.url(type:"series",id:id,web:true).absoluteString=="https://web.stremio.com/")
+        }
         print("Series navigation: catalogue ordering, gaps, seasons, boundaries, future/unknown release and safe links passed")
     }
 }

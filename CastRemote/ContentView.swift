@@ -22,6 +22,10 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment:.leading,spacing:20) {
                     header
+                    Button {cast.returnToStremio()} label:{
+                        Label("Torna a Stremio",systemImage:"arrow.uturn.backward")
+                            .font(.subheadline.weight(.medium)).padding(.vertical,6)
+                    }.buttonStyle(.plain).foregroundStyle(CastPalette.accent)
                     HStack(alignment:.top,spacing:10) {
                         if cast.busy || cast.loading { ProgressView().controlSize(.small).padding(.top,2) }
                         Text(cast.message).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
@@ -492,9 +496,9 @@ private struct AppPreferencesView:View {
                     Toggle("Includi episodi speciali",isOn:$specials)
                 }
                 Section {
-                    Toggle("Preferisci Stremio Web",isOn:$webFallback)
+                    Toggle("Apri Stremio Web",isOn:$webFallback)
                     Toggle("Apri Stremio se la prossima puntata non parte",isOn:$autoReturn)
-                } header:{Text("Continua da Stremio")} footer:{Text("Al termine dei tentativi, Stremio si apre automaticamente solo se questa app è in primo piano. In background rimane il pulsante nel player. Il supporto ai collegamenti varia fra app e dispositivi.")}
+                } header:{Text("Continua da Stremio")} footer:{Text("Torna a Stremio apre il contenuto corrente senza interrompere il Cast. La web app della Home e la scheda originale non possono essere selezionate direttamente. Al termine dei tentativi, Stremio si apre automaticamente solo se questa app è in primo piano. In background rimane il pulsante nel player. Il supporto ai collegamenti varia fra app e dispositivi.")}
                 Section {
                     Picker("Audio preferito",selection:$audio) {languages(disabled:false)}
                     Picker("Sottotitoli preferiti",selection:$subtitle) {languages(disabled:true)}

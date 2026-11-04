@@ -1,3 +1,22 @@
+# Torna a Stremio — build39 candidata, 2026-11-04
+
+FT002: pulsante sempre disponibile sotto l'intestazione. Apre il contenutoIMDb
+corrente (film/episodio) o home senza resettare ilCast; preferenza app/web esistente,
+fallback HTTPS se lo schemaapp non viene aperto, errore esplicito se apertura fallisce.
+Anche il fallback episodio riusa il costruttore URL ristretto. Non si accettano
+returnURL arbitrari e non si usa un'API privata per cambiare app/scheda.
+L'handoff attuale non porta origine o identificatore finestra. Non dichiarare
+rilevamento automatico della provenienza né apertura garantita della PWAHome.
+Il ritorno alla stessa scheda/PWA resta un limite, non una funzione implementata.
+Fonti: https://stremio.github.io/stremio-addon-sdk/deep-links.html e documentazione
+Apple UIApplication.open / universal links / WWDC23 What's new in web apps.
+Test URL film/serie/home/ID nonvalidi aggiunti alla suiteSeriesNavigation; build39
+ancora da verificare. IPA già consegnata resta38 e non contiene questo pulsante.
+Prova reale necessaria: appStremio installata/assente, preferenzaweb, video attivo,
+film/serie e ritorno da browser/PWA. FT002 rimane IN_CORSO per i criteri residui.
+
+---
+
 # IPA38 consegnata per test — 2026-11-04
 
 Sorgente425c3e3af5c4f2603c4b9a4e7a694697846f3213, PR2 draft.

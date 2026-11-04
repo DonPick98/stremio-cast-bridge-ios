@@ -131,3 +131,19 @@ struct AutoplayRetryPlan {
         defer{cursor+=1};return ids[cursor]
     }
 }
+
+
+/// Only build first-party Stremio destinations, never an arbitrary return URL.
+enum StremioReturnLink {
+    static func url(type:String?,id:String?,web:Bool)->URL {
+        let root=web ? "https://web.stremio.com/":"stremio:///"
+        guard let type,let id,id.count<=100 else{return URL(string:root)!}
+        let path:String
+        if type=="series",let series=SeriesNavigation.seriesID(id) {
+            path="series/"+series+"/"+id
+        } else if type=="movie",id.range(of:"^tt[0-9]+$",options:.regularExpression) != nil {
+            path="movie/"+id
+        } else {return URL(string:root)!}
+        return URL(string:(web ? "https://web.stremio.com/#/detail/":"stremio:///detail/")+path)!
+    }
+}
