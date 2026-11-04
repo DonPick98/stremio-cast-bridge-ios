@@ -124,6 +124,7 @@ enum EmbeddedMediaError: LocalizedError {
         case .softwareVP8: append("vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=\(video?.conversionBitrate ?? 6000),maxwidth=1920,maxheight=1080")
         }
         if videoMode != .copy, let rate = video?.conversionFrameRate { append("fps=\(Int(rate))") }
+        else if videoMode == .hardwareH264,let rate=video?.vlcFractionalRate {append("fps=\(rate)")}
         if burn { append("soverlay") }
         let mux = webm ? "avformat{mux=webm,options={live=1},reset-ts}" : "avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof},reset-ts}"
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"

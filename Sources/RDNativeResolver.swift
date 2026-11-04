@@ -105,6 +105,16 @@ struct VideoFormat: Equatable {
         let limit: Double = height > 0 && height <= 720 ? 60 : 30
         return profile > 100 || (level > 0 && level > 42) || width > 1920 || height > 1080 || (frameRate.isFinite && frameRate > limit+0.01)
     }
+    // VLC 3's avcodec encoder quantizes millisecond Matroska timestamps to
+    // whole frame ticks. Explicit NTSC cadence activates its fps timestamp
+    // filter instead of rejecting adjacent pictures with duplicate tick values.
+    var vlcFractionalRate:String? {
+        guard conversionFrameRate==nil,frameRate.isFinite else{return nil}
+        for rate in [24000,30000,60000] where abs(frameRate-Double(rate)/1001)<0.002 {
+            return "\(rate)/1001"
+        }
+        return nil
+    }
     var conversionFrameRate: Double? {
         let limit: Double = height > 0 && height <= 720 ? 60 : 30
         return frameRate.isFinite && frameRate > limit+0.01 ? limit : nil
@@ -404,3 +414,4 @@ struct RDNativeResolver {
                (host == "real-debrid.com" && url.path.hasPrefix("/d/"))
     }
 }
+

@@ -1,4 +1,19 @@
-# 0.8.0 (23) — episodi e preferenze, in verifica
+# 0.8.1 (24) — verifica cadenza frazionaria VLC
+
+Il run nativo build23 41793318870 ha superato report interno, 35 casi codec,
+40 output decodificati, sei pixel check e background 65,139 s, ma FALLITO il
+controllo stretto h2642997: 92/120 frame, fps effettivi 23,30 anziché 29,97.
+Il log gateway VLC contiene ripetuti "same PTS" e rigetta i frame all'encoder.
+Build24 attiva fps=30000/1001 (e analoghi NTSC riconosciuti) solo nel fallback
+hardwareH264 VLC, conservando il percorso FFmpeg predefinito e le soglie receiver.
+Il test mantiene controlli precedenti e aggiunge frame count >=98% e SSIM >0,95
+per h2642997: nessuna soglia esistente allentata. Da verificare in CI, non dichiarare
+risolto il buffering utente o garantita la cadenza VFR del fallback VLC.
+Il checkpoint build23 sottostante conserva la IPA iPhone e le prove effettive.
+
+---
+
+# 0.8.0 (23) — episodi e preferenze
 
 FT-001: catalogo Cinemeta per ID IMDb canonici, precedente/successivo, ordine
 stagione/episodio da metadati reali, nessuna invenzione degli episodi mancanti.
@@ -15,7 +30,17 @@ Protezione autoplay anche per sottotitoli richiesti ma assenti. Preparazione
 sorgente/episodio mantiene un proprietario della sessione audio e un task
 background temporaneo, rilasciati su successo/errore/annullamento.
 Test nuovo: ordine, buchi, cambio stagione, limiti, future/ignote date e deep link.
-Build/test CI da verificare; nessun collaudo fisico o integrazione account dichiarati.
+Sorgente: 1763600e4eea8a7bfa5cdd10fa273dc1a852f812.
+Build iPhone e regressioni RIUSCITE: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41793318876
+IPA: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41793318876/artifacts/13304711001
+Pacchetto ispezionato: 0.8.0(23), receiver CC1AD845, background audio.
+SHA256 IPA: cd89aa4dc8c12072a8e7a4559a62226902ea6df700635c416135599fad5f6ae9.
+Test passati: navigazione/ordinamento/limiti/date, preferenze/off/auto, catalogo mock
+con GET, ID sbagliato/ostile, errori HTTP e dimensione, oltre alle regressioni esistenti.
+Workflow nativo esteso 41793318870 ancora in corso al checkpoint: non anticiparne
+il risultato. Il precedente b780061 aveva build iPhone riuscita ma run nativo failure
+con job cancelled e senza step/log; la causa non era disponibile.
+Nessun collaudo fisico o integrazione account dichiarati.
 
 ---
 

@@ -2,6 +2,11 @@ import Foundation
 
 @main struct PlaybackRegressions {
     static func main() {
+        let ntsc=VideoFormat(codec:"h264",width:320,height:180,frameRate:29.9706288)
+        precondition(ntsc.vlcFractionalRate=="30000/1001")
+        precondition(VideoFormat(codec:"h264",width:320,height:180,frameRate:25).vlcFractionalRate==nil)
+        precondition(VideoFormat(codec:"h264",width:1920,height:1080,frameRate:59.94).vlcFractionalRate==nil)
+        precondition(VideoFormat(codec:"h264",width:320,height:180,frameRate:0).vlcFractionalRate==nil)
         let episode = PlaybackContent(type:"series",id:"tt1234567:1:1")
         precondition(PlaybackResume.validated(4600.572,duration:2915) == 0)
         precondition(PlaybackResume.validated(2914,duration:2915) == 0)

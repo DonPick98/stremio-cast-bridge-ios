@@ -1,6 +1,14 @@
-# Cast Bridge iOS 0.8.0 (23) — episode navigation candidate
+# Cast Bridge iOS 0.8.1 (24) — episode navigation candidate
 
 Candidate on `fix/playback-recovery-20261103`, based on 0.7.1 (18). See [issue #1](https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1) and [HANDOFF.md](HANDOFF.md) for verification status. Physical background/subtitle/battery acceptance is pending. The candidate includes a direct FFmpeg PGS overlay path. Native CI passed the synthetic startup/seek bitmap checks; the user’s physical source still needs validation.
+
+The 0.8.0 candidate adds previous/next episode controls for Cinemeta IMDb series,
+using the catalogue's actual episode order, plus default series autoplay when the
+next episode is released and an equivalent source and requested tracks are available.
+Otherwise the app offers manual source selection or an explicit Stremio app/web action.
+Preferences save autoplay, equivalent-source choice, specials, return destination
+and audio/subtitle language choices. Original handoff origin, full app customization
+and Stremio account watched/resume synchronization remain unimplemented.
 
 iOS sender for Stremio video sources and Google Cast receivers. The app reads media tracks with MobileVLCKit and chooses direct playback, remuxing or local conversion automatically.
 
