@@ -103,8 +103,8 @@ enum PlayableStreamHeader {
                 var audio = false, video = false
                 for (_,entry) in try elements(Data(data[start..<(start+Int(size))])).filter({$0.0 == 0xAE}) {
                     let fields = try elements(entry)
-                    let typeData = fields.first(where:{$0.0 == 0x83})?.1 ?? Data()
-                    let type = typeData.reduce(UInt64(0)){($0<<8)|UInt64($1)}
+                    guard let typeField = fields.first(where:{$0.0 == 0x83}) else { throw StreamHeaderError.invalid }
+                    let type = typeField.1.reduce(UInt64(0)){($0<<8)|UInt64($1)}
                     let codec = fields.first(where:{$0.0 == 0x86}).flatMap{String(data:$0.1,encoding:.utf8)} ?? ""
                     if type == 1 { guard codec == "V_VP8" else { throw StreamHeaderError.unsupported }; video = true }
                     if type == 2 {
