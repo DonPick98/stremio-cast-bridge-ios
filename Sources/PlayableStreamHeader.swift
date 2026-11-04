@@ -110,7 +110,7 @@ enum PlayableStreamHeader {
                     if type == 2 {
                         guard ["A_VORBIS","A_OPUS"].contains(codec) else { throw StreamHeaderError.unsupported }
                         let details = try fields.first(where:{$0.0 == 0xE1}).map{try elements($0.1)} ?? []
-                        let channels = details.first(where:{$0.0 == 0x9F})?.1.reduce(UInt64(0)){($0<<8)|UInt64($1)} ?? 1
+                        let channels = details.first(where:{$0.0 == 0x9F}).map { $0.1.reduce(UInt64(0)){($0<<8)|UInt64($1)} } ?? 1
                         guard channels > 0 && channels <= 2 else { throw StreamHeaderError.unsupported }; audio = true
                     }
                 }
