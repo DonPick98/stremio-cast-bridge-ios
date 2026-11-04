@@ -5,10 +5,10 @@ Ordine operativo completo nella issue #1: prima integrità/seek, poi buffering e
 background, sottotitoli ancora problematici, binge-watching, sync Stremio,
 Live Activity, impostazioni restanti e compatibilità/ottimizzazioni misurate.
 
-CB-009/021 IN_CORSO: gli overlay con audio non copiabile dal Cast ma decodificabile
-in VLC evitano ora la normalizzazione packet-copy prima del seek. La conversione
-in AAC resta nella catena VLC; repairAudio esplicito (TrueHD) conserva il percorso
-precedente. Nessuna estensione del risultato a quel percorso o a VFR/hardware.
+CB-009/021 IN_CORSO: gli overlay EAC3 (oltre agli AAC/MP3 già copiabili) evitano ora la normalizzazione packet-copy prima del seek. La conversione
+in AAC resta nella catena VLC; repairAudio esplicito (TrueHD) e altre famiglie audio conservano il percorso
+precedente. Il codec viene passato esplicitamente dai metadati app/matrice;
+assenza di metadati non abilita la nuova strada. Nessuna estensione del risultato a quel percorso o a VFR/hardware.
 
 Riproduzione locale Linux HEVC10/EAC3, 23.976 fps, GOP48, seek3.25s:
 vecchio remux produce 192/210 frame, prima immagine a0.792s; decodifica diretta

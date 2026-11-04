@@ -130,7 +130,7 @@ enum EmbeddedMediaError: LocalizedError {
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false) async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false,audioCodec:String = "") async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         diagnosticMode = videoMode
         offset = start.isFinite ? max(0,start) : 0
@@ -177,13 +177,13 @@ enum EmbeddedMediaError: LocalizedError {
             return url
         }
         var producerInput = input
-        // Decode overlays on the original GOP whenever VLC can handle the audio.
+        // Decode overlays on the original GOP for the validated audio families.
         // Cast-incompatible audio (e.g. EAC3) still needs output conversion, but
         // does not itself require packet-copy normalization before decoding.
         // That normalization discards video preroll after a seek and delays the
         // first decodable picture until the next keyframe (e.g. +0.79 s).
         // Codecs that explicitly require repair (e.g. TrueHD) retain that path.
-        let originalOverlay = subtitleID != nil && !repairAudio
+        let originalOverlay = subtitleID != nil && !repairAudio && (copyAudio || ["eac3","ec-3"].contains(audioCodec.lowercased()))
         let repairInput = !originalOverlay && (repairAudio || offset > 0 || subtitleID != nil)
         PlaybackDiagnostics.record(.producer,["phase":"input","kind":repairInput ? "normalized" : "original","audio":String(audioIndex),"subtitle":subtitleIndex.map{String($0)} ?? "none"])
         if repairInput {

@@ -33,7 +33,7 @@ import MobileVLCKit
                     do {
                         let engine = EmbeddedMediaEngine(); defer { engine.stop() }
                         do {
-                            let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:item["start"] as? Double ?? 0,videoMode:mode,audioID:Int(audio.key.dropFirst(4)),subtitleID:subtitle.flatMap{Int($0.key.dropFirst(4))},style:SubtitleAppearance(),copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:original.audio.firstIndex(where:{$0.key == audio.key}) ?? 0,subtitleIndex:subtitle.flatMap{s in original.subtitles.firstIndex(where:{$0.key == s.key})},video:original.video,selfTest:true,bitmapSubtitle:bitmap)
+                            let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:item["start"] as? Double ?? 0,videoMode:mode,audioID:Int(audio.key.dropFirst(4)),subtitleID:subtitle.flatMap{Int($0.key.dropFirst(4))},style:SubtitleAppearance(),copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:original.audio.firstIndex(where:{$0.key == audio.key}) ?? 0,subtitleIndex:subtitle.flatMap{s in original.subtitles.firstIndex(where:{$0.key == s.key})},video:original.video,selfTest:true,bitmapSubtitle:bitmap,audioCodec:audio.codec)
                             let (body,_,eof) = try await NativeStreamCapture().read(url)
                             guard eof else { throw EmbeddedMediaError.encoder }
                             try body.write(to:output)

@@ -842,7 +842,7 @@ import AVFAudio
                         let repairAudio = AudioRepairPipe.required(audioTrack?.codec ?? "")
                         let audioIndex = prepared.audio.firstIndex(where:{$0.key == audio}) ?? 0
                         let subtitleIndex = prepared.subtitles.firstIndex(where:{$0.key == burnedSubtitle})
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video,bitmapSubtitle:bitmapSubtitle)
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video,bitmapSubtitle:bitmapSubtitle,audioCodec:audioTrack?.codec ?? "")
                         try self.validateStream(source:sourceToken,stream:streamToken)
                         guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, separateCaption ? self.captionIsIndependent:self.selectedSubtitle == subtitle,
                               separateCaption || (self.externalSubtitleURL == selection.external && self.subtitleIdentity == selection.captionIdentity),
