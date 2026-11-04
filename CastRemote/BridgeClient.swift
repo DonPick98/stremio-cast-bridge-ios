@@ -152,7 +152,12 @@ final class BridgeClient {
             return !s.descriptionText.localizedCaseInsensitiveContains("Comet public rate-limit exceeded")
         }
         guard !sources.isEmpty else { throw BridgeError.noSources }
-        return Array(sources.prefix(150))
+        return Self.orderedSources(Array(sources.prefix(150)))
+    }
+    static func orderedSources(_ sources:[AddonStream])->[AddonStream] {
+        SourcePreferences.ordered(sources){source in
+            (SourcePreferences.resolution(source.filename ?? source.descriptionText),source.behaviorHints?.videoSize)
+        }
     }
     func resolveDirect(_ stream: AddonStream) async throws -> URL {
         guard stream.behaviorHints?.proxyHeaders?.request?.isEmpty != false, let url = URL(string:stream.url), url.scheme == "https" else { throw BridgeError.cannotResolve }

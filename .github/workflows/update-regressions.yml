@@ -4,6 +4,8 @@ on:
     branches: [fix/playback-recovery-20261103]
     paths:
       - Sources/AppUpdate.swift
+      - Sources/SubtitleAppearance.swift
+      - Tests/SourcePreferencesTests.swift
       - Tests/AppUpdateTests.swift
       - .github/workflows/update-regressions.yml
   workflow_dispatch:
@@ -23,3 +25,5 @@ jobs:
         run: |
           swiftc -swift-version 5 -parse-as-library Sources/AppUpdate.swift Tests/AppUpdateTests.swift -o /tmp/update-tests
           /tmp/update-tests
+          swiftc -swift-version 5 -parse-as-library Sources/SubtitleAppearance.swift Tests/SourcePreferencesTests.swift -o /tmp/source-tests
+          /tmp/source-tests

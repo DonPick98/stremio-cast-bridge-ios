@@ -477,6 +477,8 @@ private struct AppPreferencesView:View {
     @AppStorage("cast.controls.seekStep") private var seekStep=30.0
     @AppStorage("cast.activity.enabled") private var liveActivity=true
     @AppStorage("cast.updates.automatic") private var automaticUpdates=false
+    @AppStorage("cast.sources.order") private var sourceOrder="addon"
+    @AppStorage("cast.sources.resolution") private var sourceResolution=0
     @ObservedObject private var updater=AppUpdater.shared
     var body:some View {
         NavigationStack {
@@ -498,6 +500,20 @@ private struct AppPreferencesView:View {
                     Picker("Sottotitoli preferiti",selection:$subtitle) {languages(disabled:true)}
                 } header:{Text("Lingue")} footer:{Text("Le preferenze si applicano alle prossime selezioni. Puoi cambiare traccia per il video corrente dal player.")}
 
+                Section {
+                    Picker("Risoluzione preferita",selection:$sourceResolution) {
+                        Text("Dall’add-on").tag(0)
+                        Text("Fino a 720p").tag(720)
+                        Text("Fino a 1080p").tag(1080)
+                        Text("Fino a 2160p").tag(2160)
+                    }
+                    Picker("Ordine per dimensione",selection:$sourceOrder) {
+                        Text("Dall’add-on").tag("addon")
+                        Text("Più piccole prima").tag("small")
+                        Text("Più grandi prima").tag("large")
+                    }
+                    Button("Ripristina ordine sorgenti"){SourcePreferences.reset()}
+                } header:{Text("Sorgenti")} footer:{Text("Ordina le sorgenti senza nasconderle. Usa risoluzione e dimensione quando riconoscibili; i dati mancanti rimangono visibili. Vale anche per i tentativi automatici equivalenti. Non cambia il video già avviato né la qualità di conversione.")}
                 Section("Stremio") {
                     NavigationLink("Libreria e punto di ripresa"){StremioSettingsView()}
                 }
@@ -541,6 +557,8 @@ private struct AppPreferencesView:View {
             }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
         }
         .onAppear{cast.refreshCaptionCacheInfo()}
+        .onChange(of:sourceOrder){_ in cast.reorderSources()}
+        .onChange(of:sourceResolution){_ in cast.reorderSources()}
         .onChange(of:automaticUpdates){_ in Task{await updater.checkIfNeeded()}}
         .confirmationDialog("Ripristinare i controlli?",isPresented:$confirmControlReset,titleVisibility:.visible){
             Button("Ripristina"){PlaybackPreferences.resetControls()}

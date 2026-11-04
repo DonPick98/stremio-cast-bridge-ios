@@ -658,6 +658,7 @@ import AVFAudio
             return false
         }
     }
+    func reorderSources(){sources=BridgeClient.orderedSources(sources)}
     func changeSource() {
         clearSubtitleChoices()
         PlaybackDiagnostics.record(.source,["phase":"chooser","position":PlaybackDiagnostics.number(position)])

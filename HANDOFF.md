@@ -1,3 +1,23 @@
+# Ordine sorgenti — build38 candidata, 2026-11-04
+
+FT003: preferenza risoluzione (addon/720/1080/2160) e dimensioni
+(addon/piccole/grandi), reset isolato. Ordine applicato a elenco e candidati
+equivalenti del binge; cambiamento live della lista non sostituisce la sorgente
+in riproduzione. Default lascia esattamente ordineaddon. Nessuna sorgente nascosta:
+conrisoluzione preferita, entropreferenza prima (piùvicina), poi sconosciute, poi
+superiori. Dimensione soltanto metadatapositivo; ignoti stabilmente in fondo nel
+propriogruppo. Filename/descrizione con un solo tokenrisoluzione esplicito; ambigui
+restano ignoti. Non è limite di transcodifica, qualitàcodec né stimadiCPU/batteria.
+Teststableorder/tier/size/unknown/ambigui/reset aggiunti Linux e iPhone.
+FT003 resta parziale: temi/accessibilità/impostazioniconversione non completati.
+
+CoreStremio37 f68ba4e/run41875282378 SUCCESSO Linux, inclusoAPI mock e outbox:
+formatoupstream, units/merge/conflitti/ricevute/idempotenza/ripresa e coalescenza.
+Build37 iPhone41875282441 era inprogress alcheckpoint; nessun nuovo esito hardware.
+Non confondere coremockpassato conlogin reale o scrittura libreriaaccount.
+
+---
+
 # Stremio — build37 candidata, 2026-11-04
 
 FT004 implementato come opt-in nelle impostazioni, da verificare. Protocollo e

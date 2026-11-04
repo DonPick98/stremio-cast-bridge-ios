@@ -44,6 +44,10 @@ jobs:
         run: |
           swiftc -parse-as-library -import-objc-header Sources/StremioZlib.h Sources/StremioLibrary.swift Tests/StremioLibraryTests.swift -lz -o "$RUNNER_TEMP/library-tests"
           "$RUNNER_TEMP/library-tests"
+      - name: Test source ranking preferences
+        run: |
+          swiftc -parse-as-library Sources/SubtitleAppearance.swift Tests/SourcePreferencesTests.swift -o "$RUNNER_TEMP/source-preferences-tests"
+          "$RUNNER_TEMP/source-preferences-tests"
       - name: Test update metadata policy
         run: |
           swiftc -parse-as-library Sources/AppUpdate.swift Tests/AppUpdateTests.swift -o "$RUNNER_TEMP/update-tests"
