@@ -49,6 +49,15 @@ enum SubtitleDocument {
         if data.starts(with:[0xff,0xfe,0x00,0x00]) || data.starts(with:[0x00,0x00,0xfe,0xff]) {return String(data:data,encoding:.utf32)}
         if data.starts(with:[0xff,0xfe]) || data.starts(with:[0xfe,0xff]) {return String(data:data,encoding:.utf16)}
         if let text=String(data:data,encoding:.utf8),!text.contains("\0"){return text}
+        // NSString detection may classify BOM-less UTF16 as a byte encoding.
+        // Try explicit byte order only when NUL bytes and a decoded subtitle
+        // marker agree. The complete parser still validates every cue below.
+        if data.count.isMultiple(of:2),data.contains(0) {
+            for encoding in [String.Encoding.utf16LittleEndian,.utf16BigEndian] {
+                if let text=String(data:data,encoding:encoding),!text.contains("\0"),
+                   text.contains("-->") || text.range(of:"[Events]",options:.caseInsensitive) != nil{return text}
+            }
+        }
         #if canImport(ObjectiveC)
         var decoded:NSString? = nil
         var lossy:ObjCBool=false

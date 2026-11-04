@@ -31,10 +31,7 @@ import Foundation
         let unicode="1\n00:00:01,000 --> 00:00:02,000\nCaffè 日本語"
         let little=Data([0xff,0xfe,0,0])+unicode.data(using:.utf32LittleEndian)!
         let big=Data([0,0,0xfe,0xff])+unicode.data(using:.utf32BigEndian)!
-        var encodings=[Data(unicode.utf8),little,big,unicode.data(using:.utf16)!]
-        #if canImport(ObjectiveC)
-        encodings.append(unicode.data(using:.utf16LittleEndian)!)
-        #endif
+        let encodings=[Data(unicode.utf8),little,big,unicode.data(using:.utf16)!,unicode.data(using:.utf16LittleEndian)!,unicode.data(using:.utf16BigEndian)!]
         for (index,data) in encodings.enumerated() {
             let result=try normalize(data,case:"encoding \(index)")
             precondition(result.contains("Caffè 日本語"))

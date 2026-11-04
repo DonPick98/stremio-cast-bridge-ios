@@ -1,3 +1,20 @@
+# UTF16 senzaBOM — build35 candidata, 2026-11-04
+
+CI finalmente eseguita: coreLinux build34 d9d4fe7/run41869981576/job126714094202
+PASSATO, sia OpenSourceSubtitleTests che WebVTTTimeline. Questo verifica parser/
+encoding conBOM e clocks suLinux, non reteApple o iPhone. Correzione WebM unwrap
+ora compilata conSwift6.0.3. Build iPhone5cfde59/run41868706050 fallita nel caso
+Apple encoding4: UTF16LE senzaBOM. L'etichetta del test identifica la causa;
+NSString non riconosce questo campione e il filtroNUL rifiuta il risultato.
+
+Correzione35: per documenti conNUL/bytepari, tenta esplicitamente LE/BE e richiede
+un marker sottotitoli decodificato; validazione completa dei cue invariata. Due
+casi senzaBOM ora verificati anche suLinux, oltre al decoderNSString suApple.
+Nessun test rimosso o gate ridotto. Build35/testApple ancora da acquisire;
+non dichiarare IPA35 né chiudere CB005/010 originali o gate125ms.
+
+---
+
 # Seek: identità dei frame, checkpoint build34 — 2026-11-04
 
 CB009/021: la fixture HEVC/EAC3/13ASS ora identifica ogni immagine con12 barre
