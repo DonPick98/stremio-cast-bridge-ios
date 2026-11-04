@@ -1,3 +1,49 @@
+# Checkpoint sottotitoli — 0.8.1 (30), 2026-11-04
+
+Sorgente applicativa241be82673344f4755f0ccd48c58ba5a01163489; test/workflow
+d55b0a870986baad03a1ea97bdbeb2a9fbd09c1f. Stesso branch/PR2 draft.
+CB022/023 IMPLEMENTATO_DA_VERIFICARE; CB005/010 storici ancora IN_ANALISI.
+CB009/021125ms ancora aperti; nuovo gate nativo NON rimosso o allentato.
+
+Verifiche richieste, tutte ancora QUEUED senza runner assegnato al checkpoint:
+- documenti/cache/trasporto/preferenze: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41858736236
+- build iPhone: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41858736480
+- integrazione nativa: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41858736286
+Non dire che hanno passato test, compilazione o creato una IPA30. Swift/Xcode
+non disponibili localmente; controlli locali solo revisione del diff e whitespace.
+Una nuova failure sul noto salto125ms resta distinta da eventuali regressioni
+caption; leggere report, test documenti e sei pixel check senza inventare esiti.
+
+Documenti completi: SRT senza separatori normalizzati in battute distinte;
+numeri nei payload non indicizzati conservati. WebVTT vuoti/intestazione falsa/
+battute malformate respinti prima di sostituire la scelta. Le finestre di silenzio
+incrementali restano valide in CaptionDocument. La cache persistente esistente
+valida all'accesso e scarta file vuoti/malformati senza cancellare tutta la cache;
+put invalida non rimpiazza documento valido. Stessa regola per estrazioni complete
+integrate e download, ma il caso storico vlc_3 era overlay con codec sconosciuto.
+
+Esterni fonte: lingua preferita salvata + alias/regioni, lingua effettiva passata
+a PlaybackPreferences; off e scelte manuali preservati, niente ripiego in altra
+lingua. Handoff privo di lingua mantiene precedente default inglese.
+Retry riuscito pulisce cache negativa; log formato/limite conserva provenienza
+in kind e motivo in result. Nessun URL/testo/token nuovo nei log.
+
+Test aggiunti: formati validi, note/markup, UTF16/SRT senza separatori, file vuoti/
+HTML/malformati, HTTP404/limite1MiB/HTTPS/annullamento via URLProtocol, cache legacy
+e LRU/budget con documenti reali, lingue diverse dall'handoff e fallback discordanti.
+Il pool macos-15-intel per il test focalizzato è documentato dal README ufficiale
+actions/runner-images; al checkpoint anche questo job è in coda. Non attribuire
+la coda a quote/fatturazione/outage senza evidenze.
+
+Prima di proseguire: leggere gli esiti dei tre run, correggere eventuali failure
+e aggiornare issue1. Se restano in coda, non rilanciare job duplicati. Le prime
+sorgenti3f9560a/f382d3e sono intermedie: f382 ha test budget precedente, corretto
+a80byte in241be82; le sorgenti applicative sono altrimenti uguali. Nessun collaudo
+iPhone/Chromecast reale o soluzione generale dei sottotitoli dichiarati.
+
+---
+
+
 # Sottotitoli — build30 in verifica, 2026-11-04
 
 Richiesta utente corrente: lavorare sui sottotitoli, prima di proseguire gli altri task.
