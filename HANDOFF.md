@@ -6,6 +6,9 @@ controllo stretto h2642997: 92/120 frame, fps effettivi 23,30 anziché 29,97.
 Il log gateway VLC contiene ripetuti "same PTS" e rigetta i frame all'encoder.
 Build24 attiva fps=30000/1001 (e analoghi NTSC riconosciuti) solo nel fallback
 hardwareH264 VLC, conservando il percorso FFmpeg predefinito e le soglie receiver.
+Prova locale del verificatore: clip completa 120 frame/SSIM 0,999163 accettata;
+clip con frame rimossi 90 frame/SSIM 0,775184 respinta. Confronto per indice su
+base temporale comune per evitare falsi negativi fra Matroska/MP4.
 Il test mantiene controlli precedenti e aggiunge frame count >=98% e SSIM >0,95
 per h2642997: nessuna soglia esistente allentata. Da verificare in CI, non dichiarare
 risolto il buffering utente o garantita la cadenza VFR del fallback VLC.

@@ -37,7 +37,7 @@ const rows=(report.quality||[]).map(item=>{
   const frameCountOK=item.offset>0||actual.frames>=input.frames*0.98;
   let ssim=null;
   if(item.name==='h2642997'){
-   const checked=spawnSync(ffmpeg,['-hide_banner','-i',original,'-i',output,'-filter_complex','[0:v]setpts=PTS-STARTPTS[a];[1:v]setpts=PTS-STARTPTS[b];[a][b]ssim','-an','-f','null','-'],{encoding:'utf8',maxBuffer:2e6});
+   const checked=spawnSync(ffmpeg,['-hide_banner','-i',original,'-i',output,'-filter_complex','[0:v]settb=1/30000,setpts=N*1001[a];[1:v]settb=1/30000,setpts=N*1001[b];[a][b]ssim=shortest=1','-an','-f','null','-'],{encoding:'utf8',maxBuffer:2e6});
    ssim=Number(checked.stderr.match(/All:([0-9.]+)/)?.[1]||0);
    if(checked.status!==0)throw Error('Fractional-cadence picture comparison failed');
   }
