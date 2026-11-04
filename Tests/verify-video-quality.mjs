@@ -35,17 +35,24 @@ const rows=(report.quality||[]).map(item=>{
   const sameRate=Math.abs(input.fps-actual.fps)<0.005&&actual.cadenceError<0.002;
   const durationOK=Math.abs(item.duration-actual.duration)<0.35;
   const frameCountOK=item.offset>0||actual.frames>=input.frames*0.98;
-  let ssim=null;
+  let ssim=null,ssimLag=null;
   if(item.name==='h2642997'){
-   const checked=spawnSync(ffmpeg,['-hide_banner','-i',original,'-i',output,'-filter_complex','[0:v]settb=1/30000,setpts=N*1001[a];[1:v]settb=1/30000,setpts=N*1001[b];[a][b]ssim=shortest=1','-an','-f','null','-'],{encoding:'utf8',maxBuffer:2e6});
-   ssim=Number(checked.stderr.match(/All:([0-9.]+)/)?.[1]||0);
-   if(checked.status!==0)throw Error('Fractional-cadence picture comparison failed');
+   // A constant one-frame codec/filter startup offset is permitted; irregular
+   // loss remains bounded by frame count, cadence and aligned picture quality.
+   for(const lag of [0,-1,1]){
+    const a=`trim=start_frame=${Math.max(0,lag)},settb=1/30000,setpts=N*1001`;
+    const b=`trim=start_frame=${Math.max(0,-lag)},settb=1/30000,setpts=N*1001`;
+    const checked=spawnSync(ffmpeg,['-hide_banner','-i',original,'-i',output,'-filter_complex',`[0:v]${a}[a];[1:v]${b}[b];[a][b]ssim=shortest=1`,'-an','-f','null','-'],{encoding:'utf8',maxBuffer:2e6});
+    if(checked.status!==0)throw Error('Fractional-cadence picture comparison failed');
+    const score=Number(checked.stderr.match(/All:([0-9.]+)/)?.[1]||0);
+    if(ssim===null||score>ssim){ssim=score;ssimLag=lag;}
+   }
   }
   let bitExact=null,seekError=null;
   if(item.copyVideo){const source=hashes(original),copied=hashes(output);if(item.offset===0)bitExact=JSON.stringify(source)===JSON.stringify(copied);else {const index=source.indexOf(copied[0]);seekError=index<0?null:Math.abs(index/input.fps-item.offset-actual.first);}}
   const audio=sound(output,item.tone);
-  const passed=item.passed&&sameDimensions&&sameRate&&durationOK&&frameCountOK&&(ssim===null||ssim>0.95)&&audio.passed&&(item.copyVideo?(item.offset===0?bitExact:seekError!==null&&seekError<0.75):true);
-  return {name:item.name,input,actual,bitExact,seekError,audio,frameCountOK,ssim,passed};
+  const passed=item.passed&&sameDimensions&&sameRate&&durationOK&&frameCountOK&&(ssim===null||ssim>0.99)&&audio.passed&&(item.copyVideo?(item.offset===0?bitExact:seekError!==null&&seekError<0.75):true);
+  return {name:item.name,input,actual,bitExact,seekError,audio,frameCountOK,ssim,ssimLag,passed};
  }catch(error){return {name:item.name,passed:false,error:error.message};}
 });
 const result={passed:rows.length===10&&rows.every(x=>x.passed),rows};

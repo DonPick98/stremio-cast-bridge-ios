@@ -1,0 +1,46 @@
+name: Audit captured native media
+on:
+  push:
+    branches: [fix/playback-recovery-20261103]
+    paths:
+      - Tests/verify-video-quality.mjs
+      - Tests/VideoQualityAuditTests.mjs
+      - .github/workflows/audit-captured-media.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Require unchanged application source for the pinned capture
+        run: |
+          git diff --exit-code 40e401efe426a823c251dc7f57d9a53b2e83b580 HEAD -- CastRemote Sources CastRemote.xcodeproj Shared CastLiveActivity Receiver ThirdParty Podfile Podfile.lock
+      - name: Install media audit tools
+        run: |
+          if ! command -v ffmpeg; then sudo apt-get update && sudo apt-get install -y ffmpeg; fi
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: embedded-engine-evidence
+          run-id: 41796455819
+          github-token: ${{ github.token }}
+          path: captured-media
+      - name: Test the auditor against complete, shifted, dropped and repeated frames
+        run: node Tests/VideoQualityAuditTests.mjs
+      - name: Decode and audit the actual captured iOS output
+        run: |
+          node Tests/verify-decoded-media.mjs captured-media Tests/CodecSamples/h264-ac3.mkv
+          node Tests/verify-video-quality.mjs captured-media
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: captured-media-audit
+          path: |
+            captured-media/decoded-output-check.json
+            captured-media/video-quality-check.json
+          if-no-files-found: ignore

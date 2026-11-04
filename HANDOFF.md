@@ -9,8 +9,17 @@ hardwareH264 VLC, conservando il percorso FFmpeg predefinito e le soglie receive
 Prova locale del verificatore: clip completa 120 frame/SSIM 0,999163 accettata;
 clip con frame rimossi 90 frame/SSIM 0,775184 respinta. Confronto per indice su
 base temporale comune per evitare falsi negativi fra Matroska/MP4.
-Il test mantiene controlli precedenti e aggiunge frame count >=98% e SSIM >0,95
-per h2642997: nessuna soglia esistente allentata. Da verificare in CI, non dichiarare
+Il test mantiene controlli precedenti e aggiunge frame count >=98% e SSIM >0,99 con allineamento fisso massimo di un frame
+per h2642997: soglia immagini più stretta; la tolleranza di startup è esplicita.
+Controlli del verificatore: clip completa e ritardata di un frame accettate;
+clip con 90 frame e clip con 120 frame ripetuti irregolarmente respinte.
+Workflow Audit captured native media riusa la cattura iOS 41796455819 soltanto
+se git diff prova identico codice applicativo rispetto a 40e401. Esegue il nuovo
+audit su tutti i media reali catturati e controlli sintetici su Linux; non è un nuovo
+run del simulatore e non va descritto come tale. Aggiornare cattura e guardia prima
+di riusarlo per sorgenti applicative diverse. Risultati ancora da verificare in CI.
+Analisi del file iOS intermedio: 119/120 frame, fps 29,9700 e SSIM 0,999003
+con ritardo costante di un frame; confronto senza allineamento 0,912491. Da verificare in CI, non dichiarare
 risolto il buffering utente o garantita la cadenza VFR del fallback VLC.
 Il checkpoint build23 sottostante conserva la IPA iPhone e le prove effettive.
 
