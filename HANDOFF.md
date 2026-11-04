@@ -1,3 +1,34 @@
+# IPA45 pronta — framerate e player nativo, 2026-11-04
+
+Sorgente349e37ade48e5a71be8f4e0795facbc773e8e1e8, branchfix ePR2 draft.
+iPhone41916741549 SUCCESSO, artifact13365990544 estratto/verificato: app e
+estensione0.8.1/build45, receiverCC1AD845, backgroundaudio+processing e namespaceBG.
+IPA unsigned33533340byte,SHA256f09f626f6b253d26caba656d59cc0ab60ea2e4b739c8cb0bc78bc4d10af22cc4,
+CastBridge-0.8.1-45-unsigned.ipa disponibile nella chat perSideStore. Include44.
+Nessun identificatore privato della chat necessario nel repository pubblico.
+
+Policy/SDK41916478271 PASSATI sulla logica/parser3e3f129; unica modifica dopo
+349e37a rendeCFR soltanto il capfps giàprevisto. CLI6.1.1 fixtureHEVCprobe24000/1001;
+H264software48/48frame/2s a24000/1001, cap60→30 produce60frame/2s. Build45 app
+completa passata. Nativo45/41916741542 in corso: acquisire sourceCadenceProbe
+(reale backend HEVC1080NTSC), matrice e gate esterni. Non attribuire questi test
+locali al codificatore iPhone né dichiarare FPS/scatti della fonteprivata risolti.
+
+Native44/41913763082: systemMediaControls,systemMediaSessionNonMixable,
+preparationAudioMixesAfterClear tuttiTRUE; H264offscreen65.096s/7.34MB PASSATO,
+pausa/ripresa/cleanup. Run complessivoFAIL al gateVLCseek212/210frame,125.125ms,
+identitàiniziali73,73,77,77 invece79. Nessuna sogliaallentata. CB009/021 aperto.
+CB011 e nuova patchFPS IMPLEMENTATO_DA_VERIFICARE suhardware. Ricaricare stessa
+fonte: guardare metadata cadence ffprobe/fps/status eFPSUI; provare fluidità,
+seek/tracce/background e player nativo (senza vecchiaActivityKitcustom).
+Screenshot segnala anche catalogoepisodi indisponibile, FT001/002 ancora aperto.
+
+Questo checkpoint sul branchtest evita unnuovo buildmain solo documentale;
+integrare dopo nativo45 conHEADfresco. Issue1 resta canonica, prossima append
+richiede archiviare partecronologia (corpo vicino limite65k), senza perdere storia.
+
+---
+
 # Framerate VLC mancante — build45 candidata, 2026-11-04
 
 Nuova segnalazione: fpsnonrilevati perHEVC1080 e lievi scatti. UIzero non prova
