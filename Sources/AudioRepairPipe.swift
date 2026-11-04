@@ -17,6 +17,41 @@ import Darwin
     private(set) var failed = false
     private(set) var finished = false
     private(set) var exitCode:Int64?
+    private(set) var latestStatistics:[String:String]?
+    private var statisticsDeadline = Date.distantPast
+    private var statisticsCount:Int64 = 0
+    private var statisticsUpdated = Date()
+    private var diagnosticMode = "video_copy"
+
+    // Called only on MainActor while this instance still owns the session.
+    // There is no suspension between the ownership check and releasing the
+    // owned Statistics handle; stop cannot release the session concurrently.
+    private func sampleStatistics(final:Bool = false) {
+        guard let handle, final || Date() >= statisticsDeadline else { return }
+        let now = Date(); statisticsDeadline = now.addingTimeInterval(15)
+        let count = ffmpeg_kit_session_get_statistics_count(handle)
+        if count != statisticsCount { statisticsCount = count; statisticsUpdated = now }
+        var fields = ["phase":"statistics","mode":diagnosticMode,
+                      "producerSession":String(ffmpeg_kit_session_get_session_id(handle)),
+                      "sampleAge":PlaybackDiagnostics.number(now.timeIntervalSince(statisticsUpdated))]
+        guard count > 0, let sample = ffmpeg_kit_session_get_statistics_at(handle,count-1) else {
+            fields["phase"] = "statistics_wait"
+            PlaybackDiagnostics.record(.producer,fields); return
+        }
+        defer { ffmpeg_kit_handle_release(sample) }
+        func integer(_ key:String,_ value:Int64) { if value >= 0 { fields[key] = String(value) } }
+        func number(_ key:String,_ value:Double) { if value.isFinite && value >= 0 { fields[key] = PlaybackDiagnostics.number(value) } }
+        integer("frames",ffmpeg_kit_statistics_get_video_frame_number(sample))
+        integer("bytes",ffmpeg_kit_statistics_get_size(sample))
+        integer("dup",ffmpeg_kit_statistics_get_dup_frames(sample))
+        integer("drop",ffmpeg_kit_statistics_get_drop_frames(sample))
+        number("fps",ffmpeg_kit_statistics_get_video_fps(sample))
+        number("processed",ffmpeg_kit_statistics_get_time(sample)/1000)
+        number("elapsed",ffmpeg_kit_statistics_get_time_elapsed(sample)/1000)
+        number("speed",ffmpeg_kit_statistics_get_speed(sample))
+        latestStatistics = fields
+        PlaybackDiagnostics.record(.producer,fields)
+    }
 #if CAST_ENGINE_TESTING
     private(set) var testingStopCompleted = true
     var testingOutput: URL?
@@ -33,6 +68,9 @@ import Darwin
 
     func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0) async throws -> URL {
         _ = Self.initialized
+        latestStatistics = nil; statisticsDeadline = .distantPast
+        statisticsCount = 0; statisticsUpdated = Date()
+        diagnosticMode = bitmapSubtitleIndex != nil ? "bitmap_overlay" : transcodeVideo != nil ? "video_convert" : "video_copy"
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
               audioIndex >= 0, position.isFinite, position >= 0 else { throw EmbeddedMediaError.encoder }
         let port = try EmbeddedMediaEngine.freeLoopbackPort()
@@ -100,6 +138,7 @@ import Darwin
                 guard let self, let h = self.handle else { return }
                 let state = ffmpeg_kit_session_get_state(h)
                 if state == 2 || state == 3 {
+                    self.sampleStatistics(final:true)
                     self.exitCode = ffmpeg_kit_session_get_return_code(h)
                     self.failed = state == 3 || self.exitCode != 0
                     self.finished = true
@@ -109,6 +148,7 @@ import Darwin
 #endif
                     return
                 }
+                self.sampleStatistics()
                 try? await Task.sleep(nanoseconds:100_000_000)
             }
         }
@@ -133,6 +173,7 @@ import Darwin
         return result != 0 && errno == EADDRINUSE
     }
     func stop() {
+        sampleStatistics(final:true)
         monitor?.cancel(); monitor = nil
         if let handle {
 #if CAST_ENGINE_TESTING

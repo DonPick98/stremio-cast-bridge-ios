@@ -17,6 +17,9 @@ import ObjectiveC
     }
     static func run() async {
         let documents = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
+        if ProcessInfo.processInfo.environment["CAST_PRODUCER_STATS_ONLY"] == "1" {
+            await statisticsProbe(documents:documents); return
+        }
         let report = documents.appendingPathComponent("engine-validation.json")
         let input = documents.appendingPathComponent("h264-ac3.mkv")
         let output = documents.appendingPathComponent("converted.mp4")
@@ -145,6 +148,34 @@ import ObjectiveC
         let (body,_,eof) = try await NativeStreamCapture().read(stream)
         let passed = engine.captionURLs.count == 21 && checks.allSatisfy{$0["passed"] as? Bool == true} && eof && body.count > 4096
         return ["passed":passed,"variants":engine.captionURLs.count,"checks":checks,"videoPreserved":eof && body.count > 4096]
+    }
+    private static func statisticsProbe(documents:URL) async {
+        var rows:[[String:Any]] = []
+        // Real pinned iOS ABI, with repeated ownership/release cycles. The
+        // processed-time bound catches a milliseconds/seconds ABI mismatch.
+        for round in 0..<3 {
+            let repair = AudioRepairPipe()
+            repair.testingOutput = documents.appendingPathComponent("statistics-\(round).mkv")
+            do {
+                _ = try await repair.start(input:documents.appendingPathComponent("CodecSamples/truehd.mkv"),position:0,audioIndex:0,subtitleIndex:nil)
+                for _ in 0..<300 { if repair.finished { break }; try await Task.sleep(nanoseconds:100_000_000) }
+                let fields = repair.latestStatistics ?? [:]
+                let processed = Double(fields["processed"] ?? "") ?? -1
+                let frames = Int(fields["frames"] ?? "") ?? -1
+                let passed = repair.finished && !repair.failed && processed > 1 && processed < 20 && frames > 0
+                repair.stop(); repair.stop()
+                for _ in 0..<100 { if repair.testingStopCompleted { break }; try await Task.sleep(nanoseconds:50_000_000) }
+                rows.append(["round":round,"passed":passed && repair.testingStopCompleted,"statistics":fields])
+            } catch {
+                repair.stop()
+                rows.append(["round":round,"passed":false,"error":String(describing:type(of:error))])
+            }
+        }
+        let passed = rows.count == 3 && rows.allSatisfy { $0["passed"] as? Bool == true }
+        let report:[String:Any] = ["passed":passed,"rows":rows]
+        if let data = try? JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]) {
+            try? data.write(to:documents.appendingPathComponent("producer-statistics-validation.json"),options:.atomic)
+        }
     }
     private static func qualityProbe(documents:URL) async -> [[String:Any]] {
         let cases:[(String,String,EmbeddedMediaEngine.VideoMode,Double,Int)] = [

@@ -1,0 +1,61 @@
+name: Validate pinned iOS producer statistics
+on:
+  push:
+    branches: [feat/producer-diagnostics-20261104]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  statistics:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test diagnostics redaction and retention
+        run: |
+          swiftc -parse-as-library Sources/PlaybackDiagnostics.swift Tests/PlaybackDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostics-tests"
+          "$RUNNER_TEMP/diagnostics-tests"
+      - name: Boot simulator
+        run: |
+          device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid))')
+          xcrun simctl boot "$device" || true
+      - name: Install pinned engines
+        env:
+          LANG: en_US.UTF-8
+        run: pod install --repo-update
+      - name: Create independent TrueHD fixture
+        run: |
+          command -v ffmpeg || brew install ffmpeg
+          mkdir -p "$RUNNER_TEMP/statistics-fixture"
+          ffmpeg -v error -f lavfi -i testsrc2=size=320x180:rate=24:duration=4 -f lavfi -i sine=frequency=440:sample_rate=48000:duration=4 -c:v libx264 -preset ultrafast -c:a truehd -strict -2 -shortest "$RUNNER_TEMP/statistics-fixture/truehd.mkv"
+      - name: Build simulator application
+        run: |
+          xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES CAST_ENGINE_VALIDATION=CAST_ENGINE_TESTING -jobs 1 -derivedDataPath "$RUNNER_TEMP/statistics-app" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Verify real statistics ABI and ownership
+        run: |
+          set -euo pipefail
+          device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid))')
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" "$RUNNER_TEMP/statistics-app/Build/Products/Release-iphonesimulator/CastRemote.app"
+          data=$(xcrun simctl get_app_container "$device" app.example.castbridge data)
+          mkdir -p "$data/Documents/CodecSamples" statistics-report
+          cp "$RUNNER_TEMP/statistics-fixture/truehd.mkv" "$data/Documents/CodecSamples/"
+          SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 SIMCTL_CHILD_CAST_PRODUCER_STATS_ONLY=1 xcrun simctl launch --stdout="$data/Documents/statistics-stdout.log" --stderr="$data/Documents/statistics-stderr.log" "$device" app.example.castbridge
+          for i in $(seq 1 180); do
+            if test -f "$data/Documents/producer-statistics-validation.json"; then
+              cp "$data/Documents/producer-statistics-validation.json" statistics-report/
+              find "$data/Documents" -name 'statistics-*' -exec cp '{}' statistics-report/ \;
+              find "$data/Documents" -name 'repair-*.log' -exec cp '{}' statistics-report/ \;
+              node -e 'const r=require("./statistics-report/producer-statistics-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
+              for file in statistics-report/statistics-*.mkv; do ffmpeg -v error -xerror -i "$file" -map 0:v -map 0:a -f null -; done
+              exit 0
+            fi
+            sleep 1
+          done
+          cp "$data/Documents/"statistics-*.log statistics-report/ || true
+          exit 1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: producer-statistics-evidence
+          path: statistics-report

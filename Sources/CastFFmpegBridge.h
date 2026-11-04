@@ -22,5 +22,16 @@ void media_information_session_execute_async(void *session, int64_t timeout);
 void *media_information_session_get_media_information(void *session);
 char *media_information_get_all_properties_json(void *information);
 void ffprobe_kit_cancel_session(int64_t session_id);
+// Owned Statistics handles from the pinned v0.11.2 wrapper; release after reading.
+int64_t ffmpeg_kit_session_get_statistics_count(void *session);
+void *ffmpeg_kit_session_get_statistics_at(void *session, int64_t index);
+int64_t ffmpeg_kit_statistics_get_video_frame_number(void *statistics);
+double ffmpeg_kit_statistics_get_video_fps(void *statistics);
+int64_t ffmpeg_kit_statistics_get_size(void *statistics);
+double ffmpeg_kit_statistics_get_time(void *statistics);
+double ffmpeg_kit_statistics_get_time_elapsed(void *statistics);
+double ffmpeg_kit_statistics_get_speed(void *statistics);
+int64_t ffmpeg_kit_statistics_get_dup_frames(void *statistics);
+int64_t ffmpeg_kit_statistics_get_drop_frames(void *statistics);
 #endif
 
