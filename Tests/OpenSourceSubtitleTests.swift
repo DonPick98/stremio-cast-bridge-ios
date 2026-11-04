@@ -27,7 +27,11 @@ import Foundation
         let unicode="1\n00:00:01,000 --> 00:00:02,000\nCaffè 日本語"
         let little=Data([0xff,0xfe,0,0])+unicode.data(using:.utf32LittleEndian)!
         let big=Data([0,0,0xfe,0xff])+unicode.data(using:.utf32BigEndian)!
-        for data in [Data(unicode.utf8),little,big,unicode.data(using:.utf16)!,unicode.data(using:.utf16LittleEndian)!] {
+        var encodings=[Data(unicode.utf8),little,big,unicode.data(using:.utf16)!]
+        #if canImport(ObjectiveC)
+        encodings.append(unicode.data(using:.utf16LittleEndian)!)
+        #endif
+        for data in encodings {
             let result=try SubtitleDocument.normalize(data)
             precondition(result.contains("Caffè 日本語"))
         }
@@ -35,6 +39,9 @@ import Foundation
             do {_ = try SubtitleDocument.normalize(Data(invalid.utf8));fatalError("Invalid clock accepted")}
             catch StreamHeaderError.invalid {}
         }
+        #if !canImport(ObjectiveC)
+        print("Linux core only: Apple charset detection and URLSession transport are not exercised")
+        #endif
         print("Open-source caption adaptation passed: cue boundaries, fractional clocks, empty cues, ASS fields, UTF32/UTF16/UTF8 and bounds")
     }
 }

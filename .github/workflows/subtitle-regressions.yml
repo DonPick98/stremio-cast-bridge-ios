@@ -21,6 +21,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  core-linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.0.3-noble
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compile production caption core with official Swift
+        run: |
+          swiftc --version
+          swiftc -swift-version 5 -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/OpenSourceSubtitleTests.swift -o /tmp/opensource-subtitle-tests
+          /tmp/opensource-subtitle-tests
+          swiftc -swift-version 5 -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/WebVTTTimelineTests.swift -o /tmp/caption-timeline-tests
+          /tmp/caption-timeline-tests
   captions:
     runs-on: macos-15-intel
     timeout-minutes: 10

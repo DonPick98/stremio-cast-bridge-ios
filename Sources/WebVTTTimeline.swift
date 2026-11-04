@@ -57,6 +57,7 @@ enum WebVTTTimeline {
         let n = Int((seconds*1000).rounded())
         return String(format:"%02d:%02d:%02d.%03d",n/3_600_000,(n/60_000)%60,(n/1000)%60,n%1000)
     }
+    #if canImport(Darwin)
     static func fetch(_ url:URL,configuration:URLSessionConfiguration = .ephemeral) async throws -> String {
         guard url.scheme == "https", url.user == nil, url.password == nil else { throw StreamHeaderError.invalid }
         let config = configuration
@@ -72,12 +73,13 @@ enum WebVTTTimeline {
         do { return try SubtitleDocument.normalize(data) }
         catch { throw SubtitleFetchError.format }
     }
+    #endif
 }
+#if canImport(Darwin)
 private final class CaptionRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session:URLSession, task:URLSessionTask, willPerformHTTPRedirection response:HTTPURLResponse, newRequest request:URLRequest, completionHandler:@escaping (URLRequest?)->Void) {
         guard let url = request.url, url.scheme == "https", url.user == nil, url.password == nil else { completionHandler(nil); return }
         completionHandler(request)
     }
 }
-
-
+#endif

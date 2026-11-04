@@ -49,10 +49,12 @@ enum SubtitleDocument {
         if data.starts(with:[0xff,0xfe,0x00,0x00]) || data.starts(with:[0x00,0x00,0xfe,0xff]) {return String(data:data,encoding:.utf32)}
         if data.starts(with:[0xff,0xfe]) || data.starts(with:[0xfe,0xff]) {return String(data:data,encoding:.utf16)}
         if let text=String(data:data,encoding:.utf8),!text.contains("\0"){return text}
+        #if canImport(ObjectiveC)
         var decoded:NSString? = nil
         var lossy:ObjCBool=false
         let encoding=NSString.stringEncoding(for:data,encodingOptions:[.allowLossyKey:false],convertedString:&decoded,usedLossyConversion:&lossy)
         if encoding>0,!lossy.boolValue,let decoded,!String(decoded).contains("\0"){return String(decoded)}
+        #endif
         for encoding in [String.Encoding.windowsCP1252,.isoLatin1] {
             if let text=String(data:data,encoding:encoding),!text.contains("\0"){return text}
         }

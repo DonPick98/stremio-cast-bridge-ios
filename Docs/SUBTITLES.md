@@ -30,3 +30,12 @@ Encoding detection is bounded by the existing 1 MiB download limit, requests non
 `Tests/OpenSourceSubtitleTests.swift` adapts synthetic upstream scenarios and adds local safety/compatibility cases. Existing catalogue, URLProtocol transport, cache, preferences, native decoding and caption pixel tests remain enabled.
 
 At the build31 source checkpoint no new Swift/iPhone test has passed: macOS jobs from build30 were still queued without a runner. Read actual workflow results before delivery. The existing native continuity gate for a 125 ms initial HEVC/EAC3 video gap is unchanged and unresolved; it is independent of successful text parsing. Hardware casting remains unverified.
+
+### Portable core check
+
+A Linux job uses the official `swift:6.0.3-noble` image to compile the actual
+normalization/timeline source in Swift 5 mode. Darwin URLSession transport and
+Objective-C NSString autodetection are conditionally compiled on Apple platforms.
+Linux tests do not claim to exercise those Apple-only paths; the macOS job still
+covers them, alongside cache and application preferences. The official image
+source is swiftlang/swift-docker `6.0/ubuntu/24.04/Dockerfile` (Swift6.0.3).
