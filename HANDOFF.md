@@ -1,3 +1,53 @@
+# Esito priorità 1 — build29 sperimentale, 2026-11-04
+
+Sorgente: 2f025546bd48afd46fd6e1ef9ec91f599af67e44, stesso branch/PR #2 draft.
+Ordine operativo 1–8 nella issue #1; CB-009/021 restano IN_CORSO.
+Build iPhone41845102651 RIUSCITA, IPA13330773177 realmente scaricata/ispezionata:
+app/estensione0.8.1(29), audio background. SHA256 singolo IPA:
+7ac49fa4ca041f9e56f6b40d2ec6b19b502ed25413262aede61bb8e881e4e28e.
+Archivio SHA256e22207007704bc87c2bb7d7bccac60f83caf878fd11fcc1a74c0bdae20906c4e.
+Non consegnarla come candidata completamente validata: nuovo nativo41845102602
+FALLITO sul gate di continuità introdotto in questa sessione.
+
+EAC3 originale (codec passato esplicitamente da app/matrice) evita il precedente
+remux packet-copy; AAC/MP3 copiabili conservano il percorso già corretto.
+TrueHD, codec assente e altre famiglie conservano normalizzazione precedente.
+Nativo finale: 40 output decodificati e 6 controlli pixel passati; EAC3 seek212/210
+frame, audio440.096Hz, testo corretto. Gate nuovo FALLITO:
+first0, last8.925583s, maxGap0.125125s >2frame a23.976fps.
+I dieci controlli qualità successivi NON eseguiti, perché il gate ferma lo step.
+Non descrivere questo run come superato.
+
+Il run intermedio41844399242 (be52b6a, più ampio) fallisce sullo stesso maxGap;
+cattura scaricata/analizzata: PTS0,0.041667,0.166792,0.208500,0.250250,0.333625.
+Il salto125ms è fra seconda/terza immagine; segue un salto83ms. I successivi
+intervalli sono regolari. Conteggio da solo non prova integrità delle immagini:
+fixture nativa nera con sottotitoli non distingue i fotogrammi visivamente.
+Locale Linux: vecchio remux192/210 conprimaimmagine0.792s, decode diretto210/210
+da0; NON confondere questa prova FFmpeg con il comportamento effettivo VLC iOS.
+Soglie mantenute. Nessuna certificazione hardware, VFR, batteria o micro-buffering.
+Ultima baseline con run nativo completo riuscito resta build28/692623c.
+
+Prossimo lavoro, sempre priorità1: fixture HEVC/EAC3 con immagini distinguibili
+nella metà superiore e fondo nero per i controlli testo; confrontare contenuto/
+PTS contro sorgente al seek3.25s per separare preroll, priming audio e fps filter
+prima di cambiare timestamp o tolleranze. Non eliminare/allentare il gate per
+ottenere verde. Conservarne i risultati anche se la preparazione video riesce.
+Evidenze finali: run41845102602/artifacts/13330809941.
+
+Preparazione sola lettura del punto2/CB-019: binario ffmpegkit arm64 della IPA28
+ha simboli esterni definiti statistics_count/at e getters frames/fps/time/elapsed/
+size/speed/dup/drop. Header e wrapper ufficiali v0.11.2-ios confermano int64_t per
+count/frame/size, double per time/elapsed in millisecondi e speed. statistics_at
+crea un handle Statistics da rilasciare con ffmpeg_kit_handle_release; non un
+puntatore prestato. Nessun binding/campionamento nuovo implementato. In futuro
+leggere solo ultimo campione, con frequenza limitata e handle protetto fino al
+rilascio; verificare sul nativo, non dedurre velocità CPU/banda Internet/batteria.
+Non passare alle features prima di chiudere o circoscrivere il primo intervento.
+
+---
+
+
 # Lavoro in corso — priorità 1, build 29
 
 Baseline 42b145f / 0.8.1(28), stesso branch fix/playback-recovery-20261103 e PR #2.
