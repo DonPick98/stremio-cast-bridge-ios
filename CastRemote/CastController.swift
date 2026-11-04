@@ -683,6 +683,10 @@ import AVFAudio
                     if let positionKey { UserDefaults.standard.set(restored,forKey:positionKey) }
                     position = lastGoodPosition
                 }
+                if requireEpisodeLanguage,selectedSubtitle=="none",PlaybackPreferences.subtitlesRequested(handoff:handoff.subtitleLanguage) {
+                    episodeIssue="La prossima puntata non offre i sottotitoli preferiti. Scegli una traccia o continua da Stremio."
+                    message="Conferma i sottotitoli prima di continuare.";return
+                }
                 playbackIssue = nil
                 message = "Video pronto. Collega la TV per iniziare."
                 if connected && wantsPlayback { load() }

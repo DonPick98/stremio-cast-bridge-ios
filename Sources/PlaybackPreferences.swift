@@ -13,6 +13,12 @@ enum PlaybackPreferences {
         if let audio, language(audio.language) != "und" { defaults.set(language(audio.language),forKey:"cast.preferred.audio") }
         if let subtitle, language(subtitle) != "und" { defaults.set(subtitle == "none" ? "none" : language(subtitle),forKey:"cast.preferred.subtitle") }
     }
+    static func subtitlesRequested(handoff:String?,defaults:UserDefaults = .standard) -> Bool {
+        let saved=defaults.string(forKey:"cast.preferred.subtitle")
+        if saved=="none" {return false}
+        if saved==nil || saved=="auto" {return handoff != "off"}
+        return true
+    }
     static func subtitleLanguage(handoff:String?,defaults:UserDefaults = .standard) -> String {
         let saved=defaults.string(forKey:"cast.preferred.subtitle")
         if let saved, !["auto","none"].contains(saved) {return language(saved)}
