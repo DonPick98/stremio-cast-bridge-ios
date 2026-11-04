@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {frameIdentities} from './frame-identity-fixture.mjs';
 
 function probe(file) {
  const p=spawnSync(process.env.FFPROBE_PATH||'ffprobe',['-v','error','-select_streams','v:0','-show_frames','-show_streams','-show_format','-show_entries','frame=best_effort_timestamp_time:stream=avg_frame_rate:format=duration','-of','json',file],{encoding:'utf8',maxBuffer:4*1024*1024});
@@ -20,11 +21,15 @@ export function checkOverlaySeek(file,reference,position=3.25) {
  const expectedFrames=Math.round(duration*fps);
  const maxGap=gaps.length?Math.max(...gaps):Infinity;
  const first=frames[0]??Infinity,last=frames.at(-1)??-Infinity;
- const passed=Number.isFinite(fps)&&fps>0&&duration>0&&
+ const identities=frameIdentities(file),original=frameIdentities(reference);
+ const identitySteps=identities.slice(1).map((id,i)=>id-identities[i]);
+ const mismatches=identities.map((id,i)=>({picture:i,id,expected:original[Math.round((position+frames[i])*fps)]})).filter(row=>!Number.isFinite(row.expected)||Math.abs(row.id-row.expected)>1);
+ const identityPassed=identities.length===frames.length&&original.length>0&&original.every((id,i)=>id===i+1)&&identities.every(id=>id>0)&&identitySteps.every(step=>step===1)&&mismatches.length===0;
+ const passed=identityPassed&&Number.isFinite(fps)&&fps>0&&duration>0&&
   frames.length>=expectedFrames*0.98&&frames.every(Number.isFinite)&&
   first>=-1/fps&&first<=2/fps&&gaps.every(g=>g>0)&&
   maxGap<=2/fps&&last>=duration-3/fps&&last<=duration+0.3;
- return {passed,frames:frames.length,expectedFrames,fps,first,last,maxGap};
+ return {passed,frames:frames.length,expectedFrames,fps,first,last,maxGap,identityPassed,firstIdentities:identities.slice(0,12),identitySteps:identitySteps.slice(0,12),mismatches:mismatches.slice(0,12)};
 }
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {

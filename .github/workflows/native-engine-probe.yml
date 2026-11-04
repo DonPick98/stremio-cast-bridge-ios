@@ -34,6 +34,7 @@ jobs:
       - name: Prepare synthetic codec matrix
         run: |
           command -v ffmpeg || brew install ffmpeg
+          node Tests/FrameIdentityTests.mjs
           node Tests/make-codec-matrix.mjs "$RUNNER_TEMP/codec-matrix"
           node Tests/VideoQualityAuditTests.mjs
       - name: Build simulator application

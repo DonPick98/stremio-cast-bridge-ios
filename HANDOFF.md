@@ -1,3 +1,17 @@
+# Seek: identità dei frame, checkpoint build34 — 2026-11-04
+
+CB009/021: la fixture HEVC/EAC3/13ASS ora identifica ogni immagine con12 barre
+luma nella metà superiore; metà inferiore nera conserva il gatepixel sottotitoli.
+Verifier mantiene conteggio/PTS/gap esistenti e aggiunge ordineidentità, continuità
+stretta e allineamento al frame sorgente entro1. Nessuna soglia precedente ridotta.
+FrameIdentityTests locale Linux/FFmpeg6.1.1: 66 immagini dopo seek3.25 accettate;
+variante con un frame eliminato e timestamp ricompattati (65immagini, maxgap41.7ms)
+rifiutata per salto identità82→84. Questo verifica il rilevatore, NON il produceriOS.
+Test inserito prima della matrice in CI. Risultato native/iPhone con nuova fixture
+ancora da acquisire; gate125ms storico resta aperto. Nuova fixture solo sintetica.
+
+---
+
 # Metriche produttore — build34 candidata, 2026-11-04
 
 CB019/014: campionamento statistico del produttore FFmpeg accanto al trasferimento
