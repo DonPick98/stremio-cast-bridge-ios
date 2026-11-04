@@ -1,3 +1,19 @@
+# Checkpoint 2026-11-04 - 0.8.1 (28)
+Sorgente692623cf50410a7a95f132922ec5451c54b8a700,samebranchPR2.
+BuildiPhone41823062443 e nuovo nativo41823062547 SUCCESS.
+40output,6pixel,10quality,background65.135s PASS.
+AACoverlay usaVLCaccurateseekoriginalGOP,evita+0.79s normalizzatorecopy.
+ASS/SRTseek213/210frame congate98percento e audio/testo corretti.
+Metadativideo assenti risoltiviaengineinspect:gateway1 95/96frame.
+Non estendere risultato a HEVC/EAC3 normalizzato(192/210build27),VFR o hardware.
+FT003:Preferenze accessoAspetto/anteprima+resetmiratoserie/lingue confermato;
+testchiaviisolamentoPASS. Aspetto,configurazioni eprogressi nonazzerati.
+IPAoutputs/CastBridge-0.8.1-build28.ipa ispezionata0.8.1/28,CC1AD845,audiobackground.
+SHA2566bff8f4f39a12f6af67b29de7201469c9281588f8555ef02fbe4a88ddd806305.
+Issue1aggiornata.CB009/021hardwareda verificare,FT003parziale;account/LiveActivity,
+microbuffering,batteria eautoplayfisico aperti. Nessundeploysito.
+
+---
 # Checkpoint 2026-11-04 - 0.8.1 (25)
 Sorgente67ea62b49940220bef0e4c2995551d8bc0f3fc59, stesso branch/PR2.
 Build iPhone41818164978 e nuovo nativo41818164931 RIUSCITI.
@@ -325,3 +341,20 @@ VLC cadenza esplicita estesa a interi standard riconosciuti oltre NTSC; FFmpeg i
 Test aggiornati 24/25 e non standard; versione0.8.1 build25.
 CI produzione41818164978, nativo41818164931: controllare entrambi prima di consegna.
 Issue1 aggiornata CB021 IN_CORSO. Nessuna nuova verifica fisica.
+
+## Build27 in verifica - 2026-11-04
+HEAD9683dca2c99cf5fe80c99d8c5d60ad5ff9de4465; stesso branch/PR.
+CB009/021: cattura25 gap iniziale0.80s, framecontinui dopo. Riproduzione locale
+FFmpeg packetcopy seek3.25:primaimmagine0.792s. Nuovo originalOverlay perAACstereo
+senzaaudioRepair usaVLC seekaccurato sulfileoriginale, evita normalizzazionecopy.
+ASS/SRTseek framegate98percento (precedente90). Nuoviworkflow41820877481/41820877421
+in corso. Build26preferenze include aspetto+resetmiratoserie/lingue con testisolamento;
+run26annullati perché superati. Nessuna nuovaIPA consegnata ovalidazionefisica.
+
+## Build28 in verifica
+HEAD692623cf50410a7a95f132922ec5451c54b8a700.
+Build27 native41820877421 FAILED gateway1 hardwareH26464/96frames.
+NewASS/SRTseek213/210 andall6pixelchecksPASS with98percentgate.
+HEVC/EAC3normalizedseek still192/210; unresolveddifferentpath.
+Engine nowinspectsformat ifoptionalvideo absent beforeVLCchain; appmetadatareuse.
+Build28CIpending; do notdeliver27asfullyvalidated. FT003features included.
