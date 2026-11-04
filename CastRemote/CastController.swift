@@ -292,6 +292,7 @@ import AVFAudio
     var displayTitle: String { MediaDisplayTitle.clean(selectedSource?.filename ?? selectedSource?.descriptionText.components(separatedBy:.newlines).first ?? "Video da Stremio") }
     var deviceName: String { castSession?.device.friendlyName ?? lastDevice?.friendlyName ?? "Chromecast" }
 
+    private var backgroundServiceStopped=false
     private let backgroundProcessing=CastBackgroundProcessing()
     override init() {
         super.init()
@@ -436,6 +437,7 @@ import AVFAudio
         guard UIApplication.shared.applicationState == .active || localProcessing || lockScreen.active else { return }
         connected = GCKCastContext.sharedInstance().sessionManager.hasConnectedCastSession()
         PlaybackDiagnostics.shared.changed("connection",event:.cast,["connected":String(connected)])
+        guard !backgroundServiceStopped else{return}
         guard let session = castSession, let client = session.remoteMediaClient, connected else {
             if wantsPlayback { reconnectControls(); updateActivity(status:"Ricollego i controlli…") }
             return
@@ -839,6 +841,7 @@ import AVFAudio
     }
     func load(preservePosition: Bool = false) {
         guard !episodeBusy else{return}
+        backgroundServiceStopped=false
         wantsPlayback = true
         transportRetries = 0; recovery.reset()
         startPlayback(requestedPosition:nil,autoplay:playWhenReady)
@@ -1642,14 +1645,19 @@ import AVFAudio
     }
     private func backgroundProcessingExpired() {
         // User cancellation or system expiration must not spawn another job.
+        backgroundServiceStopped=true
         savePlaybackPosition(phase:"background_expired")
+        if let confirmed=lastConfirmedPosition {lastGoodPosition=confirmed;position=confirmed}
+        controlRequests.invalidate();finishCommand(false)
+        intentCorrectionRequest?.cancel();intentCorrectionRequest=nil;intentCorrection=nil;playbackIntent.reset()
+        streamRequests.invalidate();loadedStreamGeneration=nil
         wantsPlayback=false;reconnectTask?.cancel();reconnectTask=nil
         streamCheckTask?.cancel();streamCheckTask=nil;checkingStream=false
         seekDispatchTask?.cancel();seekDispatchTask=nil
         loadTimeout?.cancel();loadPending=false;loading=false;loadRequest=nil
         if ownsCurrentMedia {_ = client?.pause()}
-        stopCaptionDelivery();stopLocalProcessing()
-        hasLoaded=false;playing=false;timeline.cancelActive()
+        independentCaptions.stop();stopCaptionDelivery();stopLocalProcessing()
+        hasLoaded=false;playing=false;timeline.reset()
         lockScreen.clear(reason:"background_expired");liveActivity.end()
         playbackIssue="La trasmissione in background è stata interrotta da iOS o dai controlli di sistema. La posizione è conservata."
         message="Premi Riproduci per riprendere dal punto conservato."
@@ -1737,6 +1745,11 @@ import AVFAudio
     }
     private func handleCommand(_ command:String) async -> Bool {
         PlaybackDiagnostics.record(.command,["kind":command,"connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
+        if backgroundServiceStopped {
+            if command == "play" || command == "toggle" {playWhenReady=true;load(preservePosition:true);return true}
+            if command == "stop" {endPlayback();return true}
+            return command == "pause"
+        }
         if let target = CastWire.seekTarget(command,current:timeline.queuedTarget ?? lastGoodPosition,duration:duration,step:PlaybackPreferences.seekStep()) {
             seek(to:target); return true
         }
@@ -1840,6 +1853,7 @@ import AVFAudio
         if success { updateStatus() }
     }
     private func resetPlayback(preserveAutoplay:Bool=false,preserveActivity:Bool=false) {
+        backgroundServiceStopped=false
         syncStremioProgress(force:true)
         if !preserveAutoplay{episodeAutoplay=nil}
         work?.cancel();work=nil;busy=false
