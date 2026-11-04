@@ -14,6 +14,48 @@ import AVFAudio
     private var episodeTask:Task<Void,Never>?
     private var episodeRequest=UUID()
     private var requireEpisodeLanguage=false
+    private struct EpisodeAutoplay {
+        let content:String
+        let target:SeriesEpisode
+        let sources:[String:AddonStream]
+        var plan:AutoplayRetryPlan
+    }
+    private var episodeAutoplay:EpisodeAutoplay?
+    private var returnedEpisodes=Set<String>()
+    private func returnToStremioAutomatically() {
+        guard let target=fallbackEpisode,UIApplication.shared.applicationState == .active,
+              UserDefaults.standard.object(forKey:"cast.series.autoReturn") as? Bool ?? true,
+              returnedEpisodes.insert(target.id).inserted else{return}
+        if returnedEpisodes.count>16{returnedEpisodes=[target.id]}
+        openEpisodeInStremio()
+    }
+    @discardableResult private func advanceAutoplaySource(allowRetry:Bool=true)->Bool {
+        guard var context=episodeAutoplay,context.content==currentEpisodeID,!hasLoaded else{return false}
+        if allowRetry,let key=context.plan.next(),let source=context.sources[key] {
+            episodeAutoplay=context
+            choose(source,automaticEpisode:true)
+            message="Provo una sorgente equivalente (\(context.plan.attempt)/\(context.plan.limit))…"
+            PlaybackDiagnostics.record(.source,["phase":"autoplay_candidate","attempt":String(context.plan.attempt)])
+            return true
+        }
+        resetPlayback();hasLoaded=false
+        fallbackEpisode=context.target
+        episodeIssue="Non riesco ad avviare una sorgente equivalente con le lingue richieste. Continua da Stremio o scegli un’altra sorgente."
+        message="La puntata richiede una nuova sorgente."
+        returnToStremioAutomatically();return true
+    }
+    private func autoplayMayRetry(_ error:Error)->Bool {
+        if let rd=error as? RDResolverError {
+            switch rd {
+            case .rateLimited:return false
+            case .http(let status):return AutoplayRetryPlan.permits(status:status)
+            case .apiFailure(let status,_,_):return AutoplayRetryPlan.permits(status:status)
+            default:break
+            }
+        }
+        return true
+    }
+
     var isSeries:Bool { handoff?.type=="series" }
     var currentEpisodeID:String { handoff?.id ?? "" }
     var orderedEpisodes:[SeriesEpisode] {
@@ -38,6 +80,7 @@ import AVFAudio
         }
     }
     func openEpisodeInStremio() {
+        if episodeAutoplay != nil && !hasLoaded {resetPlayback()}
         guard let target=fallbackEpisode,let url=SeriesNavigation.stremioURL(videoID:target.id,web:UserDefaults.standard.bool(forKey:"cast.series.webFallback")) else{return}
         UIApplication.shared.open(url,options:[:]) { success in
             if !success,let web=SeriesNavigation.stremioURL(videoID:target.id,web:true) {
@@ -50,9 +93,10 @@ import AVFAudio
               !automatic || target.aired() else{return}
         let family=selectedSource?.behaviorHints?.bingeGroup
         let next=BridgeHandoff(version:current.version,status:current.status,provider:current.provider,type:current.type,id:target.id,selection:nil,subtitleLanguage:current.subtitleLanguage,externalSubtitleURL:nil)
-        guard let config=configuration else{fallbackEpisode=target;episodeIssue="Configura le sorgenti oppure continua da Stremio.";return}
+        guard let config=configuration else{fallbackEpisode=target;episodeIssue="Configura le sorgenti oppure continua da Stremio.";if automatic{liveActivity.end();returnToStremioAutomatically()};return}
         episodeRequest=UUID();let token=episodeRequest
         episodeBusy=true;episodeIssue=nil;fallbackEpisode=nil
+        if automatic{liveActivity.update(title:displayTitle,status:"Preparo la prossima puntata",position:max(0,duration),duration:duration,playing:false,loading:true)}
         work=Task { [weak self] in
             let owner="episode-prepare-"+UUID().uuidString
             CastAudioSession.shared.acquire(owner)
@@ -69,17 +113,26 @@ import AVFAudio
                 let matching=family.flatMap{group in group.isEmpty ? nil:found.first{$0.behaviorHints?.bingeGroup==group}}
                 let useMatch=UserDefaults.standard.object(forKey:"cast.series.matchSource") as? Bool ?? true
                 if automatic && useMatch && matching==nil {
-                    self.fallbackEpisode=target;self.episodeIssue="Nessuna sorgente equivalente scelta automaticamente. Continua da Stremio o scegli l’episodio manualmente.";return
+                    self.fallbackEpisode=target;self.episodeIssue="Nessuna sorgente equivalente scelta automaticamente. Continua da Stremio o scegli l’episodio manualmente.";self.liveActivity.end();self.returnToStremioAutomatically();return
                 }
-                self.capturePosition();self.resetPlayback();self.clearSubtitleChoices()
+                self.capturePosition();self.resetPlayback(preserveActivity:true);self.clearSubtitleChoices()
                 self.sourceResume=nil;self.handoff=next;self.sources=found;self.selectedSource=nil;self.prepared=nil
                 self.sourceRevision=UUID();self.position=0;self.duration=0;self.hasLoaded=false;self.busy=false
-                if useMatch,let matching {self.choose(matching);self.fallbackEpisode=target;self.requireEpisodeLanguage=automatic}
-                else {self.message="\(target.label): scegli una sorgente."}
+                if useMatch,let matching {
+                    if automatic {
+                        let candidates=found.filter{$0.behaviorHints?.bingeGroup==family}
+                        let ids=candidates.map{self.contentDigest($0.url+"|"+($0.torrentHash ?? "")+"|"+$0.identity)}
+                        let lookup=Dictionary(zip(ids,candidates),uniquingKeysWith:{first,_ in first})
+                        self.episodeAutoplay=EpisodeAutoplay(content:target.id,target:target,sources:lookup,plan:AutoplayRetryPlan(ids,limit:PlaybackPreferences.sourceAttempts()))
+                        _ = self.advanceAutoplaySource()
+                    } else {self.choose(matching);self.fallbackEpisode=target}
+                }
+                else {self.liveActivity.end();self.fallbackEpisode=target;self.message="\(target.label): scegli una sorgente."}
             } catch {
                 guard !Task.isCancelled,let self,self.episodeRequest==token else{return}
                 self.episodeBusy=false;self.fallbackEpisode=target
                 self.episodeIssue="Non riesco a trovare la sorgente della puntata. La riproduzione corrente è conservata. Puoi continuare da Stremio."
+                if automatic{self.liveActivity.end();self.returnToStremioAutomatically()}
             }
         }
     }
@@ -420,6 +473,7 @@ import AVFAudio
             if ready && confirmed && currentLoad {
                 if loadPending || !hasLoaded { playbackIssue = nil }
                 hasLoaded = true; wantsPlayback = true
+                episodeAutoplay=nil;requireEpisodeLanguage=false
                 loadedMediaSessionID=status.mediaSessionID
                 if loadedAudioKey==selectedAudio,loadedSubtitle==selectedSubtitle {
                     confirmedChoice=(selectedAudio,selectedSubtitle,selectedOnlineSubtitle,subtitleDelay)
@@ -436,6 +490,7 @@ import AVFAudio
                 if bufferingSince == nil { bufferingSince = Date() }
                 let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
                 if localProcessing && nativeSelection?.subtitle.hasPrefix("vlc_") == true && Date().timeIntervalSince(bufferingSince!) >= 15 {
+                    if advanceAutoplaySource(){return}
                     disableSubtitlesAndResume(automatic:true); return
                 }
                 if stalled && localProcessing {
@@ -447,6 +502,8 @@ import AVFAudio
                 updateActivity(status: stalled ? "Buffering: apri l’app per riprovare" : "Caricamento")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .error {
                 loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil
+                hasLoaded=false
+                if advanceAutoplaySource(){return}
                 if recoverPlayback() { return }
                 message = "La riproduzione si è interrotta. Riprova: la posizione è conservata."
                 updateActivity(status: "Errore: apri l’app per riprovare")
@@ -477,15 +534,15 @@ import AVFAudio
     private func finishOwnedPlayback() {
         guard wantsPlayback || hasLoaded else{return}
         PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
-        stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished");liveActivity.end()
+        let continueSeries=(UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true) && (adjacentEpisode(1)?.aired()==true)
+        stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished")
+        if !continueSeries{liveActivity.end()}
         loadPending=false;loading=false;loadTimeout?.cancel();loadRequest=nil
         if let positionKey { UserDefaults.standard.set(0,forKey:positionKey) }
         sourceResume=nil;hasLoaded=false;lastGoodPosition=0;lastConfirmedPosition=nil
         loadedMediaSessionID=nil;timeline.reset();recovery.reset();progress.reset()
         stopLocalProcessing();message="Riproduzione terminata."
-        if UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true {
-            moveEpisode(1,automatic:true)
-        }
+        if continueSeries {moveEpisode(1,automatic:true)}
     }
     private func prepareDirectControls() {
         guard connected, ownsCurrentMedia, let session = castSession,
@@ -593,11 +650,12 @@ import AVFAudio
         work?.cancel(); work = nil; busy = false; selectedSource = nil; prepared = nil; hasLoaded = false
         message = "Scegli una sorgente."
     }
-    func choose(_ source: AddonStream) {
-        episodeRequest=UUID();episodeBusy=false;fallbackEpisode=nil;episodeIssue=nil;requireEpisodeLanguage=false
+    func choose(_ source: AddonStream,automaticEpisode:Bool=false) {
+        if !automaticEpisode{episodeAutoplay=nil}
+        episodeRequest=UUID();episodeBusy=false;fallbackEpisode=automaticEpisode ? episodeAutoplay?.target:nil;episodeIssue=nil;requireEpisodeLanguage=automaticEpisode
         clearSubtitleChoices()
         if selectedSource != nil { captureSourceResume() }
-        resetPlayback()
+        resetPlayback(preserveAutoplay:automaticEpisode,preserveActivity:automaticEpisode)
         wantsPlayback = true
         work?.cancel(); subtitleFile = nil; embeddedSubtitleURL = nil; selectedSource = source; prepared = nil; originalURL = nil; hasLoaded = false; lastGoodPosition = 0
         guard let handoff else { message = "Riapri la sorgente da Stremio."; return }
@@ -657,7 +715,7 @@ import AVFAudio
                 guard !result.audio.isEmpty else { throw BridgeError.cannotResolve }
                 if requireEpisodeLanguage,let language=UserDefaults.standard.string(forKey:"cast.preferred.audio"),language != "auto",
                    !result.audio.contains(where:{PlaybackPreferences.language($0.language)==language}) {
-                    busy=false;episodeIssue="La sorgente della prossima puntata non contiene l’audio preferito. Continua da Stremio o scegli un’altra sorgente."
+                    busy=false;if advanceAutoplaySource(){return};episodeIssue="La sorgente della prossima puntata non contiene l’audio preferito. Continua da Stremio o scegli un’altra sorgente."
                     message="Scegli una sorgente con la lingua desiderata.";return
                 }
                 prepared = result; selectedAudio = PlaybackPreferences.audio(result.audio,fallback:result.defaultAudioKey)
@@ -678,6 +736,7 @@ import AVFAudio
                     position = lastGoodPosition
                 }
                 if requireEpisodeLanguage,selectedSubtitle=="none",PlaybackPreferences.subtitlesRequested(handoff:handoff.subtitleLanguage) {
+                    if advanceAutoplaySource(){return}
                     episodeIssue="La prossima puntata non offre i sottotitoli preferiti. Scegli una traccia o continua da Stremio."
                     message="Conferma i sottotitoli prima di continuare.";return
                 }
@@ -696,6 +755,7 @@ import AVFAudio
                     }
                 }
                 busy = false
+                if advanceAutoplaySource(allowRetry:autoplayMayRetry(error)){return}
                 if fallbackEpisode != nil {episodeIssue="La sorgente della puntata non si è avviata. Continua da Stremio o scegli un’altra sorgente."}
                 message = (error as? RDResolverError)?.localizedDescription ?? (error as? BridgeError)?.localizedDescription ?? "Non riesco a leggere le tracce di questo file. Scegli un’altra sorgente."
             }
@@ -901,6 +961,7 @@ import AVFAudio
                 }
                 self.timeline.cancelActive();self.loadedStreamGeneration=nil;self.progress.reset()
                 self.hasLoaded = false
+                if self.advanceAutoplaySource(){return}
                 self.processingDetail = "Flusso non disponibile"
                 self.playbackIssue = (error as? EmbeddedMediaError)?.localizedDescription ?? "Il motore integrato non ha preparato questa sorgente."
                 self.message = "Preparazione del flusso non riuscita."
@@ -995,6 +1056,7 @@ import AVFAudio
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
                 guard !Task.isCancelled, let self, self.loadPending else { return }
                 self.loadPending = false; self.loading = false; self.loadRequest = nil
+                if self.advanceAutoplaySource(){return}
                 if self.nativeSelection?.subtitle.hasPrefix("vlc_") == true { self.disableSubtitlesAndResume(automatic:true); return }
                 if self.recoverPlayback(allowVideoConversion:false) { return }
                 self.message = "La TV non ha avviato il video dopo l’adattamento automatico. La posizione è conservata."
@@ -1582,7 +1644,7 @@ import AVFAudio
         if request == intentCorrectionRequest { intentCorrectionRequest=nil;intentCorrection=nil;playbackIntent.reset();return }
         if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; pendingSubtitleDelay = nil; subtitleIssue = "La TV non ha applicato il cambio. Puoi riprovare."; flushQueuedSeek(); return }
         if request == commandRequest { finishCommand(false); return }
-        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; if recoverPlayback() { return }; message = "Errore Cast \(error.code): il formato non è stato riprodotto dopo l’adattamento automatico."; playbackIssue = message; updateActivity(status: "Apri l’app per riprovare") }
+        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; if advanceAutoplaySource(){return};if recoverPlayback() { return }; message = "Errore Cast \(error.code): il formato non è stato riprodotto dopo l’adattamento automatico."; playbackIssue = message; updateActivity(status: "Apri l’app per riprovare") }
     }
     func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) {
         var fields=requestFields(request,phase:"cast_abort");fields["code"]=String(abortReason.rawValue)
@@ -1700,7 +1762,8 @@ import AVFAudio
         continuation.resume(returning: success)
         if success { updateStatus() }
     }
-    private func resetPlayback() {
+    private func resetPlayback(preserveAutoplay:Bool=false,preserveActivity:Bool=false) {
+        if !preserveAutoplay{episodeAutoplay=nil}
         work?.cancel();work=nil;busy=false
         episodeRequest=UUID();episodeBusy=false
         sourceRevision = UUID()
@@ -1713,7 +1776,7 @@ import AVFAudio
         transferCheckpoint=nil
         intentCorrectionRequest?.cancel();intentCorrectionRequest=nil
         wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil
-        trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear();liveActivity.end()
+        trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear();if !preserveActivity{liveActivity.end()}
         embeddedCaptionTask?.cancel(); embeddedCaptionTask = nil
         seekDispatchTask?.cancel(); seekDispatchTask = nil
         streamCheckTask?.cancel(); streamCheckTask = nil; checkingStream = false; playbackIssue = nil

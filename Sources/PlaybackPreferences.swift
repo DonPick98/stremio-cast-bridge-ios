@@ -1,9 +1,13 @@
 import Foundation
 
 enum PlaybackPreferences {
-    static let appSettingKeys = ["cast.series.autoplay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.preferred.audio","cast.preferred.subtitle"]
+    static let appSettingKeys = ["cast.series.autoplay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.series.autoReturn","cast.series.sourceAttempts","cast.preferred.audio","cast.preferred.subtitle"]
     static func resetAppSettings(defaults:UserDefaults = .standard) {
         for key in appSettingKeys { defaults.removeObject(forKey:key) }
+    }
+    static func sourceAttempts(defaults:UserDefaults = .standard)->Int {
+        let n=(defaults.object(forKey:"cast.series.sourceAttempts") as? NSNumber)?.intValue ?? 3
+        return (1...3).contains(n) ? n:3
     }
     static let controlSettingKeys=["cast.activity.enabled","cast.controls.seekStep"]
     static let seekSteps:[Double]=[10,15,30,60]
@@ -109,5 +113,21 @@ enum SeriesNavigation {
         guard let series=seriesID(videoID) else{return nil}
         let base=web ? "https://web.stremio.com/#/detail/series/" : "stremio:///detail/series/"
         return URL(string:base+series+"/"+videoID)
+    }
+}
+
+struct AutoplayRetryPlan {
+    static func permits(status:Int)->Bool { ![401,403,429,451].contains(status) }
+    private let ids:[String]
+    private var cursor=0
+    var attempt:Int {cursor}
+    var limit:Int {ids.count}
+    init(_ candidates:[String],limit:Int=3) {
+        var seen=Set<String>()
+        ids=Array(candidates.filter{!$0.isEmpty && seen.insert($0).inserted}.prefix(max(1,min(3,limit))))
+    }
+    mutating func next()->String? {
+        guard ids.indices.contains(cursor) else{return nil}
+        defer{cursor+=1};return ids[cursor]
     }
 }

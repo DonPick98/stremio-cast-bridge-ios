@@ -1,3 +1,30 @@
+# Binge-watching e CI — build33 candidata, 2026-11-04
+
+Branch fix/playback-recovery-20261103, PR2 draft. FT002: fino a tre sorgenti
+uniche della stessa bingeGroup, numero configurabile 1–3. Nuova selezione manuale,
+stop o handoff invalidano i tentativi; errori auth/rate limit non provocano altri
+resolve. Si prova la successiva su errore di preparazione/load, timeout o audio/
+sottotitoli richiesti assenti. Solo il clock TV confermato chiude il piano.
+Il ritorno a Stremio app/web è configurabile, automatico soltanto in foreground e
+una volta per episodio; in background resta il pulsante. Non è implementato il
+ritorno a qualunque app originaria: handoff attuale non porta tale contesto.
+La Live Activity esistente attraversa la preparazione automatica dell'episodio;
+fine alternative/fallback/scelta manuale/stop la terminano. Nessuna creazione
+ActivityKit in background. Catalogo resta IMDb/Cinemeta, nessuna fonte inventata.
+Test aggiunti per budget/dedup/esaurimento/errori terminali e reset preferenze.
+Manca integrazione reale due episodi/timeout/eventi obsoleti; non dichiarare FT002
+completo per i soli test del piano.
+
+I runner hanno iniziato: build32 41867087250 fallita nel test adattamenti MIT,
+StreamHeaderError.invalid; CaptionModel, SeriesNavigation e SubtitleCatalog
+passati. Suite41867087481 non compila conSwift6 per optionalData.reduce nel
+parserWebM: corretto a5cfde592c7f7111b2a32113add401e348a71446d e aggiunta
+etichetta dei casi falliti. Nuovi run41868706050/41868706162/41868705897 in coda al
+checkpoint. Nessuna IPA32/33 o test nuovo passato dichiarato. Gate125ms,
+CB005/010 originali, FT004sync e hardware restano aperti.
+
+---
+
 # Live Activity e controlli — build32 in verifica, 2026-11-04
 
 Baselinec3c46e3/build31, stessa PR2/branch. Richiesta utente: proseguire tutta la

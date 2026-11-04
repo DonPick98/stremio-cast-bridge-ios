@@ -468,6 +468,8 @@ private struct AppPreferencesView:View {
     @AppStorage("cast.series.matchSource") private var matchSource=true
     @AppStorage("cast.series.specials") private var specials=false
     @AppStorage("cast.series.webFallback") private var webFallback=false
+    @AppStorage("cast.series.autoReturn") private var autoReturn=true
+    @AppStorage("cast.series.sourceAttempts") private var sourceAttempts=3
     @AppStorage("cast.preferred.audio") private var audio="auto"
     @AppStorage("cast.preferred.subtitle") private var subtitle="auto"
     @AppStorage("cast.controls.seekStep") private var seekStep=30.0
@@ -478,11 +480,15 @@ private struct AppPreferencesView:View {
                 Section("Serie") {
                     Toggle("Avvia la puntata successiva",isOn:$autoplay)
                     Toggle("Riutilizza una sorgente equivalente",isOn:$matchSource)
+                    Picker("Tentativi su sorgenti equivalenti",selection:$sourceAttempts) {
+                        ForEach(1...3,id:\.self){Text("\($0)").tag($0)}
+                    }
                     Toggle("Includi episodi speciali",isOn:$specials)
                 }
                 Section {
                     Toggle("Preferisci Stremio Web",isOn:$webFallback)
-                } header:{Text("Continua da Stremio")} footer:{Text("Se la puntata non può partire, usa il pulsante nel player. Il supporto ai collegamenti varia fra app e dispositivi.")}
+                    Toggle("Apri Stremio se la prossima puntata non parte",isOn:$autoReturn)
+                } header:{Text("Continua da Stremio")} footer:{Text("Al termine dei tentativi, Stremio si apre automaticamente solo se questa app è in primo piano. In background rimane il pulsante nel player. Il supporto ai collegamenti varia fra app e dispositivi.")}
                 Section {
                     Picker("Audio preferito",selection:$audio) {languages(disabled:false)}
                     Picker("Sottotitoli preferiti",selection:$subtitle) {languages(disabled:true)}

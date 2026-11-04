@@ -12,6 +12,25 @@ import Foundation
         precondition(PlaybackPreferences.appSettingKeys.allSatisfy { defaults.object(forKey:$0)==nil })
         precondition(defaults.string(forKey:"cast.personal.configuration")=="preserve")
         precondition(defaults.double(forKey:"cast.position.example")==321)
+        precondition(PlaybackPreferences.sourceAttempts(defaults:defaults)==3)
+        for invalid in [-3,0,4,999] {
+            defaults.set(invalid,forKey:"cast.series.sourceAttempts")
+            precondition(PlaybackPreferences.sourceAttempts(defaults:defaults)==3)
+        }
+        for valid in 1...3 {
+            defaults.set(valid,forKey:"cast.series.sourceAttempts")
+            precondition(PlaybackPreferences.sourceAttempts(defaults:defaults)==valid)
+        }
+        var plan=AutoplayRetryPlan(["", "a", "a", "b", "c", "d"])
+        precondition(plan.limit==3 && plan.attempt==0)
+        precondition(plan.next()=="a" && plan.next()=="b" && plan.next()=="c")
+        precondition(plan.attempt==3 && plan.next()==nil && plan.next()==nil)
+        var short=AutoplayRetryPlan(["a","b"],limit:1)
+        precondition(short.next()=="a" && short.next()==nil)
+        var empty=AutoplayRetryPlan([])
+        precondition(empty.limit==0 && empty.next()==nil)
+        for status in [401,403,429,451] {precondition(!AutoplayRetryPlan.permits(status:status))}
+        for status in [404,500,502,503] {precondition(AutoplayRetryPlan.permits(status:status))}
         let tracks = [RDTrack(key:"a",language:"eng",label:"English",codec:"aac"),RDTrack(key:"b",language:"ita",label:"Italiano",codec:"ac3")]
         precondition(PlaybackPreferences.audio(tracks,fallback:"a",defaults:defaults) == "a")
         PlaybackPreferences.remember(audio:tracks[1],subtitle:"it",defaults:defaults)
