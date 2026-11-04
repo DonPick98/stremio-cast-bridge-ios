@@ -1,3 +1,18 @@
+# Coordinamento CB-019/012 - diagnostica produttore
+Branch feat/producer-diagnostics-20261104 da33acb7f; PR3 verso branchfix.
+Questa sessione lascia sottotitoli/overlay/seek all’altro agente (issue1 comment6634531126).
+Campiona ultimo Statistics ogni15s/fine, read/release suMainActor senzaawait.
+ABIheaderpinnedv0.11.2, handleStatisticsownedrilasciato, tempi ms->s.
+Nuovi campi:producerSession (diverso daCast),sampleAge,frames,processed,elapsed,speed,dup,drop.
+Report tecnico locale senzaURL/titoli; non usare speed per dedurre CPU/rete/batteria.
+Test locale DLLpinned:12.000ms/288frames letti ehandle rilasciato.
+Nuovo workflow iOSdedicato:3conversioniTrueHD/AAC,unità,ciclistop/rilascio,annullamento
+prima del clientHTTP,decodefatal. CIin corso,nessuna nuovaIPA consegnata.
+Baselinebuild29 ha gateoverlaynoto fallito: prova dedicata noncertifica ilmotoreintero.
+Integrare conattenzione AudioRepairPipe/NativeEngineValidation se altroagenteli modifica;
+nessun cambiamento bitrate/soglievideo/percorso sottotitoli inquestaPR.
+
+---
 # Esito priorità 1 — build29 sperimentale, 2026-11-04
 
 Sorgente: 2f025546bd48afd46fd6e1ef9ec91f599af67e44, stesso branch/PR #2 draft.

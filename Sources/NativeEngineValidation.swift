@@ -171,7 +171,17 @@ import ObjectiveC
                 rows.append(["round":round,"passed":false,"error":String(describing:type(of:error))])
             }
         }
-        let passed = rows.count == 3 && rows.allSatisfy { $0["passed"] as? Bool == true }
+        let blocked = AudioRepairPipe()
+        do {
+            _ = try await blocked.start(input:documents.appendingPathComponent("CodecSamples/truehd.mkv"),position:0,audioIndex:0,subtitleIndex:nil)
+            blocked.stop(); blocked.stop()
+            for _ in 0..<100 { if blocked.testingStopCompleted { break }; try await Task.sleep(nanoseconds:50_000_000) }
+            rows.append(["kind":"cancel_before_client","passed":blocked.testingStopCompleted])
+        } catch {
+            blocked.stop()
+            rows.append(["kind":"cancel_before_client","passed":false,"error":String(describing:type(of:error))])
+        }
+        let passed = rows.count == 4 && rows.allSatisfy { $0["passed"] as? Bool == true }
         let report:[String:Any] = ["passed":passed,"rows":rows]
         if let data = try? JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]) {
             try? data.write(to:documents.appendingPathComponent("producer-statistics-validation.json"),options:.atomic)

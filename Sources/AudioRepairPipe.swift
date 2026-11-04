@@ -129,6 +129,9 @@ import Darwin
         var pointers = copies.map { UnsafePointer<CChar>($0) as UnsafePointer<CChar>? }
         handle = pointers.withUnsafeMutableBufferPointer { ffmpeg_kit_create_session_from_argv(Int32(args.count),$0.baseAddress) }
         guard let handle else { stop(); throw EmbeddedMediaError.encoder }
+        PlaybackDiagnostics.record(.producer,["phase":"statistics_start","mode":diagnosticMode,
+            "producerSession":String(ffmpeg_kit_session_get_session_id(handle)),
+            "position":PlaybackDiagnostics.number(position),"audio":String(audioIndex)])
 #if CAST_ENGINE_TESTING
         session_enable_debug_log(handle)
 #endif
