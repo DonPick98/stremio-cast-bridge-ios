@@ -1,3 +1,16 @@
+# Checkpoint 2026-11-04 - 0.8.1 (25)
+Sorgente67ea62b49940220bef0e4c2995551d8bc0f3fc59, stesso branch/PR2.
+Build iPhone41818164978 e nuovo nativo41818164931 RIUSCITI.
+40 output A/V,6 pixel sottotitoli,10 qualità,background65.265s passati.
+ASS seek:128/210 ->192/210 frame; supera soglia90percento esistente, ma perdita
+residua non risolta completamente. Non dichiarare zero frame persi o VFR garantito.
+Cadenza VLC esplicita anche per interi standard riconosciuti; FFmpeg invariato.
+IPA outputs/CastBridge-0.8.1-build25.ipa realmente ispezionata0.8.1/25,
+CC1AD845/backgroundaudio. SHA256a279f9f4dcc8a794ec2a67dbfd1abe74999cfef002e41f994311a8d48ca1a682.
+Issue1 aggiornata. CB021 implementato da verificare; hardware/microbuffering/batteria
+ancora aperti. Features dello stato agente preservate, non ampliate.
+
+---
 # Checkpoint 2026-11-04 — 0.8.1 (24)
 
 Sorgente applicativa e test: 382fdd068666dc588b7021adaaa4dab6fb789179.
@@ -303,3 +316,12 @@ The local ten-minute diagnostic report still excludes credentials, URLs, titles 
 
 Physical iPhone UI, long locked-screen playback and synchronization of privately sourced content remain user acceptance checks. The protocol test does not certify the exact private video or subtitle release. Keep the phone powered and on the receiver network for local serving/conversion. See THIRD_PARTY_NOTICES.md for pinned LGPL media dependencies and relinking information.
 
+
+## Ripresa locale 2026-11-04 - build25 in verifica
+Branch fix/playback-recovery-20261103, sorgente 67ea62b49940220bef0e4c2995551d8bc0f3fc59.
+Nuovo nativo build24 41799917489 fallito su caption_ass_seek,128/210 frame.
+Log scaricato work/build24-native conferma same PTS su ~24fps dopo seek.
+VLC cadenza esplicita estesa a interi standard riconosciuti oltre NTSC; FFmpeg invariato.
+Test aggiornati 24/25 e non standard; versione0.8.1 build25.
+CI produzione41818164978, nativo41818164931: controllare entrambi prima di consegna.
+Issue1 aggiornata CB021 IN_CORSO. Nessuna nuova verifica fisica.
