@@ -205,7 +205,14 @@ enum EmbeddedMediaError: LocalizedError {
             media.addOption(subtitleID == nil ? ":demux=avformat" : ":demux=mkv")
             media.addOption(":stream-filter=cache_read")
         }
-        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:video,access:"fd",target:String(channel.writer))
+        // The engine is also callable without the app's preflight metadata.
+        // Resolve cadence before configuring VLC rather than falling back to
+        // its imprecise timestamp-derived encoder time base.
+        let outputVideo:VideoFormat?
+        if let video { outputVideo = video }
+        else { outputVideo = try await Self.inspect(input).video }
+        try Task.checkCancellation()
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:outputVideo,access:"fd",target:String(channel.writer))
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
         media.addOption(":no-sout-keep")
