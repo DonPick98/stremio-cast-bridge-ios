@@ -1,3 +1,33 @@
+# Recupero e intestazione flusso — build42 candidata, 2026-11-04
+
+Mantiene le patch41 e aggiunge due protezioni: durante la sostituzione si mette
+in pausa il contenuto ancora posseduto anche se hasLoaded è stato azzerato dal
+recupero; il residuo del vecchio flusso di un producerfailed non conferma più
+come riuscita la preparazione fallita né cancella l'errore. Posizione richiesta
+resta distinta dalla posizione confermata; nessun reset automatico del budget.
+
+Diagnostica header WebM/MP4 distingue codecvideo/audio, canali, profilovideo e
+tracce mancanti, solo codici costanti e numero byte. Stessi codec/canali accettati:
+non nascondere un WebM senza audio allentando il gate. Test indipendenti branch
+2423fa0 e f5d1e88: run41903311533 e41904087141 SUCCESSO LinuxSwift6.
+Secondo comprende veri header generati conFFmpeg6.1.1: VP8+Vorbisstereo4365byte,
+VP8+Opusstereo436byte, Vorbis6ch7768byte e videosenzaaudio334byte, più tutti i
+prefissi incompleti. Le intestazioni sono sintetiche, non dati del caso utente.
+
+Riscontro primario: FFmpegvideotoolboxenc8.1 create_cv_pixel_buffer documenta
+sessioniVT invalidate sui passaggi foreground/background e relativa ricreazione.
+Compatibile conAVERROR_EXTERNAL storico, non prova del sottocodice su iPhone.
+https://ffmpeg.org/doxygen/8.1/videotoolboxenc_8c_source.html
+
+Build41 iPhone41901395190 SUCCESSO (IPA non ancora estratta qui); nativo41
+41901395026 ancora in esecuzione al checkpoint. Non interromperlo per aggiunte:
+42 preparata nel branch test/stream-header-20261104, poi integrare nel branchfix
+quando termina41. Verifica app/runtime42 ancora da fare; nessuna IPA42 dichiarata.
+Causa originaria e rifiutoVP8 reali restano aperti; dopo la nuovaIPA è necessaria
+prova iPhone/Chromecast passando ad altre app e leggendo i nuovi codici header.
+
+---
+
 # Interruzione background38 — build41 candidata, 2026-11-04
 
 Evidenza completa nel commentoissue1/6640545215 (UTC19:46–19:48). H264 termina

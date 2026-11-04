@@ -507,7 +507,7 @@ import AVFAudio
                 if recoverPlayback(allowVideoConversion:false) { return }
             }
             if progress.stable && (!localProcessing || nativeEngine?.failed != true) { recovery.reset() }
-            if ready && confirmed && currentLoad {
+            if ready && confirmed && currentLoad && (!localProcessing || nativeEngine?.failed != true) {
                 if loadPending || !hasLoaded { playbackIssue = nil }
                 hasLoaded = true; wantsPlayback = true
                 episodeAutoplay=nil;requireEpisodeLanguage=false
@@ -898,7 +898,7 @@ import AVFAudio
         timeline.begin(at:start); progress.reset(); position = start; lastGoodPosition = start
         // Freeze the old stream while replacing its audio/subtitle pipeline.
         // Its late statuses must not move the new original-media timeline.
-        if hasLoaded && ownsCurrentMedia {
+        if ownsCurrentMedia {
             nativeEngine?.setReceiverPaused(true)
             _ = client?.pause()
         }
