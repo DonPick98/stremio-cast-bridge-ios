@@ -91,6 +91,7 @@ jobs:
               cat native-engine-report/engine-validation.json
               tail -n 50 "$data/Documents/stdio.log"
               node Tests/verify-decoded-media.mjs native-engine-report Tests/CodecSamples/h264-ac3.mkv
+              node Tests/verify-overlay-seek.mjs native-engine-report "$RUNNER_TEMP/codec-matrix/caption-hevc-eac3.mkv"
               node Tests/verify-video-quality.mjs native-engine-report
               node -e 'const r=require("./native-engine-report/engine-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
               exit 0

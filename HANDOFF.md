@@ -1,3 +1,28 @@
+# Lavoro in corso — priorità 1, build 29
+
+Baseline 42b145f / 0.8.1(28), stesso branch fix/playback-recovery-20261103 e PR #2.
+Ordine operativo completo nella issue #1: prima integrità/seek, poi buffering e
+background, sottotitoli ancora problematici, binge-watching, sync Stremio,
+Live Activity, impostazioni restanti e compatibilità/ottimizzazioni misurate.
+
+CB-009/021 IN_CORSO: gli overlay con audio non copiabile dal Cast ma decodificabile
+in VLC evitano ora la normalizzazione packet-copy prima del seek. La conversione
+in AAC resta nella catena VLC; repairAudio esplicito (TrueHD) conserva il percorso
+precedente. Nessuna estensione del risultato a quel percorso o a VFR/hardware.
+
+Riproduzione locale Linux HEVC10/EAC3, 23.976 fps, GOP48, seek3.25s:
+vecchio remux produce 192/210 frame, prima immagine a0.792s; decodifica diretta
+produce210/210, prima immagine0, maxgap0.041709s. Sono controlli FFmpeg locali,
+NON ancora una prova della libreria VLC iOS.
+Nuovo verify-overlay-seek.mjs controlla almeno98% frame, prima immagine entro
+2 frame, nessun salto oltre2 frame e copertura fino alla fine. Il controllo
+locale accetta la clip completa e respinge quella vecchia. I controlli precedenti
+su audio/pixel sottotitoli/qualità restano tutti attivi.
+Build29 iPhone e simulatore da eseguire e leggere prima di consegnare la candidata.
+Nessun collaudo fisico, risparmio energetico o soluzione generale buffering dichiarati.
+
+---
+
 # Checkpoint 2026-11-04 - 0.8.1 (28)
 Sorgente692623cf50410a7a95f132922ec5451c54b8a700,samebranchPR2.
 BuildiPhone41823062443 e nuovo nativo41823062547 SUCCESS.
