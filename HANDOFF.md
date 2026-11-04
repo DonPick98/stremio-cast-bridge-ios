@@ -1,3 +1,34 @@
+# Open source sottotitoli — build31 in verifica, 2026-11-04
+
+Baseline7c9376b/build30, stessa PR2/branch. Richiesta utente: usare progetti open
+source per risolvere i sottotitoli. CB022 IN_CORSO, cause storiche CB005/010 non provate.
+
+Adattato parser SRT a cursore da swift-subtitle-kit MIT728d62dac9fbda7fabd299eed3673ce36c85c267:
+confini battute, indici non consecutivi, separatori mancanti; aggiunti limiti clock,
+frazioni decimali scalate correttamente e conservazione dei numeri in file senza indici.
+Campi/sezioni ASS case-insensitive da SSACommon, mantenendo testo con virgole.
+Adattata autodetection NSString non-lossy da SwiftSubtitles MIT485c6f1fc71235041198a8bb893fa22f807451a6:
+UTF8 rapido, UTF32 BOM prima di UTF16, fallbackOS e rifiutoNUL. Test UTF32LE/BE,
+UTF16anche senzaBOM,UTF8. Non garantisce ogni codifica legacy o supportoZIP/OCR.
+
+Licenze complete presenti in sorgente, THIRD_PARTY_NOTICES e due risorse MIT
+aggiunte al target app. Versioni app/estensione0.8.1(31); nessuna nuova dipendenza
+SwiftPM/Pod. Jellyfin Cast rivisto come riferimento WebVTT esterno; nessun codice
+GPL Jellyfin copiato. Defaultreceiver gratuitoCC1AD845 e percorsoPGS conservati.
+Documentazione e revisioni in Docs/SUBTITLES.md; test OpenSourceSubtitleTests e
+fetch UTF32 aggiunti a build-iPhone e suite focalizzata. Non chiamare questo l'intero
+SubtitleKit o promettere tutte le sue nove famiglie di formati.
+
+Build30 documenti/iPhone/nativo ancoraQUEUED al momento della ricerca; nessun
+runnerassegnato. Swift/Xcode assenti locale. Verifiche locali: IDprogettounici,
+risorse/versioni, whitespace; FFmpegLinux converte fixtureUTF8 ma rifiuta rawUTF32
+BOM eUTF16senzaBOM, confermando che non sostituisce la decodifica testuale a monte.
+Non dichiarare test Swift passati né una IPA31. Gate nativo125ms ancora aperto.
+Prossimo: leggere suite focalizzata/app iPhone, correggere errori eventuali; poi
+verificare sottotitoli sul file reale senza dichiarare la prima vlc_3 già risolta.
+
+---
+
 # Checkpoint sottotitoli — 0.8.1 (30), 2026-11-04
 
 Sorgente applicativa241be82673344f4755f0ccd48c58ba5a01163489; test/workflow

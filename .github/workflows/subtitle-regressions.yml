@@ -10,6 +10,7 @@ on:
       - 'Sources/PlaybackPreferences.swift'
       - 'Tests/CaptionModelTests.swift'
       - 'Tests/SubtitleCatalogTests.swift'
+      - 'Tests/OpenSourceSubtitleTests.swift'
       - 'Tests/SubtitleFetchTests.swift'
       - 'Tests/PlaybackPreferencesTests.swift'
       - '.github/workflows/subtitle-regressions.yml'
@@ -31,6 +32,8 @@ jobs:
           "$RUNNER_TEMP/caption-model-tests"
           swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"
           "$RUNNER_TEMP/subtitle-catalog-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/OpenSourceSubtitleTests.swift -o "$RUNNER_TEMP/opensource-subtitle-tests"
+          "$RUNNER_TEMP/opensource-subtitle-tests"
           swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/SubtitleFetchTests.swift -o "$RUNNER_TEMP/subtitle-fetch-tests"
           "$RUNNER_TEMP/subtitle-fetch-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/playback-preferences-tests"

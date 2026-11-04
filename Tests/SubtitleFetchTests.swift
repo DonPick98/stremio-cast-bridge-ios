@@ -12,6 +12,7 @@ private final class SubtitleFixtureProtocol:URLProtocol {
         let data:Data
         switch path {
         case "/utf16":data=srt.data(using:.utf16)!
+        case "/utf32":data=srt.data(using:.utf32)!
         case "/empty":data=Data("WEBVTT\n\n".utf8)
         case "/html":data=Data("<html>Service unavailable</html>".utf8)
         case "/bad-vtt":data=Data("WEBVTT\n\n00:00:03.000 --> 00:00:02.000\nBad\n".utf8)
@@ -32,7 +33,7 @@ private final class SubtitleFixtureProtocol:URLProtocol {
         return try await WebVTTTimeline.fetch(URL(string:"https://subtitle.example/"+path)!,configuration:config)
     }
     static func main() async throws {
-        for kind in ["srt","utf16"] {
+        for kind in ["srt","utf16","utf32"] {
             let text=try await fetch(kind)
             precondition(text.components(separatedBy:" --> ").count==3)
             precondition(text.contains("First\n\n00:00:03.000") && text.contains("Second"))
