@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 #endif
                 }
                 .onChange(of: scenePhase) { phase in
-                    if phase == .active { controller.refreshConnection() }
+                    if phase == .active { controller.refreshConnection();StremioSync.shared.flush() }
                     else { controller.savePlaybackPosition(phase:phase == .inactive ? "inactive":"background") }
                 }
         }

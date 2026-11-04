@@ -498,6 +498,9 @@ private struct AppPreferencesView:View {
                     Picker("Sottotitoli preferiti",selection:$subtitle) {languages(disabled:true)}
                 } header:{Text("Lingue")} footer:{Text("Le preferenze si applicano alle prossime selezioni. Puoi cambiare traccia per il video corrente dal player.")}
 
+                Section("Stremio") {
+                    NavigationLink("Libreria e punto di ripresa"){StremioSettingsView()}
+                }
                 Section("Controlli") {
                     Picker("Salto avanti e indietro",selection:$seekStep) {
                         ForEach(PlaybackPreferences.seekSteps,id:\.self){value in Text("\(Int(value)) secondi").tag(value)}
@@ -561,5 +564,57 @@ private struct AppPreferencesView:View {
         }
         let current=disabled ? subtitle:audio
         if !["en","it","fr","de","es","ja","ko","pt","zh","ru","none","auto"].contains(current) {Text(current).tag(current)}
+    }
+}
+
+
+private struct StremioSettingsView:View {
+    @ObservedObject private var sync=StremioSync.shared
+    @State private var email=""
+    @State private var password=""
+    @State private var showLogin=false
+    @State private var confirmDisconnect=false
+    @State private var confirmRemote=false
+    @AppStorage("cast.stremio.resume") private var remoteResume=true
+    var body:some View {
+        Form {
+            if sync.connected {
+                Section("Account") {
+                    Text(sync.accountLabel)
+                    Toggle("Sincronizza con Stremio",isOn:Binding(get:{sync.enabled},set:{sync.setEnabled($0)}))
+                    Toggle("Usa il punto di ripresa da Stremio",isOn:$remoteResume).disabled(!sync.enabled)
+                    Button("Ripeti accesso"){showLogin=true}
+                    Button("Disconnetti",role:.destructive){confirmDisconnect=true}
+                }
+            }
+            if !sync.connected || showLogin {
+                Section {
+                    TextField("Email Stremio",text:$email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField("Password Stremio",text:$password).textContentType(.password)
+                    Button {
+                        let address=email,secret=password;password=""
+                        Task{if await sync.connect(email:address,password:secret){showLogin=false}}
+                    } label:{HStack{Text("Collega Stremio");if sync.busy{Spacer();ProgressView()}}}
+                        .disabled(sync.busy || email.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || password.isEmpty)
+                } header:{Text("Accesso Stremio")} footer:{Text("Usa email e password di Stremio. La password non viene salvata. L’accesso viene conservato nel portachiavi di questo iPhone; la sincronizzazione si attiva separatamente.")}
+            }
+            Section {
+                Text(sync.message)
+                if sync.pending>0 {LabeledContent("Aggiornamenti in attesa",value:String(sync.pending))}
+                if sync.enabled {Button("Sincronizza ora"){sync.flush()}}
+                if sync.conflicts>0 {
+                    Button("Mantieni i dati Stremio in conflitto"){confirmRemote=true}
+                }
+            } header:{Text("Stato")} footer:{Text("Per i contenuti IMDb, condivide il punto confermato dalla TV e segna visto alla fine della riproduzione. Le modifiche senza rete restano in coda. I dati remoti più recenti sono conservati. La lettura del punto remoto avviene alla prossima scelta di una sorgente.")}
+        }.navigationTitle("Stremio")
+        .onDisappear{password=""}
+        .confirmationDialog("Disconnettere Stremio?",isPresented:$confirmDisconnect,titleVisibility:.visible){
+            Button("Disconnetti",role:.destructive){sync.disconnect()}
+            Button("Annulla",role:.cancel){}
+        } message:{Text("Rimuove l’accesso e gli aggiornamenti ancora in coda su questo iPhone. La libreria Stremio rimane salvata.")}
+        .confirmationDialog("Mantenere i dati Stremio?",isPresented:$confirmRemote,titleVisibility:.visible){
+            Button("Mantieni Stremio"){sync.discardConflicts()}
+            Button("Annulla",role:.cancel){}
+        } message:{Text("Ignora solo gli aggiornamenti locali in conflitto. Gli altri progressi in attesa rimangono in coda.")}
     }
 }

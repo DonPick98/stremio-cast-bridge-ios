@@ -42,22 +42,51 @@ private final class LibraryProtocol:URLProtocol,@unchecked Sendable {
         let remote:[String:Any]=["_id":"tt2934286","type":"series","name":"Existing title","removed":false,"temp":false,"state":state,"_mtime":StremioLibraryMerge.stamp(now.addingTimeInterval(-1)),"futureItem":["x":1]]
         let merged=try StremioLibraryMerge.applying(event,to:remote,episodes:ids,now:now)
         let updated=merged["state"] as! [String:Any]
-        precondition(updated["timeOffset"] as? Int64==42_250 && updated["duration"] as? Int64==1_200_000)
-        precondition(updated["overallTimeWatched"] as? Int64==600 && updated["timeWatched"] as? Int64==0)
+        precondition((updated["timeOffset"] as? NSNumber)?.int64Value==42_250 && (updated["duration"] as? NSNumber)?.int64Value==1_200_000)
+        precondition((updated["overallTimeWatched"] as? NSNumber)?.int64Value==600 && (updated["timeWatched"] as? NSNumber)?.int64Value==0)
         precondition(updated["watched"] as? String==encoded && updated["noNotif"] as? Bool==true && updated["futureField"] as? String=="keep")
         precondition(merged["name"] as? String=="Existing title" && merged["removed"] as? Bool==false && merged["futureItem"] != nil)
         let completed=StremioProgressEvent(type:event.type,videoID:event.videoID,title:event.title,position:event.duration,duration:event.duration,observedAt:now.addingTimeInterval(2),completed:true)
         let done=try StremioLibraryMerge.applying(completed,to:merged,episodes:ids,now:now.addingTimeInterval(2))
         let doneState=done["state"] as! [String:Any]
-        precondition(doneState["timeOffset"] as? Int==0 && doneState["timesWatched"] as? Int64==4)
+        precondition((doneState["timeOffset"] as? NSNumber)?.int64Value==0 && (doneState["timesWatched"] as? NSNumber)?.int64Value==4)
         let idempotent=try StremioLibraryMerge.applying(completed,to:done,episodes:ids,now:now.addingTimeInterval(2))
-        precondition((idempotent["state"] as! [String:Any])["timesWatched"] as? Int64==4)
+        precondition(((idempotent["state"] as! [String:Any])["timesWatched"] as? NSNumber)?.int64Value==4)
         reject{_ = try StremioLibraryMerge.applying(event,to:done,episodes:ids,now:now.addingTimeInterval(3))}
         let created=try StremioLibraryMerge.applying(event,to:nil,episodes:ids,now:now)
         precondition(created["removed"] as? Bool==true && created["temp"] as? Bool==true)
         precondition(StremioLibraryMerge.resume(merged,videoID:event.videoID,localUpdated:now.addingTimeInterval(-1))==42.25)
         precondition(StremioLibraryMerge.resume(merged,videoID:ids[2],localUpdated:now.addingTimeInterval(-1))==nil)
         precondition(StremioLibraryMerge.resume(merged,videoID:event.videoID,localUpdated:now)==nil)
+        // Multiple offline episodes must survive coalescing. A receipt only
+        // accepts our exact prior state, never a changed remote watched field.
+        var queue=StremioOutbox()
+        try queue.enqueue(completed,episodes:ids)
+        let nextEpisode=StremioProgressEvent(type:"series",videoID:ids[2],title:"Synthetic",position:20,duration:1200,observedAt:now.addingTimeInterval(3),completed:false)
+        try queue.enqueue(nextEpisode,episodes:ids)
+        let later=StremioProgressEvent(type:"series",videoID:ids[2],title:"Synthetic",position:50,duration:1200,observedAt:now.addingTimeInterval(4),completed:false)
+        try queue.enqueue(later,episodes:ids)
+        precondition(queue.entries.count==2 && queue.entries[0].event.completed && queue.entries[1].event.position==50)
+        let firstID=queue.entries[0].id
+        let receipt=try JSONSerialization.data(withJSONObject:doneState,options:.sortedKeys)
+        queue.acknowledge(firstID,itemID:"tt2934286",state:receipt)
+        precondition(queue.entries.count==1 && queue.receipts["tt2934286"]==receipt)
+        var uploaded=done;uploaded["_mtime"]=StremioLibraryMerge.stamp(now.addingTimeInterval(60))
+        let offline=try StremioLibraryMerge.applying(later,to:uploaded,episodes:ids,now:now.addingTimeInterval(61),acceptedState:receipt)
+        precondition(((offline["state"] as! [String:Any])["timeOffset"] as? NSNumber)?.int64Value==50_000)
+        var changedRemote=uploaded;var changedState=doneState;changedState["timeOffset"]=100_000;changedRemote["state"]=changedState
+        reject{_ = try StremioLibraryMerge.applying(later,to:changedRemote,episodes:ids,now:now.addingTimeInterval(61),acceptedState:receipt)}
+        let restored=try JSONDecoder().decode(StremioOutbox.self,from:JSONEncoder().encode(queue))
+        precondition(restored.entries.first?.event==later && restored.receipts==queue.receipts)
+        let replacedID=queue.entries[0].id
+        let newer=StremioProgressEvent(type:"series",videoID:ids[2],title:"Synthetic",position:60,duration:1200,observedAt:now.addingTimeInterval(5),completed:false)
+        try queue.enqueue(newer,episodes:ids)
+        queue.acknowledge(replacedID,itemID:"tt2934286",state:receipt)
+        precondition(queue.entries.count==1 && queue.entries[0].event==newer)
+        var rewatch=StremioOutbox();try rewatch.enqueue(completed,episodes:ids)
+        let replay=StremioProgressEvent(type:event.type,videoID:event.videoID,title:event.title,position:10,duration:1200,observedAt:now.addingTimeInterval(5),completed:false)
+        try rewatch.enqueue(replay,episodes:ids)
+        precondition(rewatch.entries.count==2 && rewatch.entries[0].event.completed)
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[LibraryProtocol.self]
         let api=StremioLibraryAPI(configuration:config)
         var requests:[String]=[]

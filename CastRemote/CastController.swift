@@ -312,12 +312,19 @@ import AVFAudio
         let value = client.approximateStreamPosition() + streamOffset
         guard value.isFinite, value >= 0, state != .buffering || value > 0 else { return }
         lastGoodPosition = value
-        if let positionKey { UserDefaults.standard.set(value, forKey: positionKey) }
+        if let positionKey { UserDefaults.standard.set(value, forKey: positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated") }
     }
     func savePlaybackPosition(phase:String = "background") {
-        capturePosition()
+        capturePosition();syncStremioProgress(force:true)
         PlaybackDiagnostics.record(.app,["phase":phase,"position":PlaybackDiagnostics.number(lastGoodPosition)])
         recordEnergySnapshot(); PlaybackDiagnostics.shared.flush()
+    }
+    private func syncStremioProgress(completed:Bool=false,force:Bool=false) {
+        guard let handoff,let confirmed=lastConfirmedPosition,confirmed.isFinite,confirmed>=0,duration.isFinite,duration>0 else{return}
+        let ended=completed && confirmed>=duration-max(2,min(30,duration*0.02))
+        let ids=SeriesNavigation.seriesID(handoff.id).map{SeriesNavigation.ordered(episodes,series:$0,includeSpecials:true).map(\.id)} ?? []
+        let title=handoff.type=="series" ? displayTitle.components(separatedBy:" · S").first ?? displayTitle:displayTitle
+        StremioSync.shared.observe(type:handoff.type,videoID:handoff.id,title:title,position:ended ? duration:confirmed,duration:duration,completed:ended,force:force,episodes:ids)
     }
     private func recordEnergySnapshot() {
         if let prepared {
@@ -443,6 +450,7 @@ import AVFAudio
                 return
             }
             if status.playerState == .playing || status.playerState == .paused { intentCorrection=nil }
+            let wasPlaying=playing
             playing = status.playerState == .playing
             if (status.playerState == .playing && (!loadPending || playWhenReady)) || (status.playerState == .paused && (!loadPending || !playWhenReady)) { nativeEngine?.setReceiverPaused(status.playerState == .paused) }
             if loadPending && loadAccepted && playWhenReady && status.playerState == .paused { _ = client.play() }
@@ -460,7 +468,7 @@ import AVFAudio
                 let actual=status.streamPosition+streamOffset
                 if actual.isFinite,actual >= 0 { lastConfirmedPosition=actual }
                 if let positionKey, observed > 0, Date().timeIntervalSince(lastPositionSave) >= 10 {
-                    UserDefaults.standard.set(observed, forKey: positionKey); lastPositionSave = Date()
+                    UserDefaults.standard.set(observed, forKey: positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated"); lastPositionSave = Date()
                 }
                 if !userSeeking { position = observed }
             }
@@ -481,6 +489,7 @@ import AVFAudio
                 hasLoaded = true; wantsPlayback = true
                 episodeAutoplay=nil;requireEpisodeLanguage=false
                 loadedMediaSessionID=status.mediaSessionID
+                syncStremioProgress(force:wasPlaying && !playing)
                 if loadedAudioKey==selectedAudio,loadedSubtitle==selectedSubtitle {
                     confirmedChoice=(selectedAudio,selectedSubtitle,selectedOnlineSubtitle,subtitleDelay)
                 }
@@ -540,11 +549,12 @@ import AVFAudio
     private func finishOwnedPlayback() {
         guard wantsPlayback || hasLoaded else{return}
         PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
+        syncStremioProgress(completed:true,force:true)
         let continueSeries=(UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true) && (adjacentEpisode(1)?.aired()==true)
         stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished")
         if !continueSeries{liveActivity.end()}
         loadPending=false;loading=false;loadTimeout?.cancel();loadRequest=nil
-        if let positionKey { UserDefaults.standard.set(0,forKey:positionKey) }
+        if let positionKey { UserDefaults.standard.set(0,forKey:positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated") }
         sourceResume=nil;hasLoaded=false;lastGoodPosition=0;lastConfirmedPosition=nil
         loadedMediaSessionID=nil;timeline.reset();recovery.reset();progress.reset()
         stopLocalProcessing();message="Riproduzione terminata."
@@ -719,6 +729,12 @@ import AVFAudio
                 }
                 try validateSource(sourceToken)
                 guard !result.audio.isEmpty else { throw BridgeError.cannotResolve }
+                if resume==nil {
+                    let updated=UserDefaults.standard.object(forKey:content.positionKey+".updated") as? Date ?? (stored>0 ? Date.distantFuture:Date.distantPast)
+                    let remote=await StremioSync.shared.resume(type:handoff.type,videoID:handoff.id,localUpdated:updated)
+                    try validateSource(sourceToken)
+                    if let remote {lastGoodPosition=remote;position=remote;UserDefaults.standard.set(remote,forKey:content.positionKey)}
+                }
                 if requireEpisodeLanguage,let language=UserDefaults.standard.string(forKey:"cast.preferred.audio"),language != "auto",
                    !result.audio.contains(where:{PlaybackPreferences.language($0.language)==language}) {
                     busy=false;if advanceAutoplaySource(){return};episodeIssue="La sorgente della prossima puntata non contiene l’audio preferito. Continua da Stremio o scegli un’altra sorgente."
@@ -1769,6 +1785,7 @@ import AVFAudio
         if success { updateStatus() }
     }
     private func resetPlayback(preserveAutoplay:Bool=false,preserveActivity:Bool=false) {
+        syncStremioProgress(force:true)
         if !preserveAutoplay{episodeAutoplay=nil}
         work?.cancel();work=nil;busy=false
         episodeRequest=UUID();episodeBusy=false

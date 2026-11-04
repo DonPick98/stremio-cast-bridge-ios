@@ -40,6 +40,10 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/SeriesNavigationTests.swift -o "$RUNNER_TEMP/series-tests"
           "$RUNNER_TEMP/series-tests"
+      - name: Test Stremio protocol and offline merge
+        run: |
+          swiftc -parse-as-library -import-objc-header Sources/StremioZlib.h Sources/StremioLibrary.swift Tests/StremioLibraryTests.swift -lz -o "$RUNNER_TEMP/library-tests"
+          "$RUNNER_TEMP/library-tests"
       - name: Test update metadata policy
         run: |
           swiftc -parse-as-library Sources/AppUpdate.swift Tests/AppUpdateTests.swift -o "$RUNNER_TEMP/update-tests"

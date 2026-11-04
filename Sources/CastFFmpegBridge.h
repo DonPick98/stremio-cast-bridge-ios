@@ -1,6 +1,7 @@
 #ifndef CAST_FFMPEG_BRIDGE_H
 #define CAST_FFMPEG_BRIDGE_H
 #include <stdint.h>
+#include "StremioZlib.h"
 // Narrow C ABI from the pinned ffmpegkit_wrapper.h. Avoid importing its
 // internal FFmpeg/C++ headers into Swift or the independent VLC framework.
 void ffmpeg_kit_initialize(void);

@@ -1,3 +1,29 @@
+# Stremio — build37 candidata, 2026-11-04
+
+FT004 implementato come opt-in nelle impostazioni, da verificare. Protocollo e
+limiti in Docs/STREMIO_SYNC.md. Auth email/password, tokenKeychain soltanto;
+queueprotetta/hashaccount, mergecampiignoti/bitswatched/mtime, ricevuteoffline,
+backoff e conflitti espliciti. Update uscita solo clockTV confermato; finevista
+vicinafine naturale. Importpuntoremoto opzionale allascelta sorgente quando più
+recente dello timestamp locale e nessun pendente. Legacy senza timestamp conservato.
+IMDb movie/series; niente SSO/QR/browserlibreria/unwatchUI o CAS server.
+NuovibridgeheaderZlib+link-lz e dueSwift sorgenti intarget, build37 quattroconfig.
+
+Primo testcorefb00a3b compilato/eseguito suLinux ma FALLITO a confronto tipizzato
+Int64 dello zeroSwiftInt dentroAny; asserzioni ora verificano valore numericoJSON,
+non tipo runtimeSwift. Valori attesi restano invariati. Nuovi testcoda/ricevute e
+API mock; risultato ancora da acquisire. Nessun account reale usato o sync eseguita.
+
+Evidenze35: iPhone41870893584 SUCCESSO; artifactCastRemote-unsigned13346035584
+esiste (non ancora estratto/controllato qui). Suitecaption41870893493: Linuxjob
+126717328042 e Apple126717328713 entrambi SUCCESSO, include UTF16senzaBOM.
+Nativo33/47c481e run41869102213 FALLITO unicamente al gate125.125ms dopo40 decode
++6captionpixel PASSATI. Questa prova non usa nuovaidentitàframe o metriche34.
+AppUpdater36 testLinux41872116196 SUCCESSO; app36/37 restano da compilare/collaudare.
+Tutte le voci che richiedono iPhone/Chromecast/account restano aperte.
+
+---
+
 # Aggiornamenti inapp — build36 candidata, 2026-11-04
 
 FT005: impostazioni Aggiornamenti con checkmanuale, automatico opt-in a24h
