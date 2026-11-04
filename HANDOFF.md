@@ -1,3 +1,23 @@
+# IPA38 consegnata per test — 2026-11-04
+
+Sorgente425c3e3af5c4f2603c4b9a4e7a694697846f3213, PR2 draft.
+Build iPhone41876289725 SUCCESSO; artifact13346149564 estratto e verificato:
+app e Live Activity0.8.1/build38, bundleapp.example.castbridge. IPA33512392byte,
+SHA2569d4329d9509db5305af9fc8691a9947668eab26c2fbd4111f5b9db858539ba17.
+App senza firma/provisioning; consegnata su richiesta per sideload viaSideStore.
+Testmetadata+sort41876289561 PASSATI, coreStremio37/41875282378 PASSATO(mock).
+Nativo38/41876289569: APIrunfailure ma job126736468790 CANCELLED senza runner o
+step; log404. Non diagnosticare un nuovo errore del producer da questo run.
+Ultimo nativo effettivo33 fallisce ancora il gate125.125ms dopo40decode+6pixel
+passati. Nuove metriche/identitàframe34+ non ancora verificate runtime qui.
+Nessun testTV/accountreale/SideStoreinplace; nessuna release/deploy/merge.
+Prossimo passo: eseguire nativo sullo stesso425c3e3 (evitare duplicati), poi leggere
+frameidentity e statistiche; collaudare sottotitoli originali/background/buffering,
+syncaccount e installazione reale prima di chiudere i relativi ID. FT003 ancora
+parziale, CB016 warnings aperti, FT002 origine diversa da Stremio non implementata.
+
+---
+
 # Ordine sorgenti — build38 candidata, 2026-11-04
 
 FT003: preferenza risoluzione (addon/720/1080/2160) e dimensioni
