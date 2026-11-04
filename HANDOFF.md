@@ -1,4 +1,4 @@
-# 0.8.0 (22) — episodi e preferenze, in verifica
+# 0.8.0 (23) — episodi e preferenze, in verifica
 
 FT-001: catalogo Cinemeta per ID IMDb canonici, precedente/successivo, ordine
 stagione/episodio da metadati reali, nessuna invenzione degli episodi mancanti.
@@ -9,6 +9,7 @@ implementata una ricerca automatica fra fonti alternative dopo fallimento.
 FT-003 parziale: area Preferenze con autoplay, continuità sorgente, speciali,
 app/web di ritorno e lingue. Aspetto sottotitoli resta nella schermata esistente;
 non tutte le decisioni interne sono ancora configurabili. FT-004 non implementato.
+CB-020: reset annulla il task work pendente e azzera busy, anche dopo stop.
 CB-018: guardia contro callback di fine ripetuti dopo fine già consumata.
 Protezione autoplay anche per sottotitoli richiesti ma assenti. Preparazione
 sorgente/episodio mantiene un proprietario della sessione audio e un task

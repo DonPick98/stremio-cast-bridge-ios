@@ -1704,7 +1704,7 @@ import AVFAudio
         if success { updateStatus() }
     }
     private func resetPlayback() {
-        if episodeBusy {work?.cancel()}
+        work?.cancel();work=nil;busy=false
         episodeRequest=UUID();episodeBusy=false
         sourceRevision = UUID()
         trackChangePending = false
