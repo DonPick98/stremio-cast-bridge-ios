@@ -2,7 +2,7 @@ name: Build unsigned iOS app
 
 on:
   push:
-    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103]
+    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103, feat/producer-diagnostics-20261104]
   workflow_dispatch:
     inputs:
       receiver_app_id:

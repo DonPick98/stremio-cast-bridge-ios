@@ -44,6 +44,10 @@ import Foundation
         saved.record(.prepare,["mode":"ffmpegH264"]); saved.flush()
         let restored = DiagnosticRecorder(file:file,clock:{now})
         precondition(restored.report().contains("mode=ffmpegH264"))
+        log.record(.producer,["phase":"statistics","producerSession":"15","frames":"96","processed":"4.021","elapsed":"1.500","speed":"2.680","dup":"0","drop":"1","sampleAge":"0.000","url":"https://secret.example/source"])
+        let statistics=log.report()
+        precondition(statistics.contains("processed=4.021") && statistics.contains("speed=2.680") && statistics.contains("producerSession=15"))
+        precondition(!statistics.contains("secret.example"))
         print("Diagnostics: redaction, deduplication, bounded history, expiry and restoration passed")
     }
 }
