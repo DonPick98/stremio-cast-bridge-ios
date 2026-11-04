@@ -116,7 +116,9 @@ import AVFAudio
             let owner="episode-prepare-"+UUID().uuidString
             CastAudioSession.shared.acquire(owner)
             let background=CastBackgroundLease(name:"Choose next episode") { [weak self] in
-                guard self?.episodeRequest==token else{return};self?.work?.cancel()
+                guard let self,self.episodeRequest==token else{return}
+                self.work?.cancel();self.work=nil;self.episodeBusy=false
+                self.episodeIssue="iOS ha interrotto la preparazione della puntata. Puoi riprovare."
             }
             defer {
                 CastAudioSession.shared.release(owner)
@@ -725,7 +727,9 @@ import AVFAudio
         CastAudioSession.shared.acquire(owner)
         work = Task {
             let background=CastBackgroundLease(name:"Prepare episode source") { [weak self] in
-                guard self?.sourceRequests.accepts(sourceToken)==true else{return};self?.work?.cancel()
+                guard let self,self.sourceRequests.accepts(sourceToken) else{return}
+                self.work?.cancel();self.work=nil;self.busy=false
+                self.message="iOS ha interrotto la preparazione della sorgente. Puoi riprovare."
             }
             defer {
                 CastAudioSession.shared.release(owner)
@@ -922,7 +926,8 @@ import AVFAudio
         updateActivity(status:"Caricamento")
         streamCheckTask = Task { [weak self] in
             let background=CastBackgroundLease(name:"Prepare Cast stream") { [weak self] in
-                guard self?.streamRequests.accepts(streamToken)==true else{return};self?.streamCheckTask?.cancel()
+                guard let self,self.streamRequests.accepts(streamToken) else{return}
+                self.backgroundProcessingExpired()
             }
             defer {background.end()}
             do {
@@ -1647,7 +1652,10 @@ import AVFAudio
         // User cancellation or system expiration must not spawn another job.
         backgroundServiceStopped=true
         savePlaybackPosition(phase:"background_expired")
-        if let confirmed=lastConfirmedPosition {lastGoodPosition=confirmed;position=confirmed}
+        if let confirmed=lastConfirmedPosition {
+            lastGoodPosition=confirmed;position=confirmed
+            if let positionKey {UserDefaults.standard.set(confirmed,forKey:positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated")}
+        }
         controlRequests.invalidate();finishCommand(false)
         intentCorrectionRequest?.cancel();intentCorrectionRequest=nil;intentCorrection=nil;playbackIntent.reset()
         streamRequests.invalidate();loadedStreamGeneration=nil

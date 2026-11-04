@@ -15,7 +15,9 @@ import BackgroundTasks
     init(name:String,onExpiration:@escaping @MainActor ()->Void = {}) {
         let id=UIApplication.shared.beginBackgroundTask(withName:name) { [weak self] in
             guard let self else{return}
-            self.expired=true;self.end();onExpiration()
+            self.expired=true;self.end()
+            PlaybackDiagnostics.record(.app,["phase":"background_work_expired","kind":name])
+            onExpiration()
         }
         if expired {if id != .invalid {UIApplication.shared.endBackgroundTask(id)}}
         else {identifier=id}
