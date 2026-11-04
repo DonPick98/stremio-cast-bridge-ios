@@ -163,7 +163,11 @@ import BackgroundTasks
         if inserted || !isPlaying { beginTransition();activate(cause:"acquire") }
     }
     func release(_ owner:String) {
-        guard owners.remove(owner) != nil, owners.isEmpty else { return }
+        guard owners.remove(owner) != nil else {return}
+        if !owners.isEmpty {
+            if owner == "now_playing" {activate(cause:"release")}
+            return
+        }
         endTransition();transitionExpired=false
         helper?.stop(); helper = nil
         do { try AVAudioSession.sharedInstance().setActive(false,options:.notifyOthersOnDeactivation) }
@@ -186,10 +190,12 @@ import BackgroundTasks
         guard !owners.isEmpty, !interrupted else { return }
         let session = AVAudioSession.sharedInstance()
         do {
-            // The audible output is on the TV. Other iPhone apps may play
-            // audio without intentionally interrupting this local Cast service.
-            if session.category != .playback || session.mode != .moviePlayback || !session.categoryOptions.contains(.mixWithOthers) {
-                try session.setCategory(.playback,mode:.moviePlayback,options:[.mixWithOthers])
+            // Apple's Now Playing eligibility requires a non-mixable session.
+            // Preparation-only workers keep mixing; the media card owns this
+            // choice independently of which engine currently supplies bytes.
+            let options:AVAudioSession.CategoryOptions=owners.contains("now_playing") ? []:[.mixWithOthers]
+            if session.category != .playback || session.mode != .moviePlayback || session.categoryOptions != options {
+                try session.setCategory(.playback,mode:.moviePlayback,options:options)
             }
             try session.setActive(true)
             if helper == nil {
@@ -197,7 +203,7 @@ import BackgroundTasks
                 player.media = VLCMedia(path:"/dev/zero"); helper = player
             }
             if !isPlaying { helper?.play() }
-            PlaybackDiagnostics.shared.changed("audio_session",event:.app,["phase":"audio_active","kind":cause,"tracks":String(owners.count)])
+            PlaybackDiagnostics.shared.changed("audio_session",event:.app,["phase":"audio_active","kind":cause,"tracks":String(owners.count),"mode":session.categoryOptions.contains(.mixWithOthers) ? "mixed":"primary"])
         } catch { PlaybackDiagnostics.record(.error,PlaybackDiagnostics.errorFields(error,phase:"audio_activate")) }
     }
 }
@@ -208,7 +214,6 @@ import BackgroundTasks
     private var appliedSeekStep=PlaybackPreferences.seekStep()
     var handler: ((String) async -> Bool)?
     private(set) var active = false
-    private var local = false
     private var observers: [NSObjectProtocol] = []
     private var targets: [(MPRemoteCommand,Any)] = []
     private var seekTask: Task<Void,Never>?
@@ -258,7 +263,9 @@ import BackgroundTasks
         targets.append((command,target))
     }
     func update(title:String,device:String,position:Double,duration:Double,playing:Bool,loading:Bool,local:Bool) {
-        active = true; self.local = local
+        active = true
+        // Activate the eligible audio session before publishing metadata.
+        updateBackground()
         let step=PlaybackPreferences.seekStep()
         if step != appliedSeekStep {
             appliedSeekStep=step
@@ -278,6 +285,7 @@ import BackgroundTasks
         if duration.isFinite && duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
         if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        PlaybackDiagnostics.shared.changed("now_playing",event:.app,["phase":"now_playing_publish","local":String(local),"mode":AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers) ? "mixed":"primary"])
         for (command,_) in targets { command.isEnabled = true }
         MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled = duration.isFinite && duration > 0
         updateBackground()
@@ -290,76 +298,21 @@ import BackgroundTasks
         CastAudioSession.shared.release("now_playing")
     }
     private func updateBackground() {
-        guard active, !local else { CastAudioSession.shared.release("now_playing"); return }
+        guard active else { CastAudioSession.shared.release("now_playing"); return }
         CastAudioSession.shared.acquire("now_playing")
     }
 }
 
 
-/// A single local Live Activity, independent of Now Playing and audio ownership.
-@MainActor final class CastLiveActivityManager {
-    private var activity:Activity<CastActivityAttributes>?
-    private var pending:CastActivityAttributes.ContentState?
-    private var worker:Task<Void,Never>?
-    private var generation=UUID()
-    private var policy=LiveActivityUpdatePolicy()
-    private var lastRequest=Date.distantPast
-    init() {
-        let existing=Activity<CastActivityAttributes>.activities
-        activity=existing.first
-        for extra in existing.dropFirst(){
+/// Retire only our old playback activities when upgrading. The independent
+/// BGContinuedProcessingTask progress UI belongs to iOS and is not dismissed.
+@MainActor enum LegacyPlaybackActivities {
+    static func retire() {
+        for activity in Activity<CastActivityAttributes>.activities {
             Task {
-                if #available(iOS 16.2,*){await extra.end(nil,dismissalPolicy:.immediate)}
-                else{await extra.end(dismissalPolicy:.immediate)}
+                if #available(iOS 16.2,*) {await activity.end(nil,dismissalPolicy:.immediate)}
+                else {await activity.end(dismissalPolicy:.immediate)}
             }
-        }
-        // An upgrade/relaunch must not dismiss the active card unconditionally.
-        // Its stale date prevents an old snapshot from pretending to be current.
-        if UserDefaults.standard.object(forKey:"cast.activity.enabled") as? Bool == false {end()}
-    }
-    func update(title:String,status:String,position:Double,duration:Double,playing:Bool,loading:Bool) {
-        guard UserDefaults.standard.object(forKey:"cast.activity.enabled") as? Bool ?? true,
-              ActivityAuthorizationInfo().areActivitiesEnabled else{end();return}
-        let now=Date(),running=playing && !loading,step=PlaybackPreferences.seekStep()
-        guard position.isFinite,duration.isFinite,position>=0,duration>=0 else{return}
-        if activity==nil {
-            guard UIApplication.shared.applicationState == .active,now.timeIntervalSince(lastRequest)>=60 else{return}
-        }
-        guard policy.accept(title:title,status:status,playing:running,position:position,duration:duration,step:step,now:now) else{return}
-        pending=CastActivityAttributes.ContentState(status:status,playing:running,position:position,duration:duration,updatedAt:now,title:String(title.prefix(180)),skipSeconds:Int(step))
-        guard worker==nil else{return}
-        let token=generation
-        worker=Task { [weak self] in
-            guard let self else{return}
-            defer{if self.generation==token{self.worker=nil}}
-            while !Task.isCancelled,self.generation==token,let state=self.pending {
-                self.pending=nil
-                if self.activity==nil {
-                    guard UIApplication.shared.applicationState == .active else{self.policy=LiveActivityUpdatePolicy();return}
-                    self.lastRequest=Date()
-                    do {
-                        let attributes=CastActivityAttributes(title:state.title ?? "Cast Bridge")
-                        if #available(iOS 16.2,*) {
-                            self.activity=try Activity<CastActivityAttributes>.request(attributes:attributes,content:ActivityContent(state:state,staleDate:Date().addingTimeInterval(75)),pushType:nil)
-                        } else {self.activity=try Activity<CastActivityAttributes>.request(attributes:attributes,contentState:state,pushType:nil)}
-                    } catch {
-                        self.policy=LiveActivityUpdatePolicy()
-                        PlaybackDiagnostics.record(.error,PlaybackDiagnostics.errorFields(error,phase:"activity_start"));return
-                    }
-                }
-                guard let current=self.activity else{return}
-                if #available(iOS 16.2,*) {await current.update(ActivityContent(state:state,staleDate:Date().addingTimeInterval(75)))}
-                else {await current.update(using:state)}
-            }
-        }
-    }
-    func end() {
-        generation=UUID();worker?.cancel();worker=nil;pending=nil;policy=LiveActivityUpdatePolicy();lastRequest = .distantPast
-        guard let current=activity else{return}
-        activity=nil
-        Task {
-            if #available(iOS 16.2,*) {await current.end(nil,dismissalPolicy:.immediate)}
-            else {await current.end(dismissalPolicy:.immediate)}
         }
     }
 }

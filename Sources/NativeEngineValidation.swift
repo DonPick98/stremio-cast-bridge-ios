@@ -3,6 +3,7 @@ import Foundation
 import MobileVLCKit
 import UIKit
 import MediaPlayer
+import AVFAudio
 import GoogleCast
 import ObjectiveC
 
@@ -36,9 +37,15 @@ import ObjectiveC
         let controls = LockScreenPlayback()
         controls.update(title:"Playback validation",device:"Synthetic receiver",position:42,duration:240,playing:true,loading:false,local:true)
         let metadata = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        let mediaControls = (metadata[MPMediaItemPropertyPlaybackDuration] as? Double) == 240 && (metadata[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double) == 42 && MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled
+        let nonMixable = AVAudioSession.sharedInstance().category == .playback && !AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers)
+        let mediaControls = nonMixable && (metadata[MPMediaItemPropertyPlaybackDuration] as? Double) == 240 && (metadata[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double) == 42 && MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled
         result["systemMediaControls"] = mediaControls
+        result["systemMediaSessionNonMixable"] = nonMixable
+        CastAudioSession.shared.acquire("validation-preparation")
         controls.clear()
+        let preparationMixes=AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers)
+        result["preparationAudioMixesAfterClear"] = preparationMixes
+        CastAudioSession.shared.release("validation-preparation")
         do {
             trace("decoder")
             let repair = AudioRepairPipe()
@@ -82,7 +89,7 @@ import ObjectiveC
             result["tracks"] = tracks
             result["bytes"] = (try FileManager.default.attributesOfItem(atPath:output.path)[.size] as? NSNumber)?.intValue ?? 0
             let decoderPassed=(result["decoder"] as? [String:Any])?["passed"] as? Bool == true
-            result["passed"] = decoderPassed && suspensionDelegate && mediaControls && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
+            result["passed"] = decoderPassed && suspensionDelegate && mediaControls && preparationMixes && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
             let inspected = try await EmbeddedMediaEngine.inspect(input)
             result["inputAudio"] = inspected.audioCodecsDescription
             result["inputVideoConversion"] = inspected.requiresVideoConversion

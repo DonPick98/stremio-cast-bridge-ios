@@ -1,3 +1,60 @@
+# Player nativo iOS — build44 candidata, 2026-11-04
+
+CB011 riaperto da screenshot43: scheda progressoBG presente, vecchia ActivityKit
+custom ancora mostrata e playerNowPlaying assente. Causa concreta nel codice:
+CastAudioSession sempre.mixWithOthers; AppleWWDC2022/110338 richiede categoria
+nonmixable per eligibilityNowPlaying. Non basta pubblicare metadata. La causa
+non è la schedaBG in sé. Non pubblicare screenshot o suoi titoli/notifiche.
+
+44: ownernow_playing anche conproducerlocale, categoria.playback nonmixable
+prima di metadata; worker solo preparazione restamixable e torna tale alclear.
+VecchieActivity custom chiuse all'avvio pertipoCastActivityAttributes; nessuna
+nuova richiestaActivityKit, rimosse UIduplicata e opzioneinattiva. Il vecchio
+bundlewidget rimane per compatibilità aggiornamenti, non viene riattivato.
+Scheda BGContinuedProcessing di iOS43 conservata: non è il player multimediale.
+Audio altrui può essere interrotto attivando una sessione primaria; iOS può dare
+il player a un'altra app quando ne parte l'audio. Collaudare cambioapp/interruzioni.
+
+Verifiche44: nativeprobe aggiunge assertcategoria nonmixable/metadata/seek e
+ritorno mixable dopo clear conworker vivo. FastSDK typecheck classeproduzione
+contro vere APIUIKit/AVFAudio/MediaPlayer/ActivityKit (soloVLChelper stub non
+modificato), oltre a regressioni43. Non equivale alla visibilitàsuLockScreen.
+Build44 e collaudo fisico da acquisire. Non cancellare nativo43/41910000713 con
+pushmain prematuro: preparare branchtest, integrare dopo che termina43.
+
+---
+
+# IPA43 pronta per collaudo background — 2026-11-04
+
+Codice390685200eb596b1e04b5411197497bd9a23faa0 integrato in
+fix/playback-recovery-20261103, PR2 draft. iPhone41910000846 SUCCESSO,
+artifact13361499222: app e LiveActivity0.8.1/build43 verificate, receiverCC1AD845,
+UIBackgroundModesaudio+processing, BGpermessoapp.example.castbridge.*.
+IPA33535961byte, SHA25658cd10235dbb246fa137e1ef00ae1f206b3d784b0637d1d495bd6c82c46af1f6.
+App senza firma/provisioning; pronta perSideStore, salvata come
+CastBridge-0.8.1-43-unsigned.ipa, Librarylibfile_972fc36a87b481918353253183688910.
+
+Policy e veri adapterSDK passati41909937728 e41910000770. Regressioni della build
+complete passate (caption/serie/Stremiomock/resolver/hosting). Nativo43/41910000713
+ancora in corso al checkpoint; verificare esito reale senza cancellarlo con push
+main di documentazione. Questo aggiornamento HANDOFF resta sul branchtest:
+riportarlo al branchfix quando nativo43 termina. Nessuna prova hardware43.
+
+Nativo42/41905267348: compilato/eseguito, reportcopia offscreen65.127s PASSATO
+(7.67MB/byte tardivi1.84MB/pausa-ripresa/cleanup), poi gate esternoseek fallito:
+212/210frame, gap125.125ms e immagini73,73,77,77 invece di79 iniziale. Gate invariato.
+Il probe43 ora codifica H264vero; non confondere i due tipi di test.
+
+Prossimo passo: installare43 conSideStore e ripetere stesso videoHEVC1080/AAC6ch,
+esterni e PGS, cambio app e blocco10min. Leggere continued_submitted/active o
+unavailable e background_lease_expired/continued_expired; verificare avanti TV,
+recupero limitato, annullamento UI/stop senza riavvii, seek/tracce e consumi.
+Controllare namespaceBG nel plist dopo firma se continued_unavailable. BGtask non
+promette accessoVT/GPU indefinito: nessun entitlementGPU aggiunto. CB001/004/019
+IMPLEMENTATO_DA_VERIFICARE; CB009/021 seek/cadenza resta aperto e distinto.
+
+---
+
 # Background locale e cadenza — build43 candidata, 2026-11-04
 
 Prova fisica41: FFmpegAVERROR_EXTERNAL 323ms dopo background nonostante helper
