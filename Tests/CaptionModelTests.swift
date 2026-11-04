@@ -36,7 +36,7 @@ import Foundation
         cache.put("not complete",key:keys[0]);precondition(cache.get(keys[0])==document("A"))
         now+=61;precondition(cache.get(keys[0])==nil)
         let budgetRoot=root.appendingPathComponent("budget")
-        let bounded=CaptionDocumentCache(directory:budgetRoot,budget:100,countLimit:20,clock:{now})
+        let bounded=CaptionDocumentCache(directory:budgetRoot,budget:80,countLimit:20,clock:{now})
         bounded.put(document("12345678"),key:keys[0]);now+=1
         bounded.put(document("abcdefgh"),key:keys[1])
         precondition(bounded.get(keys[0])==nil && bounded.get(keys[1]) != nil)
