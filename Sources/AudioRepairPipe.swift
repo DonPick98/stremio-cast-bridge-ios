@@ -97,7 +97,7 @@ import Darwin
             // H.264 stream directly. Do not force 30 fps or upscale SD sources.
             args += ["-c:v","h264_videotoolbox","-allow_sw","1","-realtime","1","-pix_fmt","yuv420p",
                      "-profile:v","high","-level:v","4.1","-b:v",String(video.conversionBitrate * 1000),
-                     "-fps_mode","passthrough","-g",String(Int((video.conversionFrameRate ?? (video.frameRate > 0 ? video.frameRate : 30)) * 2))]
+                     "-fps_mode","passthrough","-g",String(video.conversionKeyframeInterval)]
             if bitmapSubtitleIndex == nil { args += ["-vf",scale] }
             if let rate = video.conversionFrameRate { args += ["-r",String(rate)] }
         } else { args += ["-c:v","copy"] }

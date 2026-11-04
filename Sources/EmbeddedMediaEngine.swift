@@ -97,11 +97,25 @@ enum EmbeddedMediaError: LocalizedError {
         let h = (video[VLCMediaTracksInformationVideoHeight] as? NSNumber)?.intValue ?? 0
         let rate = (video[VLCMediaTracksInformationFrameRate] as? NSNumber)?.doubleValue ?? 0
         let base = (video[VLCMediaTracksInformationFrameRateDenominator] as? NSNumber)?.doubleValue ?? 1
-        let fps = base > 0 ? rate/base : 0
+        var fps = base > 0 ? rate/base : 0
+        var fixedCadence=true
+        if !fps.isFinite || fps<=0 || fps>1000 {
+            fps=0
+            do {
+                if let detected=try await CaptionExtractor.videoCadence(input:url,codec:codec(video),width:w,height:h) {
+                    fps=detected.frameRate;fixedCadence=detected.fixedCadence
+                    PlaybackDiagnostics.record(.metadata,["phase":"cadence","kind":"ffprobe","fps":PlaybackDiagnostics.number(fps),"status":fixedCadence ? "consistent":"unconfirmed"])
+                } else {PlaybackDiagnostics.record(.metadata,["phase":"cadence","kind":"ffprobe","status":"unknown"])}
+            } catch is CancellationError {throw CancellationError()}
+            catch {
+                try Task.checkCancellation()
+                PlaybackDiagnostics.record(.metadata,["phase":"cadence","kind":"ffprobe","status":"unavailable"])
+            }
+        }
         let rawProfile = (video[VLCMediaTracksInformationCodecProfile] as? NSNumber)?.intValue ?? 0
         let profile = rawProfile >= 0 ? rawProfile & 255 : 0
         let level = (video[VLCMediaTracksInformationCodecLevel] as? NSNumber)?.intValue ?? 0
-        let format = VideoFormat(codec:codec(video),width:w,height:h,frameRate:fps,bitrate:(video[VLCMediaTracksInformationBitrate] as? NSNumber)?.intValue ?? 0,profile:profile,level:level)
+        let format = VideoFormat(codec:codec(video),width:w,height:h,frameRate:fps,bitrate:(video[VLCMediaTracksInformationBitrate] as? NSNumber)?.intValue ?? 0,profile:profile,level:level,fixedCadence:fixedCadence)
         let videoSafe = !format.requiresConversion && w > 0 && h > 0 && fps > 0
         let firstAudio = tracks.first(where:{$0[VLCMediaTracksInformationType] as? String == VLCMediaTracksInformationTypeAudio}) ?? [:]
         let channels = (firstAudio[VLCMediaTracksInformationAudioChannelsNumber] as? NSNumber)?.intValue ?? 0

@@ -47,6 +47,10 @@ import ObjectiveC
         result["preparationAudioMixesAfterClear"] = preparationMixes
         CastAudioSession.shared.release("validation-preparation")
         do {
+            let cadenceInput=documents.appendingPathComponent("CodecSamples/caption-hevc-eac3.mkv")
+            let cadence=try? await CaptionExtractor.videoCadence(input:cadenceInput,codec:"hevc",width:1920,height:1080)
+            let cadencePassed=cadence.map{abs($0.frameRate-24000.0/1001)<0.00001 && $0.fixedCadence} ?? false
+            result["sourceCadenceProbe"]=["passed":cadencePassed,"fps":cadence?.frameRate ?? 0,"fixed":cadence?.fixedCadence ?? false]
             trace("decoder")
             let repair = AudioRepairPipe()
             let repairedFile = documents.appendingPathComponent("repair-direct.mkv")
@@ -89,7 +93,7 @@ import ObjectiveC
             result["tracks"] = tracks
             result["bytes"] = (try FileManager.default.attributesOfItem(atPath:output.path)[.size] as? NSNumber)?.intValue ?? 0
             let decoderPassed=(result["decoder"] as? [String:Any])?["passed"] as? Bool == true
-            result["passed"] = decoderPassed && suspensionDelegate && mediaControls && preparationMixes && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
+            result["passed"] = decoderPassed && suspensionDelegate && mediaControls && preparationMixes && cadencePassed && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
             let inspected = try await EmbeddedMediaEngine.inspect(input)
             result["inputAudio"] = inspected.audioCodecsDescription
             result["inputVideoConversion"] = inspected.requiresVideoConversion

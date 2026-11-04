@@ -82,6 +82,45 @@ actor RDRequestGate {
     func forget(_ key: String) { torrents[key] = nil }
 }
 
+/// FFprobe stream metadata, never encoder throughput. Preserve rational rates
+/// and do not impose a fixed cadence when nominal and average disagree.
+struct VideoCadenceProbe {
+    let frameRate:Double
+    let fixedCadence:Bool
+    static func parse(_ data:Data,codec:String,width:Int,height:Int)->Self? {
+        guard data.count<=65536,let doc=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any],
+              let streams=doc["streams"] as? [[String:Any]],streams.count<=64 else{return nil}
+        let video=streams.first { stream in
+            stream["codec_type"] as? String == "video" &&
+            ((stream["disposition"] as? [String:Any])?["attached_pic"] as? NSNumber)?.boolValue != true
+        }
+        guard let video else{return nil}
+        func canonical(_ value:String)->String {
+            let v=value.lowercased()
+            return ["hvc1":"hevc","hev1":"hevc","avc1":"h264","vp80":"vp8","vp90":"vp9","av01":"av1","mp4v":"mpeg4"][v] ?? v
+        }
+        guard canonical(video["codec_name"] as? String ?? "")==canonical(codec),
+              width<=0 || (video["width"] as? NSNumber)?.intValue==width,
+              height<=0 || (video["height"] as? NSNumber)?.intValue==height else{return nil}
+        func rate(_ raw:Any?)->Double? {
+            guard let text=raw as? String,text.count<=64 else{return nil}
+            let parts=text.split(separator:"/",omittingEmptySubsequences:false)
+            let result:Double?
+            if parts.count==2,let numerator=Double(parts[0]),let denominator=Double(parts[1]),denominator>0 {result=numerator/denominator}
+            else if parts.count==1 {result=Double(text)}
+            else {return nil}
+            guard let result,result.isFinite,result>0,result<=1000 else{return nil}
+            return result
+        }
+        let average=rate(video["avg_frame_rate"]),nominal=rate(video["r_frame_rate"])
+        guard let frameRate=average ?? nominal else{return nil}
+        let agrees:Bool
+        if let average,let nominal {agrees=abs(average-nominal)<0.002}
+        else {agrees=false}
+        return Self(frameRate:frameRate,fixedCadence:agrees)
+    }
+}
+
 struct VideoFormat: Equatable {
     let codec: String
     let width: Int
@@ -90,6 +129,7 @@ struct VideoFormat: Equatable {
     var bitrate: Int = 0
     var profile: Int = 0
     var level: Int = 0
+    var fixedCadence:Bool = true
 
     var frameRateLabel: String {
         guard frameRate.isFinite, frameRate > 0 else { return "fps non rilevati" }
@@ -109,7 +149,7 @@ struct VideoFormat: Equatable {
     // whole frame ticks. Explicit NTSC cadence activates its fps timestamp
     // filter instead of rejecting adjacent pictures with duplicate tick values.
     var vlcFrameRate:String? {
-        guard conversionFrameRate==nil,frameRate.isFinite else{return nil}
+        guard fixedCadence,conversionFrameRate==nil,frameRate.isFinite else{return nil}
         for rate in [24000,30000,60000] where abs(frameRate-Double(rate)/1001)<0.002 {
             return "\(rate)/1001"
         }
@@ -121,6 +161,10 @@ struct VideoFormat: Equatable {
     var conversionFrameRate: Double? {
         let limit: Double = height > 0 && height <= 720 ? 60 : 30
         return frameRate.isFinite && frameRate > limit+0.01 ? limit : nil
+    }
+    var conversionKeyframeInterval:Int {
+        let rate=conversionFrameRate ?? (frameRate.isFinite && frameRate>0 ? frameRate:30)
+        return max(1,Int((rate*2).rounded()))
     }
     var conversionBitrate: Int {
         let fallback = height > 720 ? 10_000 : 6_000

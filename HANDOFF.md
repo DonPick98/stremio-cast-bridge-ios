@@ -1,3 +1,50 @@
+# Framerate VLC mancante — build45 candidata, 2026-11-04
+
+Nuova segnalazione: fpsnonrilevati perHEVC1080 e lievi scatti. UIzero non prova
+FFmpeg30fps: percorsoH264 usa già passthrough.45 aggiunge FFprobe bounded solo
+conmetadataVLC invalidi, razionaliavg/r, compatibilitàcodec/dimensioni, primaV
+noncover, cancellazione/8s/8MiB, niente scaninterofile. Dati aUI eVideoFormat,
+nessunCFRVLC seavg/nominale mancano o discordano. GOP2s arrotondato48 a23.976,
+60 a29.97. Nuova policytest e proberealeHEVC1080NTSC per libreriainclusa.
+Docs/VIDEO_CADENCE.md. Caso privato non acquisito: FPS e fluiditàTV da collaudare.
+CB012/019/021 aperti, gateframeidentity/seek invariato. Preservare44nativeplayer.
+
+IPA44 già pronta e salvata:app/estensione44, iPhone41913762920 SUCCESSO,
+33524997byte,SHA256a1aae4f9f39eeeaf190648dd90cd439367d38abf31c1ce7b516117b2286fad59,
+IPA disponibile nella chat. Consegna finale45 può sostituirla
+se la nuova build è pronta; non dichiarare testhardware o IPA45 prima di averla.
+Nativo44/41913763082 prosegue (cancel-in-progressfalse);45 si accoda. SDK/audio
+44 passati41913225071/41913762952, probeLockScreen runtime ancora da acquisire.
+
+---
+
+# IPA44 consegnabile — player nativo iOS, 2026-11-04
+
+Sorgente9ec71a96dff312bd536e9308e9577eb25158e7bd su branchfix e PR2 draft.
+iPhone41913762920 SUCCESSO, artifact13363183457 estratto: app eLiveActivity44,
+0.8.1, audio+processing/BGnamespace/receiverCC1AD845 verificati. IPA33524997byte,
+SHA256a1aae4f9f39eeeaf190648dd90cd439367d38abf31c1ce7b516117b2286fad59.
+FileCastBridge-0.8.1-44-unsigned.ipa salvato perSideStore:
+IPA disponibile nella chat. Non sostituire il link con43.
+
+SDK/policy41913225071 e41913762952 PASSATI.44 appcompilata con vere dipendenze;
+checkrapidoMediaPlayer/AVAudioSession/ActivityKit controSDK iOS16.1 usa solo
+helperVLCimmutato stub, non prova visibilitàLockScreen. Nativo44/41913763082 in
+corso alcheckpoint; leggere risultati, in particolare systemMediaSessionNonMixable
+preparationAudioMixesAfterClear/systemMediaControls e background.44 pulisce custom
+pregresse e non ne crea più; BGjob di sistema resta distinto, nessuna garanzia
+che iOS mostri sempre questo player quando altre app riproducono audio.
+
+Native43/41910000713 concluso: H264offscreen65.128s PASSATO,7798457byte,
+1966080byte dopo50s, pause/resume ecleanup riusciti. Run globaleFAIL al gate seek
+VLC:212/210frame,gap125.125ms, immagini73,73,77,77 prima di79. Non allentare gate.
+CB011 IMPLEMENTATO_DA_VERIFICARE, ancora necessaria prova fisica delplayer nativo,
+progressoscrubbabile/pausa/salti, vecchia scheda scomparsa e servizioBG preservato.
+CB009/021 distinto aperto. Questo checkpoint solo branchtest per evitare nuove
+buildmain inutili mentre nativo44 gira: integrare dopo risultati confreshHEAD.
+
+---
+
 # Player nativo iOS — build44 candidata, 2026-11-04
 
 CB011 riaperto da screenshot43: scheda progressoBG presente, vecchia ActivityKit
@@ -34,7 +81,7 @@ artifact13361499222: app e LiveActivity0.8.1/build43 verificate, receiverCC1AD84
 UIBackgroundModesaudio+processing, BGpermessoapp.example.castbridge.*.
 IPA33535961byte, SHA25658cd10235dbb246fa137e1ef00ae1f206b3d784b0637d1d495bd6c82c46af1f6.
 App senza firma/provisioning; pronta perSideStore, salvata come
-CastBridge-0.8.1-43-unsigned.ipa, Librarylibfile_972fc36a87b481918353253183688910.
+CastBridge-0.8.1-43-unsigned.ipa, IPA disponibile nella chat.
 
 Policy e veri adapterSDK passati41909937728 e41910000770. Regressioni della build
 complete passate (caption/serie/Stremiomock/resolver/hosting). Nativo43/41910000713

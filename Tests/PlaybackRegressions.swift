@@ -2,6 +2,29 @@ import Foundation
 
 @main struct PlaybackRegressions {
     static func main() {
+        func probe(_ fields:String,codec:String="hevc",width:Int=1920,height:Int=1080)->VideoCadenceProbe? {
+            VideoCadenceProbe.parse(Data(("{\"streams\":["+fields+"]}").utf8),codec:codec,width:width,height:height)
+        }
+        let fields=#""codec_type":"video","codec_name":"hevc","width":1920,"height":1080"#
+        let exact=probe("{"+fields+",\"avg_frame_rate\":\"24000/1001\",\"r_frame_rate\":\"24000/1001\"}")!
+        precondition(abs(exact.frameRate-24000.0/1001)<0.000001 && exact.fixedCadence)
+        let unknown=probe("{"+fields+",\"avg_frame_rate\":\"0/0\",\"r_frame_rate\":\"24000/1001\"}")!
+        precondition(!unknown.fixedCadence && unknown.frameRate==exact.frameRate)
+        let variable=probe("{"+fields+",\"avg_frame_rate\":\"24/1\",\"r_frame_rate\":\"30/1\"}")!
+        precondition(variable.frameRate==24 && !variable.fixedCadence)
+        precondition(VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:variable.frameRate,fixedCadence:variable.fixedCadence).vlcFrameRate==nil)
+        for bad in ["0/0","-24/1","24/0","24/-1","nan","inf","100001/1","24/1/1","/24","24/"] {
+            precondition(probe("{"+fields+",\"avg_frame_rate\":\""+bad+"\"}")==nil)
+        }
+        precondition(probe("{"+fields+",\"avg_frame_rate\":\"24/1\"}",codec:"h264")==nil)
+        precondition(probe("{"+fields+",\"avg_frame_rate\":\"24/1\"}",width:1280)==nil)
+        let cover=#"{"codec_type":"video","codec_name":"mjpeg","disposition":{"attached_pic":1}},"#
+        precondition(probe(cover+"{"+fields+",\"avg_frame_rate\":\"25/1\",\"r_frame_rate\":\"25/1\"}")?.frameRate==25)
+        precondition(VideoCadenceProbe.parse(Data(repeating:32,count:65537),codec:"hevc",width:1920,height:1080)==nil)
+        precondition(VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:24000.0/1001).conversionKeyframeInterval==48)
+        precondition(VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:30000.0/1001).conversionKeyframeInterval==60)
+        precondition(VideoFormat(codec:"hevc",width:1280,height:720,frameRate:60000.0/1001).conversionKeyframeInterval==120)
+        precondition(VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:0).conversionKeyframeInterval==60)
         let ntsc=VideoFormat(codec:"h264",width:320,height:180,frameRate:29.9706288)
         precondition(ntsc.vlcFrameRate=="30000/1001")
         precondition(VideoFormat(codec:"h264",width:640,height:360,frameRate:24).vlcFrameRate=="24")
