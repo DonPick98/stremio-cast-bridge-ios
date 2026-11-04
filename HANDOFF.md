@@ -1,3 +1,39 @@
+# Checkpoint open source — build31, 2026-11-04
+
+Sorgente corrente5263a3be616e4a92c106d9206db834ab628a682b; precedente
+ff832f30de81d1ada5ecf99893f4c10cf426ba85. PR2 draft, stesso branch.
+CB022 IMPLEMENTATO_DA_VERIFICARE con adattamenti MIT effettivi, non una promessa
+di sostituzione futura. Revisioni/file/licenze e limiti in Docs/SUBTITLES.md.
+
+Run della sorgente5263a3b:
+- suite documenti41862559481: job core-linux126688095286 e captions126688096150
+  entrambi QUEUED senza runner al checkpoint;
+- iPhone41862559525 QUEUED;
+- nativo41862559526 QUEUED.
+Anche Ubuntu è in coda. API repo status=in_progress restituisce0 run attivi;
+nessuna causa quota/fatturazione/outage dimostrata. Non rilanciare duplicati.
+Nessun nuovo test Swift o build iPhone passato, nessuna IPA31 esistente verificata.
+
+Il core Linux compila i sorgenti reali (normalizzazione/timeline) con immagine
+ufficialeSwift6.0.3-noble e modalitàSwift5. Darwin network fetch è compilato su
+Apple; NSStringautodetection solo dove disponibileObjectiveC. La provaLinux NON
+copre questi due percorsi, né cacheCryptoKit/preferenze/UI. La provaApple resta
+necessaria. È copertura portabile mirata, non certificazione dell'app.
+
+Revisione locale: IDprogettounici,4configversion31,2licenzeMITnelresourcephase,
+nessun trailingwhitespace nei sorgenti toccati. LicenzaSubtitleKit copiata esatta;
+SwiftSubtitleslicenza2025copiata, avvisi in sorgente e THIRD_PARTY_NOTICES.
+Nessun codiceGPLJellyfin copiato. DefaultReceiverCC1AD845/PGS/vecchiOpenSubtitles
+conservati. Charset detector potrebbe non inferire ogni codifica legacy; ZIP,
+OCR e stileASSsulreceiverdefault non aggiunti. Gate125ms resta invariato.
+
+Prossimo passo: leggere gli esiti dei job citati, correggere failure reali e
+aggiornare issue1; non dichiarare risoltiCB005/010 storici o la trasmissione suTV
+senza identificare codec/file e collaudo. Nessun deploy o merge effettuato.
+
+---
+
+
 # Open source sottotitoli — build31 in verifica, 2026-11-04
 
 Baseline7c9376b/build30, stessa PR2/branch. Richiesta utente: usare progetti open
