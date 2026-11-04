@@ -1660,7 +1660,7 @@ import AVFAudio
         case "pause": request = client.pause()
         case "stop": endPlayback(); return true
         case "toggle": request = playWhenReady ? client.play() : client.pause()
-        case let value where value == "back" || value == "forward" || value.hasPrefix("seek:"):
+        case let value where value == "back" || value == "forward" || value.hasPrefix("seek:") || value.hasPrefix("seekdelta:"):
             let current = timeline.target ?? lastGoodPosition
             guard current.isFinite, current >= 0 else { return false }
             guard var target = CastWire.seekTarget(command,current:current,duration:duration) else { return false }
@@ -1738,6 +1738,3 @@ import AVFAudio
         }
     }
 }
-
-
-

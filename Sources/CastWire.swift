@@ -52,15 +52,18 @@ enum CastWire {
         guard p.count == 4, p.allSatisfy({(0...255).contains($0)}) else { return false }
         return p[0] == 10 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16...31).contains(p[1]))
     }
+    static func skipCommand(backward:Bool,interval:Double) -> String? {
+        guard interval.isFinite,interval > 0,interval <= 300 else{return nil}
+        return "seekdelta:\(backward ? -interval:interval)"
+    }
     static func seekTarget(_ command: String, current: Double, duration: Double) -> Double? {
         let value: Double
         if command == "back" { value = current-30 }
         else if command == "forward" { value = current+30 }
+        else if command.hasPrefix("seekdelta:"),let delta=Double(command.dropFirst(10)),delta.isFinite,abs(delta)<=300 {value=current+delta}
         else if command.hasPrefix("seek:"), let parsed = Double(command.dropFirst(5)) { value = parsed }
         else { return nil }
         guard value.isFinite, current.isFinite else { return nil }
         return max(0,duration.isFinite && duration > 0 ? min(value,duration) : value)
     }
 }
-
-

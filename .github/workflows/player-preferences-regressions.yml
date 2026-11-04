@@ -1,0 +1,21 @@
+name: Validate player skip preferences
+on:
+  push:
+    branches: [feat/playback-preferences-20261104]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preferences:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test persistent skip values and scoped reset
+        run: |
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/preferences-tests"
+          "$RUNNER_TEMP/preferences-tests"
+      - name: Test remote skip intervals and seek bounds
+        run: |
+          swiftc -parse-as-library Sources/CastWire.swift Sources/SubtitleAppearance.swift Tests/ControlPreferencesTests.swift -o "$RUNNER_TEMP/control-tests"
+          "$RUNNER_TEMP/control-tests"

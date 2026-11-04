@@ -33,11 +33,16 @@ import ObjectiveC
         result["castSuspendProtocol"]=advertised
         result["castSuspendDelegate"]=suspensionDelegate
         result["castSuspendSelector"]=NSStringFromSelector(suspendSelector)
+        let savedSkip=UserDefaults.standard.object(forKey:"cast.player.skipSeconds")
+        UserDefaults.standard.set(15,forKey:"cast.player.skipSeconds")
         let controls = LockScreenPlayback()
         controls.update(title:"Playback validation",device:"Synthetic receiver",position:42,duration:240,playing:true,loading:false,local:true)
         let metadata = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
         let mediaControls = (metadata[MPMediaItemPropertyPlaybackDuration] as? Double) == 240 && (metadata[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double) == 42 && MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled
-        result["systemMediaControls"] = mediaControls
+        let configuredSkip=MPRemoteCommandCenter.shared().skipForwardCommand.preferredIntervals.first?.doubleValue==15 && MPRemoteCommandCenter.shared().skipBackwardCommand.preferredIntervals.first?.doubleValue==15
+        result["configuredSkipControls"]=configuredSkip
+        if let savedSkip {UserDefaults.standard.set(savedSkip,forKey:"cast.player.skipSeconds")}else{UserDefaults.standard.removeObject(forKey:"cast.player.skipSeconds")}
+        result["systemMediaControls"] = mediaControls && configuredSkip
         controls.clear()
         do {
             trace("decoder")
@@ -78,7 +83,7 @@ import ObjectiveC
             }
             result["tracks"] = tracks
             result["bytes"] = (try FileManager.default.attributesOfItem(atPath:output.path)[.size] as? NSNumber)?.intValue ?? 0
-            result["passed"] = suspensionDelegate && mediaControls && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
+            result["passed"] = suspensionDelegate && mediaControls && configuredSkip && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
             let inspected = try await EmbeddedMediaEngine.inspect(input)
             result["inputAudio"] = inspected.audioCodecsDescription
             result["inputVideoConversion"] = inspected.requiresVideoConversion
@@ -267,5 +272,3 @@ final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Se
     }
 }
 #endif
-
-

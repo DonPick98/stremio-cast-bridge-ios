@@ -14,6 +14,8 @@ struct ContentView: View {
     @State private var showOnlineSubtitles = false
     @State private var diagnosticsCopied = false
     @State private var showPreferences=false
+    @AppStorage("cast.player.skipSeconds") private var skipSeconds=30
+    private var skipInterval:Int {PlaybackPreferences.skipIntervals.contains(skipSeconds) ? skipSeconds:30}
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -148,12 +150,12 @@ struct ContentView: View {
                 HStack { Text(playbackTime(cast.position)); Spacer(); Text(playbackTime(cast.duration)) }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             HStack(spacing:36) {
-                Button { cast.seek(to:cast.position-30) } label: { Image(systemName:"gobackward.30").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Indietro di 30 secondi")
+                Button { cast.seek(to:cast.position-Double(skipInterval)) } label: { Image(systemName:"gobackward.\(skipInterval)").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Indietro di \(skipInterval) secondi")
                 Button { cast.togglePlayback() } label: {
                     Image(systemName:cast.playing ? "pause.fill" : "play.fill").font(.system(size:24,weight:.semibold)).foregroundStyle(CastPalette.background)
                         .frame(width:70,height:70).background(Color.white,in:Circle())
                 }.accessibilityLabel(cast.playing ? "Pausa" : "Riprendi")
-                Button { cast.seek(to:cast.position+30) } label: { Image(systemName:"goforward.30").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Avanti di 30 secondi")
+                Button { cast.seek(to:cast.position+Double(skipInterval)) } label: { Image(systemName:"goforward.\(skipInterval)").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Avanti di \(skipInterval) secondi")
             }.foregroundStyle(.white).buttonStyle(.plain)
             HStack(spacing:12) {
                 Image(systemName:"speaker.fill").font(.caption2).foregroundStyle(.secondary)
@@ -460,6 +462,7 @@ private struct AppPreferencesView:View {
     @State private var showAppearance=false
     @State private var confirmReset=false
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("cast.player.skipSeconds") private var skipSeconds=30
     @AppStorage("cast.series.autoplay") private var autoplay=true
     @AppStorage("cast.series.matchSource") private var matchSource=true
     @AppStorage("cast.series.specials") private var specials=false
@@ -469,6 +472,12 @@ private struct AppPreferencesView:View {
     var body:some View {
         NavigationStack {
             Form {
+                Section("Player") {
+                    Picker("Salto avanti e indietro",selection:$skipSeconds) {
+                        ForEach(PlaybackPreferences.skipIntervals,id:\.self) { value in Text("\(value) secondi").tag(value) }
+                    }
+                    Text("Lo stesso intervallo vale nel player e nei controlli della schermata di blocco.").font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("Serie") {
                     Toggle("Avvia la puntata successiva",isOn:$autoplay)
                     Toggle("Riutilizza una sorgente equivalente",isOn:$matchSource)
@@ -487,12 +496,13 @@ private struct AppPreferencesView:View {
                     Text("La sincronizzazione si regola per il video corrente dal menu Sottotitoli.").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
-                    Button("Ripristina preferenze di serie e lingue",role:.destructive) { confirmReset=true }
-                } footer: { Text("Ripristina i valori iniziali di questa schermata. Configurazioni delle sorgenti, aspetto dei sottotitoli e progressi di visione restano salvati. Le nuove preferenze si applicano alle prossime selezioni.") }
+                    Button("Ripristina preferenze app",role:.destructive) { confirmReset=true }
+                } footer: { Text("Ripristina i valori iniziali di serie, lingue e intervallo del player. Configurazioni delle sorgenti, aspetto dei sottotitoli e progressi di visione restano salvati. Le nuove preferenze si applicano alle prossime selezioni.") }
             }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
         }
+        .onAppear {skipSeconds=PlaybackPreferences.skipInterval()}
         .sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
-        .confirmationDialog("Ripristinare serie e lingue?",isPresented:$confirmReset,titleVisibility:.visible) {
+        .confirmationDialog("Ripristinare le preferenze app?",isPresented:$confirmReset,titleVisibility:.visible) {
             Button("Ripristina preferenze",role:.destructive) { PlaybackPreferences.resetAppSettings() }
             Button("Annulla",role:.cancel) {}
         }

@@ -2,7 +2,7 @@ name: Build unsigned iOS app
 
 on:
   push:
-    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103]
+    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103, feat/playback-preferences-20261104]
   workflow_dispatch:
     inputs:
       receiver_app_id:
@@ -129,4 +129,3 @@ jobs:
           path: Receiver/dist/
           if-no-files-found: error
           retention-days: 7
-
