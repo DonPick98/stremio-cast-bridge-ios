@@ -1,7 +1,7 @@
 import Foundation
 
 enum PlaybackPreferences {
-    static let appSettingKeys = ["cast.series.autoplay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.series.autoReturn","cast.series.sourceAttempts","cast.preferred.audio","cast.preferred.subtitle"]
+    static let appSettingKeys = ["cast.series.autoplay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.series.autoReturn","cast.series.sourceAttempts","cast.preferred.audio","cast.preferred.subtitle","cast.preferred.subtitleSource"]
     static func resetAppSettings(defaults:UserDefaults = .standard) {
         for key in appSettingKeys { defaults.removeObject(forKey:key) }
     }
@@ -47,8 +47,13 @@ enum PlaybackPreferences {
         let saved = raw == "auto" ? nil : raw
         if saved == "none" || (saved == nil && handoff == "off") { return "none" }
         let wanted = language(saved ?? handoff ?? "en")
+        let rawSource=defaults.string(forKey:"cast.preferred.subtitleSource") ?? "internal"
+        let source=["internal","external","externalOnly"].contains(rawSource) ? rawSource:"internal"
+        let matchingExternal=external && wanted == language(externalLanguage ?? handoff ?? "en")
+        if source != "internal",matchingExternal{return "external"}
+        if source=="externalOnly"{return "none"}
         if let track = tracks.first(where:{language($0.language) == wanted}) { return track.key }
-        return external && wanted == language(externalLanguage ?? handoff ?? "en") ? "external" : "none"
+        return matchingExternal ? "external":"none"
     }
 }
 

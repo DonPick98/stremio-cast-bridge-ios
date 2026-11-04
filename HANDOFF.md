@@ -1,3 +1,18 @@
+# Priorità sottotitoli — build40 candidata, 2026-11-04
+
+FT003/CB005: impostazioni Selezione automatica con Preferisci esterni, Preferisci
+interni, Solo esterni. Default interno conserva la scelta precedente; chi desidera
+evitare le tracce incorporate seleziona Solo esterni. Preferisci consente fallback
+all'altra origine solo nella lingua richiesta. Solo esterni non sceglie una traccia
+integrata quando manca l'esterno; nessun download online automatico introdotto.
+Off esplicito e lingua scelta prevalgono. Manuale sempre disponibile; nessun cambio
+traccia a sorpresa per video corrente. Reset serie/tracce include nuova preferenza.
+Test priorità/fallback/lingua/off/valore invalido aggiunti, CI40 da acquisire.
+Contiene anche il pulsante Torna a Stremio39. IPA38 già consegnata non include né
+pulsante né priorità40; non promettere che si aggiornino nell'app installata.
+
+---
+
 # Torna a Stremio — build39 candidata, 2026-11-04
 
 FT002: pulsante sempre disponibile sotto l'intestazione. Apre il contenutoIMDb

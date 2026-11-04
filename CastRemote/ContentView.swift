@@ -478,6 +478,7 @@ private struct AppPreferencesView:View {
     @AppStorage("cast.series.sourceAttempts") private var sourceAttempts=3
     @AppStorage("cast.preferred.audio") private var audio="auto"
     @AppStorage("cast.preferred.subtitle") private var subtitle="auto"
+    @AppStorage("cast.preferred.subtitleSource") private var subtitleSource="internal"
     @AppStorage("cast.controls.seekStep") private var seekStep=30.0
     @AppStorage("cast.activity.enabled") private var liveActivity=true
     @AppStorage("cast.updates.automatic") private var automaticUpdates=false
@@ -534,6 +535,12 @@ private struct AppPreferencesView:View {
                     Button("Ripristina controlli") {confirmControlReset=true}
                 }
                 Section("Sottotitoli") {
+                    Picker("Selezione automatica",selection:$subtitleSource) {
+                        Text("Preferisci esterni").tag("external")
+                        Text("Preferisci interni").tag("internal")
+                        Text("Solo esterni").tag("externalOnly")
+                    }
+                    Text("Si applica alle prossime sorgenti, nella lingua scelta. Con Solo esterni, se non ne sono disponibili i sottotitoli restano spenti: puoi cercarli da Stremio e OpenSubtitles nel player. La scelta manuale delle tracce rimane disponibile.").font(.footnote).foregroundStyle(.secondary)
                     Button { showAppearance=true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
                     Text("La sincronizzazione si regola per il video corrente dal menu Sottotitoli.").font(.footnote).foregroundStyle(.secondary)
                 }
@@ -556,8 +563,8 @@ private struct AppPreferencesView:View {
                     if let notice=cast.captionCacheMessage{Text(notice).font(.footnote).foregroundStyle(.secondary)}
                 }
                 Section {
-                    Button("Ripristina preferenze di serie e lingue",role:.destructive) { confirmReset=true }
-                } footer: { Text("Ripristina solo serie e lingue. Configurazioni delle sorgenti, aspetto dei sottotitoli e progressi di visione restano salvati. Le nuove preferenze si applicano alle prossime selezioni.") }
+                    Button("Ripristina serie e preferenze tracce",role:.destructive) { confirmReset=true }
+                } footer: { Text("Ripristina serie, lingue e priorità dei sottotitoli. Configurazioni delle sorgenti, aspetto dei sottotitoli e progressi di visione restano salvati. Le nuove preferenze si applicano alle prossime selezioni.") }
             }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
         }
         .onAppear{cast.refreshCaptionCacheInfo()}
@@ -573,7 +580,7 @@ private struct AppPreferencesView:View {
             Button("Annulla",role:.cancel){}
         } message:{Text("Le prossime tracce verranno preparate di nuovo. Il video e i sottotitoli già attivi continuano.")}
         .sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
-        .confirmationDialog("Ripristinare serie e lingue?",isPresented:$confirmReset,titleVisibility:.visible) {
+        .confirmationDialog("Ripristinare serie e preferenze tracce?",isPresented:$confirmReset,titleVisibility:.visible) {
             Button("Ripristina preferenze",role:.destructive) { PlaybackPreferences.resetAppSettings() }
             Button("Annulla",role:.cancel) {}
         }
