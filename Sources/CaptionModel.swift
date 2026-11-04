@@ -23,12 +23,15 @@ final class CaptionDocumentCache {
     func get(_ key:String)->String?{
         guard let file=file(key),let values=try? file.resourceValues(forKeys:[.fileSizeKey,.contentModificationDateKey]),
               let size=values.fileSize,size<=1_048_576,let date=values.contentModificationDate,clock().timeIntervalSince(date)<=lifetime,
-              let data=try? Data(contentsOf:file),let text=String(data:data,encoding:.utf8),text.hasPrefix("WEBVTT") else{return nil}
+              let data=try? Data(contentsOf:file) else{return nil}
+        guard let text=String(data:data,encoding:.utf8),text.hasPrefix("WEBVTT"),
+              let complete=try? SubtitleDocument.normalize(data) else{try? FileManager.default.removeItem(at:file);return nil}
         try? FileManager.default.setAttributes([.modificationDate:clock()],ofItemAtPath:file.path)
-        return text
+        return complete
     }
     func put(_ text:String,key:String){
-        guard let file=file(key),text.hasPrefix("WEBVTT"),text.utf8.count<=min(budget,1_048_576) else{return}
+        guard let file=file(key),text.hasPrefix("WEBVTT"),text.utf8.count<=min(budget,1_048_576),
+              (try? SubtitleDocument.normalize(Data(text.utf8))) != nil else{return}
         do{try Data(text.utf8).write(to:file,options:.atomic);try FileManager.default.setAttributes([.modificationDate:clock()],ofItemAtPath:file.path)}catch{return}
         prune()
     }

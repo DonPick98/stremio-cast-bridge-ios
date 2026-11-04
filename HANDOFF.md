@@ -9,6 +9,8 @@ WebVTT vuoti, con intestazione falsa o timing mescolati nel payload rifiutati
 prima di sostituire la selezione. Le finestre incrementali senza battute restano
 ammesse in CaptionDocument: non confondere silenzio temporaneo e file completo vuoto.
 Stessa validazione per estrazioni integrate complete e download esterni.
+Cache complete: valida anche letture precedenti e rimuove file vuoti/malformati;
+una put invalida non sostituisce il documento funzionante. Test migrazione cache.
 CB023: scelta automatica esterni da lingua salvata con alias/regioni; nessun
 ripiego silenzioso su lingua diversa. URL handoff senza lingua mantiene default en.
 Scelta manuale resta esplicita; off rispettato. Diagnostica mantiene provenienza

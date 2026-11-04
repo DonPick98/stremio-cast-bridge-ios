@@ -23,7 +23,7 @@ jobs:
 
       - name: Test independent caption model and receiver
         run: |
-          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
           "$RUNNER_TEMP/caption-model-tests"
           cd Receiver
           npm ci --ignore-scripts --no-audit --no-fund

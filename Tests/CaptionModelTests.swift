@@ -25,20 +25,29 @@ import Foundation
         let input=URL(string:"https://example.test/private?token=secret")!
         let keys=(1...3).map{CaptionDocumentCache.key(input:input,track:String($0))}
         precondition(Set(keys).count==3 && keys.allSatisfy{$0.count==64 && !$0.contains("secret")})
-        cache.put("WEBVTT\n\nA",key:keys[0]);now+=1
-        cache.put("WEBVTT\n\nB",key:keys[1]);now+=1
+        func document(_ value:String)->String {"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n"+value}
+        cache.put(document("A"),key:keys[0]);now+=1
+        cache.put(document("B"),key:keys[1]);now+=1
         precondition(cache.get(keys[0]) != nil);now+=1
-        cache.put("WEBVTT\n\nC",key:keys[2])
+        cache.put(document("C"),key:keys[2])
         precondition(cache.get(keys[1])==nil && cache.get(keys[0]) != nil && cache.get(keys[2]) != nil)
         let reopened=CaptionDocumentCache(directory:root,budget:300,countLimit:2,lifetime:60,clock:{now})
         precondition(reopened.get(keys[0]) != nil)
-        cache.put("not complete",key:keys[0]);precondition(cache.get(keys[0])=="WEBVTT\n\nA")
+        cache.put("not complete",key:keys[0]);precondition(cache.get(keys[0])==document("A"))
         now+=61;precondition(cache.get(keys[0])==nil)
         let budgetRoot=root.appendingPathComponent("budget")
-        let bounded=CaptionDocumentCache(directory:budgetRoot,budget:30,countLimit:20,clock:{now})
-        bounded.put("WEBVTT\n\n12345678",key:keys[0]);now+=1
-        bounded.put("WEBVTT\n\nabcdefgh",key:keys[1])
+        let bounded=CaptionDocumentCache(directory:budgetRoot,budget:100,countLimit:20,clock:{now})
+        bounded.put(document("12345678"),key:keys[0]);now+=1
+        bounded.put(document("abcdefgh"),key:keys[1])
         precondition(bounded.get(keys[0])==nil && bounded.get(keys[1]) != nil)
+        let legacyRoot=root.appendingPathComponent("legacy")
+        let legacy=CaptionDocumentCache(directory:legacyRoot,clock:{now})
+        let invalidFile=legacyRoot.appendingPathComponent(keys[0]+".vtt")
+        try Data("WEBVTT\n\n".utf8).write(to:invalidFile)
+        precondition(legacy.get(keys[0])==nil && !FileManager.default.fileExists(atPath:invalidFile.path))
+        legacy.put(document("Working"),key:keys[0])
+        legacy.put("WEBVTT\n\n",key:keys[0])
+        precondition(legacy.get(keys[0])==document("Working"))
         precondition(!DirectCaptionPolicy.needsMediaProxy(force:false,compatible:true,audioChanged:false,burn:false,textSelected:true,corsAllowed:true))
         precondition(!DirectCaptionPolicy.needsMediaProxy(force:false,compatible:true,audioChanged:false,burn:false,textSelected:true,corsAllowed:nil))
         precondition(DirectCaptionPolicy.needsMediaProxy(force:false,compatible:true,audioChanged:false,burn:false,textSelected:true,corsAllowed:false))
