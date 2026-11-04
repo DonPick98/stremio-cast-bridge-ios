@@ -3,7 +3,8 @@ import Foundation
 import FoundationNetworking
 #endif
 
-enum StreamHeaderError: Error { case invalid, unsupported, network, tooLarge }
+enum StreamHeaderRejection:String,Error {case videoCodec="video_codec",audioCodec="audio_codec",audioChannels="audio_channels",videoProfile="video_profile",missingAudio="missing_audio",missingVideo="missing_video"}
+enum StreamHeaderError: Error { case invalid, unsupported, network, tooLarge, rejected(StreamHeaderRejection) }
 
 /// Reads only the initialization header. A video-only conversion must never be
 /// treated as a successful audio repair, even when the encoder reports PLAYING.
@@ -51,18 +52,19 @@ enum PlayableStreamHeader {
                     let kind = String(data:handler.payload[8..<12],encoding:.ascii)
                     guard let entry = try boxes(Data(descriptions.payload.dropFirst(8))).first else { continue }
                     if kind == "soun" {
-                        guard ["mp4a",".mp3","mp3 "].contains(entry.type), entry.payload.count >= 20 else { throw StreamHeaderError.unsupported }
+                        guard ["mp4a",".mp3","mp3 "].contains(entry.type), entry.payload.count >= 20 else { throw StreamHeaderError.rejected(.audioCodec) }
                         let channels = number(entry.payload,16,2)
-                        guard channels > 0 && channels <= 2 else { throw StreamHeaderError.unsupported }
+                        guard channels > 0 && channels <= 2 else { throw StreamHeaderError.rejected(.audioChannels) }
                         audio = true
                     } else if kind == "vide" {
                         guard ["avc1","avc3"].contains(entry.type), entry.payload.count >= 78,
-                              let avc = try boxes(Data(entry.payload.dropFirst(78))).first(where:{$0.type == "avcC"}), avc.payload.count >= 4 else { throw StreamHeaderError.unsupported }
-                        guard [66,77,88,100].contains(Int(avc.payload[1])), avc.payload[3] <= 42 else { throw StreamHeaderError.unsupported }
+                              let avc = try boxes(Data(entry.payload.dropFirst(78))).first(where:{$0.type == "avcC"}), avc.payload.count >= 4 else { throw StreamHeaderError.rejected(.videoCodec) }
+                        guard [66,77,88,100].contains(Int(avc.payload[1])), avc.payload[3] <= 42 else { throw StreamHeaderError.rejected(.videoProfile) }
                         video = true
                     }
                 }
-                guard audio && video else { throw StreamHeaderError.unsupported }
+                guard audio else {throw StreamHeaderError.rejected(.missingAudio)}
+                guard video else {throw StreamHeaderError.rejected(.missingVideo)}
                 return true
             }
             if type == "mdat" || type == "moof" { throw StreamHeaderError.invalid }
@@ -106,15 +108,17 @@ enum PlayableStreamHeader {
                     guard let typeField = fields.first(where:{$0.0 == 0x83}) else { throw StreamHeaderError.invalid }
                     let type = typeField.1.reduce(UInt64(0)){($0<<8)|UInt64($1)}
                     let codec = fields.first(where:{$0.0 == 0x86}).flatMap{String(data:$0.1,encoding:.utf8)} ?? ""
-                    if type == 1 { guard codec == "V_VP8" else { throw StreamHeaderError.unsupported }; video = true }
+                    if type == 1 { guard codec == "V_VP8" else { throw StreamHeaderError.rejected(.videoCodec) }; video = true }
                     if type == 2 {
-                        guard ["A_VORBIS","A_OPUS"].contains(codec) else { throw StreamHeaderError.unsupported }
+                        guard ["A_VORBIS","A_OPUS"].contains(codec) else { throw StreamHeaderError.rejected(.audioCodec) }
                         let details = try fields.first(where:{$0.0 == 0xE1}).map{try elements($0.1)} ?? []
                         let channels = details.first(where:{$0.0 == 0x9F}).map { $0.1.reduce(UInt64(0)){($0<<8)|UInt64($1)} } ?? 1
-                        guard channels > 0 && channels <= 2 else { throw StreamHeaderError.unsupported }; audio = true
+                        guard channels > 0 && channels <= 2 else { throw StreamHeaderError.rejected(.audioChannels) }; audio = true
                     }
                 }
-                guard audio && video else { throw StreamHeaderError.unsupported }; return true
+                guard audio else {throw StreamHeaderError.rejected(.missingAudio)}
+                guard video else {throw StreamHeaderError.rejected(.missingVideo)}
+                return true
             }
             p = start+Int(size)
         }

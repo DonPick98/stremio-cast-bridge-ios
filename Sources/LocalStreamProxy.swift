@@ -278,6 +278,10 @@ final class LocalStreamProxy: @unchecked Sendable {
                 if let data { stream.body.append(data) }; stream.complete = complete
                 if error != nil { self.failPreparation(error:.network) } else { self.validateWarm(stream) }
             }
+        } catch StreamHeaderError.rejected(let reason) {
+            let bytes=stream.body.count
+            Task { @MainActor in PlaybackDiagnostics.record(.error,["phase":"header_validation","code":reason.rawValue,"bytes":String(bytes)]) }
+            failPreparation(error:.unsupported)
         } catch StreamHeaderError.unsupported { failPreparation(error:.unsupported) }
         catch StreamHeaderError.tooLarge { failPreparation(error:.limit) }
         catch { failPreparation(error:.header) }
