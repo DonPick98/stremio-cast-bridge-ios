@@ -5,6 +5,16 @@ enum PlaybackPreferences {
     static func resetAppSettings(defaults:UserDefaults = .standard) {
         for key in appSettingKeys { defaults.removeObject(forKey:key) }
     }
+    static let controlSettingKeys=["cast.activity.enabled","cast.controls.seekStep"]
+    static let seekSteps:[Double]=[10,15,30,60]
+    static func seekStep(defaults:UserDefaults = .standard)->Double {
+        let value=defaults.object(forKey:"cast.controls.seekStep") as? NSNumber
+        let seconds=value?.doubleValue ?? 30
+        return seconds.isFinite && seekSteps.contains(seconds) ? seconds:30
+    }
+    static func resetControls(defaults:UserDefaults = .standard) {
+        for key in controlSettingKeys{defaults.removeObject(forKey:key)}
+    }
     static func language(_ value:String) -> String {
         let code = value.lowercased().split(separator:"-").first.map(String.init) ?? value.lowercased()
         return ["eng":"en","ita":"it","fra":"fr","fre":"fr","deu":"de","ger":"de","spa":"es","jpn":"ja","kor":"ko","por":"pt","zho":"zh","chi":"zh","rus":"ru","ukr":"uk","ara":"ar","heb":"he","hin":"hi","pol":"pl","nld":"nl","dut":"nl","tur":"tr" ][code] ?? code

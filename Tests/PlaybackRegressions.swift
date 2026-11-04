@@ -122,6 +122,17 @@ import Foundation
         precondition(VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:25).requiresConversion)
         precondition(VideoFormat(codec:"h264",width:1920,height:1080,frameRate:24,profile:110).requiresConversion)
         precondition(VideoFormat(codec:"h264",width:1920,height:1080,frameRate:24000.0/1001).frameRateLabel == "23.976 fps")
+        var live=LiveActivityUpdatePolicy()
+        let base=Date(timeIntervalSince1970:1000)
+        precondition(live.accept(title:"A",status:"Play",playing:true,position:0,duration:100,step:30,now:base))
+        precondition(!live.accept(title:"A",status:"Play",playing:true,position:1,duration:100,step:30,now:base.addingTimeInterval(1)))
+        precondition(live.accept(title:"A",status:"Play",playing:true,position:30,duration:100,step:30,now:base.addingTimeInterval(30)))
+        precondition(live.accept(title:"A",status:"Play",playing:true,position:5,duration:100,step:30,now:base.addingTimeInterval(31)))
+        precondition(live.accept(title:"A",status:"Pause",playing:false,position:5,duration:100,step:30,now:base.addingTimeInterval(32)))
+        precondition(!live.accept(title:"A",status:"Pause",playing:false,position:5,duration:100,step:30,now:base.addingTimeInterval(33)))
+        precondition(live.accept(title:"B",status:"Pause",playing:false,position:5,duration:100,step:30,now:base.addingTimeInterval(34)))
+        precondition(live.accept(title:"B",status:"Pause",playing:false,position:5,duration:100,step:15,now:base.addingTimeInterval(35)))
+        precondition(!live.accept(title:"B",status:"Pause",playing:false,position:.nan,duration:100,step:15,now:base.addingTimeInterval(36)))
         print("Playback generation, seek confirmation and original frame-rate regressions passed")
     }
 }

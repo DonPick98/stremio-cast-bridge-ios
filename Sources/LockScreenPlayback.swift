@@ -1,4 +1,5 @@
 import Foundation
+import ActivityKit
 import MediaPlayer
 import UIKit
 import AVFAudio
@@ -78,6 +79,7 @@ import MobileVLCKit
 /// The system media card provides the draggable Lock Screen/Control Center
 /// scrubber. It is the only playback surface on the Lock Screen.
 @MainActor final class LockScreenPlayback {
+    private var appliedSeekStep=PlaybackPreferences.seekStep()
     var handler: ((String) async -> Bool)?
     private(set) var active = false
     private var local = false
@@ -91,8 +93,8 @@ import MobileVLCKit
         bind(center.pauseCommand,"pause")
         bind(center.togglePlayPauseCommand,"toggle")
         bind(center.stopCommand,"stop")
-        center.skipBackwardCommand.preferredIntervals = [30]
-        center.skipForwardCommand.preferredIntervals = [30]
+        center.skipBackwardCommand.preferredIntervals = [NSNumber(value:PlaybackPreferences.seekStep())]
+        center.skipForwardCommand.preferredIntervals = [NSNumber(value:PlaybackPreferences.seekStep())]
         bind(center.skipBackwardCommand,"back")
         bind(center.skipForwardCommand,"forward")
         let seek = center.changePlaybackPositionCommand
@@ -131,6 +133,13 @@ import MobileVLCKit
     }
     func update(title:String,device:String,position:Double,duration:Double,playing:Bool,loading:Bool,local:Bool) {
         active = true; self.local = local
+        let step=PlaybackPreferences.seekStep()
+        if step != appliedSeekStep {
+            appliedSeekStep=step
+            let jump=NSNumber(value:step)
+            MPRemoteCommandCenter.shared().skipBackwardCommand.preferredIntervals=[jump]
+            MPRemoteCommandCenter.shared().skipForwardCommand.preferredIntervals=[jump]
+        }
         var info: [String:Any] = [
             MPMediaItemPropertyTitle:title,
             MPMediaItemPropertyArtist:device,
@@ -160,3 +169,71 @@ import MobileVLCKit
     }
 }
 
+
+/// A single local Live Activity, independent of Now Playing and audio ownership.
+@MainActor final class CastLiveActivityManager {
+    private var activity:Activity<CastActivityAttributes>?
+    private var pending:CastActivityAttributes.ContentState?
+    private var worker:Task<Void,Never>?
+    private var generation=UUID()
+    private var policy=LiveActivityUpdatePolicy()
+    private var lastRequest=Date.distantPast
+    init() {
+        let existing=Activity<CastActivityAttributes>.activities
+        activity=existing.first
+        for extra in existing.dropFirst(){
+            Task {
+                if #available(iOS 16.2,*){await extra.end(nil,dismissalPolicy:.immediate)}
+                else{await extra.end(dismissalPolicy:.immediate)}
+            }
+        }
+        // An upgrade/relaunch must not dismiss the active card unconditionally.
+        // Its stale date prevents an old snapshot from pretending to be current.
+        if UserDefaults.standard.object(forKey:"cast.activity.enabled") as? Bool == false {end()}
+    }
+    func update(title:String,status:String,position:Double,duration:Double,playing:Bool,loading:Bool) {
+        guard UserDefaults.standard.object(forKey:"cast.activity.enabled") as? Bool ?? true,
+              ActivityAuthorizationInfo().areActivitiesEnabled else{end();return}
+        let now=Date(),running=playing && !loading,step=PlaybackPreferences.seekStep()
+        guard position.isFinite,duration.isFinite,position>=0,duration>=0 else{return}
+        if activity==nil {
+            guard UIApplication.shared.applicationState == .active,now.timeIntervalSince(lastRequest)>=60 else{return}
+        }
+        guard policy.accept(title:title,status:status,playing:running,position:position,duration:duration,step:step,now:now) else{return}
+        pending=CastActivityAttributes.ContentState(status:status,playing:running,position:position,duration:duration,updatedAt:now,title:String(title.prefix(180)),skipSeconds:Int(step))
+        guard worker==nil else{return}
+        let token=generation
+        worker=Task { [weak self] in
+            guard let self else{return}
+            defer{if self.generation==token{self.worker=nil}}
+            while !Task.isCancelled,self.generation==token,let state=self.pending {
+                self.pending=nil
+                if self.activity==nil {
+                    guard UIApplication.shared.applicationState == .active else{self.policy=LiveActivityUpdatePolicy();return}
+                    self.lastRequest=Date()
+                    do {
+                        let attributes=CastActivityAttributes(title:state.title ?? "Cast Bridge")
+                        if #available(iOS 16.2,*) {
+                            self.activity=try Activity<CastActivityAttributes>.request(attributes:attributes,content:ActivityContent(state:state,staleDate:Date().addingTimeInterval(75)),pushType:nil)
+                        } else {self.activity=try Activity<CastActivityAttributes>.request(attributes:attributes,contentState:state,pushType:nil)}
+                    } catch {
+                        self.policy=LiveActivityUpdatePolicy()
+                        PlaybackDiagnostics.record(.error,PlaybackDiagnostics.errorFields(error,phase:"activity_start"));return
+                    }
+                }
+                guard let current=self.activity else{return}
+                if #available(iOS 16.2,*) {await current.update(ActivityContent(state:state,staleDate:Date().addingTimeInterval(75)))}
+                else {await current.update(using:state)}
+            }
+        }
+    }
+    func end() {
+        generation=UUID();worker?.cancel();worker=nil;pending=nil;policy=LiveActivityUpdatePolicy();lastRequest = .distantPast
+        guard let current=activity else{return}
+        activity=nil
+        Task {
+            if #available(iOS 16.2,*) {await current.end(nil,dismissalPolicy:.immediate)}
+            else {await current.end(dismissalPolicy:.immediate)}
+        }
+    }
+}

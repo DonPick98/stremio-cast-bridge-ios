@@ -29,6 +29,10 @@ import Foundation
         precondition(SourceFileSize.label(bytes:nil,description:"File 2.61 / 24.6 GB") == "2.61 GB")
         precondition(SourceFileSize.label(bytes:nil,description:"File 719 MB / 6.8 GB") == "719 MB")
         precondition(SourceFileSize.label(bytes:nil,description:"File 1080p H264") == nil)
+        precondition(CastWire.seekTarget("forward",current:20,duration:100,step:15)==35)
+        precondition(CastWire.seekTarget("back",current:20,duration:100,step:60)==0)
+        precondition(CastWire.seekTarget("forward",current:90,duration:100,step:15)==100)
+        precondition(CastWire.seekTarget("forward",current:20,duration:100,step:.nan)==nil)
         print("Control/preferences tests passed: Cast envelopes, LAN scope, seek bounds, persistence, size metadata")
     }
 }

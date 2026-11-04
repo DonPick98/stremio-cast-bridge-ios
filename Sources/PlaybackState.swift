@@ -126,3 +126,25 @@ struct PlaybackTimeline {
     mutating func reset() { target = nil; queuedTarget = nil }
 }
 
+
+/// Throttle timer refreshes while immediately publishing state/title changes or
+/// a real clock discontinuity. This does not keep the app executing in background.
+struct LiveActivityUpdatePolicy {
+    private struct Signature:Equatable {
+        let title:String,status:String
+        let playing:Bool
+        let duration:Double,step:Double
+    }
+    private var signature:Signature?
+    private var at:Date?
+    private var position:Double=0
+    private var playing=false
+    mutating func accept(title:String,status:String,playing:Bool,position:Double,duration:Double,step:Double,now:Date)->Bool {
+        guard position.isFinite,position>=0,duration.isFinite,duration>=0 else{return false}
+        let key=Signature(title:title,status:status,playing:playing,duration:duration,step:step)
+        let elapsed=at.map{max(0,now.timeIntervalSince($0))} ?? .infinity
+        let expected=self.position+(self.playing && elapsed.isFinite ? elapsed:0)
+        guard signature != key || elapsed>=30 || abs(position-expected)>3 else{return false}
+        signature=key;at=now;self.position=position;self.playing=playing;return true
+    }
+}

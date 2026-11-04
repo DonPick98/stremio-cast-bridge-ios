@@ -8,16 +8,16 @@ struct CastLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CastActivityAttributes.self) { context in
             VStack(alignment: .leading, spacing: 8) {
-                Text(context.attributes.title).font(.headline).lineLimit(1)
+                Text((context.state.title ?? context.attributes.title)).font(.headline).lineLimit(1)
                 Text(isStale(context) ? "Stato non aggiornato · apri Cast Bridge" : context.state.status).font(.subheadline)
                 timeline(context)
                 if #available(iOS 17.0, *) {
                     HStack {
-                        Button(intent: CastBackIntent()) { Image(systemName: "gobackward.30") }
+                        Button(intent: CastBackIntent()) { Label("\(context.state.skipSeconds ?? 30)s",systemImage:"gobackward") }
                         Spacer()
                         Button(intent: CastToggleIntent()) { Image(systemName: context.state.playing ? "pause.fill" : "play.fill") }
                         Spacer()
-                        Button(intent: CastForwardIntent()) { Image(systemName: "goforward.30") }
+                        Button(intent: CastForwardIntent()) { Label("\(context.state.skipSeconds ?? 30)s",systemImage:"goforward") }
                     }.buttonStyle(.plain)
                 }
                 Link("Apri Cast Bridge", destination: URL(string: "stremiocast://controls")!).font(.caption)
@@ -26,18 +26,18 @@ struct CastLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) { Image(systemName: "tv") }
-                DynamicIslandExpandedRegion(.center) { Text(context.attributes.title).lineLimit(1) }
+                DynamicIslandExpandedRegion(.center) { Text((context.state.title ?? context.attributes.title)).lineLimit(1) }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing:6) {
                         Text(isStale(context) ? "Ultima posizione nota" : context.state.status).font(.caption)
                         timeline(context)
                         if #available(iOS 17.0, *) {
                             HStack {
-                                Button(intent:CastBackIntent()) { Image(systemName:"gobackward.30") }
+                                Button(intent:CastBackIntent()) { Label("\(context.state.skipSeconds ?? 30)s",systemImage:"gobackward") }
                                 Spacer()
                                 Button(intent:CastToggleIntent()) { Image(systemName:context.state.playing ? "pause.fill" : "play.fill") }
                                 Spacer()
-                                Button(intent:CastForwardIntent()) { Image(systemName:"goforward.30") }
+                                Button(intent:CastForwardIntent()) { Label("\(context.state.skipSeconds ?? 30)s",systemImage:"goforward") }
                             }.buttonStyle(.plain)
                         }
                     }

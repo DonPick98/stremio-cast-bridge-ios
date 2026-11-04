@@ -209,6 +209,7 @@ import AVFAudio
     private var intentCorrectionRequest:GCKRequest?
     private var intentCorrection:Bool?
     private let lockScreen = LockScreenPlayback()
+    private let liveActivity = CastLiveActivityManager()
     private var lastDevice: GCKDevice?
     private var reconnectTask: Task<Void,Never>?
     private var trackChangePending = false
@@ -231,13 +232,6 @@ import AVFAudio
         UIDevice.current.isBatteryMonitoringEnabled = true
         NotificationCenter.default.addObserver(forName:UIApplication.didReceiveMemoryWarningNotification,object:nil,queue:.main) { _ in
             Task { @MainActor in PlaybackDiagnostics.record(.app,["phase":"memory_warning"]) }
-        }
-        // Keep only the system media card, including after an upgrade from 0.6.0.
-        Task {
-            for old in Activity<CastActivityAttributes>.activities {
-                if #available(iOS 16.2, *) { await old.end(nil,dismissalPolicy:.immediate) }
-                else { await old.end(dismissalPolicy:.immediate) }
-            }
         }
         positionKey = UserDefaults.standard.string(forKey: "cast.session.positionKey")
         if let positionKey { lastGoodPosition = UserDefaults.standard.double(forKey: positionKey) }
@@ -339,7 +333,7 @@ import AVFAudio
             message = "Ricollego i controlli alla TV…"
             reconnectControls(); return
         }
-        wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil; lockScreen.clear()
+        wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil; lockScreen.clear();liveActivity.end()
         stopCaptionDelivery()
         streamCheckTask?.cancel(); checkingStream = false; loading = false
         capturePosition(); stopLocalProcessing(); connected = false; playing = false; finishCommand(false)
@@ -374,7 +368,7 @@ import AVFAudio
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
             guard ownsCurrentMedia else {
-                if hasLoaded && !loadPending && !checkingStream { stopCaptionDelivery();stopLocalProcessing(); hasLoaded = false; wantsPlayback = false; lockScreen.clear(); message = "La TV sta riproducendo un altro contenuto." }
+                if hasLoaded && !loadPending && !checkingStream { stopCaptionDelivery();stopLocalProcessing(); hasLoaded = false; wantsPlayback = false; lockScreen.clear();liveActivity.end(); message = "La TV sta riproducendo un altro contenuto." }
                 if !loadPending && timeline.target == nil { playing = false }
                 return
             }
@@ -460,7 +454,7 @@ import AVFAudio
                 finishOwnedPlayback()
             } else if status.playerState == .idle && currentLoad && status.idleReason == .cancelled {
                 stopCaptionDelivery()
-                wantsPlayback = false; lockScreen.clear()
+                wantsPlayback = false; lockScreen.clear();liveActivity.end()
                 loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = false
                 stopLocalProcessing(); message = "Riproduzione interrotta."
                 updateActivity(status:"Riproduzione interrotta")
@@ -483,7 +477,7 @@ import AVFAudio
     private func finishOwnedPlayback() {
         guard wantsPlayback || hasLoaded else{return}
         PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
-        stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished")
+        stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished");liveActivity.end()
         loadPending=false;loading=false;loadTimeout?.cancel();loadRequest=nil
         if let positionKey { UserDefaults.standard.set(0,forKey:positionKey) }
         sourceResume=nil;hasLoaded=false;lastGoodPosition=0;lastConfirmedPosition=nil
@@ -1088,6 +1082,14 @@ import AVFAudio
             return OnlineSubtitle(id:item.id ?? "source-"+String(contentDigest(url.absoluteString).prefix(16)),url:url,lang:item.lang ?? "und",label:item.label ?? "Sottotitoli Stremio \(index+1)",provider:"Stremio")
         }
     }
+    @Published private(set) var captionCacheBytes=0
+    @Published private(set) var captionCacheMessage:String?
+    func refreshCaptionCacheInfo(){captionCacheBytes=completeCaptionCache.diskBytes()}
+    func clearCaptionCache(){
+        let cleared=completeCaptionCache.clear()
+        captionCache.removeAll();captionFailures.removeAll();refreshCaptionCacheInfo()
+        captionCacheMessage=cleared ? "Cache sottotitoli svuotata. La traccia attiva resta disponibile.":"Non riesco a eliminare tutti i file della cache. Puoi riprovare."
+    }
     var defaultSubtitleLanguage:String { PlaybackPreferences.subtitleLanguage(handoff:handoff?.subtitleLanguage) }
     private func clearSubtitleChoices() {
         independentCaptions.clearSource()
@@ -1596,7 +1598,7 @@ import AVFAudio
     }
     private func handleCommand(_ command:String) async -> Bool {
         PlaybackDiagnostics.record(.command,["kind":command,"connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
-        if let target = CastWire.seekTarget(command,current:timeline.queuedTarget ?? lastGoodPosition,duration:duration) {
+        if let target = CastWire.seekTarget(command,current:timeline.queuedTarget ?? lastGoodPosition,duration:duration,step:PlaybackPreferences.seekStep()) {
             seek(to:target); return true
         }
         var action = command
@@ -1663,7 +1665,7 @@ import AVFAudio
         case let value where value == "back" || value == "forward" || value.hasPrefix("seek:"):
             let current = timeline.target ?? lastGoodPosition
             guard current.isFinite, current >= 0 else { return false }
-            guard var target = CastWire.seekTarget(command,current:current,duration:duration) else { return false }
+            guard var target = CastWire.seekTarget(command,current:current,duration:duration,step:PlaybackPreferences.seekStep()) else { return false }
             timeline.begin(at:target); position = target; lastGoodPosition = target
             updateActivity(status:"Caricamento")
             if localProcessing {
@@ -1711,7 +1713,7 @@ import AVFAudio
         transferCheckpoint=nil
         intentCorrectionRequest?.cancel();intentCorrectionRequest=nil
         wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil
-        trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear()
+        trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear();liveActivity.end()
         embeddedCaptionTask?.cancel(); embeddedCaptionTask = nil
         seekDispatchTask?.cancel(); seekDispatchTask = nil
         streamCheckTask?.cancel(); streamCheckTask = nil; checkingStream = false; playbackIssue = nil
@@ -1732,9 +1734,11 @@ import AVFAudio
         lastGoodPosition = 0; position = 0; duration = 0
         timeline.reset(); playWhenReady = true; playing = false; transportRetries = 0
     }
+    var liveActivitiesAllowed:Bool {ActivityAuthorizationInfo().areActivitiesEnabled}
     private func updateActivity(status: String) {
         if wantsPlayback && (hasLoaded || loadPending || localProcessing) {
             lockScreen.update(title:displayTitle,device:deviceName,position:lastGoodPosition,duration:duration,playing:playing,loading:loading || timeline.target != nil || timeline.queuedTarget != nil,local:localProcessing)
+            liveActivity.update(title:displayTitle,status:status,position:lastGoodPosition,duration:duration,playing:playing,loading:loading || timeline.target != nil || timeline.queuedTarget != nil)
         }
     }
 }

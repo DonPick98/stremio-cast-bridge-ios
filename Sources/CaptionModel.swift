@@ -35,6 +35,24 @@ final class CaptionDocumentCache {
         do{try Data(text.utf8).write(to:file,options:.atomic);try FileManager.default.setAttributes([.modificationDate:clock()],ofItemAtPath:file.path)}catch{return}
         prune()
     }
+    func diskBytes()->Int {
+        let files=(try? FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:[.fileSizeKey,.isRegularFileKey])) ?? []
+        return files.filter{$0.pathExtension=="vtt"}.reduce(0){sum,file in
+            guard let values=try? file.resourceValues(forKeys:[.fileSizeKey,.isRegularFileKey]),values.isRegularFile==true else{return sum}
+            return sum+max(0,values.fileSize ?? 0)
+        }
+    }
+    @discardableResult func clear()->Bool {
+        let files:[URL]
+        do {files=try FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:[.isRegularFileKey])}
+        catch{return false}
+        var success=true
+        for file in files where file.pathExtension=="vtt" && file.deletingPathExtension().lastPathComponent.count==64 && file.deletingPathExtension().lastPathComponent.allSatisfy({$0.isHexDigit}) {
+            guard (try? file.resourceValues(forKeys:[.isRegularFileKey]).isRegularFile)==true else{continue}
+            do {try FileManager.default.removeItem(at:file)}catch{success=false}
+        }
+        return success
+    }
     private func prune(){
         let files=(try? FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:[.fileSizeKey,.contentModificationDateKey,.isRegularFileKey])) ?? []
         var entries:[(URL,Int,Date)]=[]

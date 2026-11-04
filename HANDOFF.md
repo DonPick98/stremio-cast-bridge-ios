@@ -1,3 +1,30 @@
+# Live Activity e controlli — build32 in verifica, 2026-11-04
+
+Baselinec3c46e3/build31, stessa PR2/branch. Richiesta utente: proseguire tutta la
+lista; nessuna voce hardware viene chiusa per una patch senza collaudo.
+CB011: rimosso stop incondizionato di tutte le attività al lancio. Manager adotta
+una attività esistente, crea solo in foreground/autorizzata, aggiorna titolo/stato
+con timestamp75s e contenuto optional compatibile con snapshot precedenti.
+Aggiornamenti seriali/coalescati:30s sul clock normale, immediati su pausa/titolo/
+seek; stop/fine/reset/ownershippersa terminano attività. NowPlaying e audiohelper
+restano separati; non attribuire aActivityKit esecuzione continua o permanenzaRAM.
+Limite residuo: continuità della stessa card attraverso autoplay da background da
+integrare conFT002; creazioni inbackground non sono autorizzate dalla piattaforma.
+
+FT003 parziale: salto10/15/30/60s con default30/bounds, applicato a player, comandi
+SDK/direct fallback, NowPlaying e LiveActivity; reset mirato controlli conservando
+lingue/config/progressi. Toggle attività e indicazione se iOS la disabilita.
+Cache sottotitoli: dimensione, svuotamento confermato di soli fileVTT/hash nella
+cartella dedicata, preservando documento/video attivi e fileestranei.
+
+Test aggiunti: throttling/stati/discontinuità/pause, skipwire/bounds, resetisolato,
+cacheclear e fileestranei. Nessun testSwift/iPhone nuovo passato: i run31 restano
+QUEUED e compilerlocale assente; source-review/whitespace/version4config32 soltanto.
+Prima di consegna leggere CI e collaudare ActivityKit su iPhone. Gate125ms e
+sottotitoli originaliCB005/010 restano aperti, nessuna IPA32 dichiarata.
+
+---
+
 # Checkpoint open source — build31, 2026-11-04
 
 Sorgente corrente5263a3be616e4a92c106d9206db834ab628a682b; precedente

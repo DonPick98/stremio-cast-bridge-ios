@@ -14,6 +14,8 @@ struct ContentView: View {
     @State private var showOnlineSubtitles = false
     @State private var diagnosticsCopied = false
     @State private var showPreferences=false
+    @AppStorage("cast.controls.seekStep") private var storedSeekStep=30.0
+    private var configuredSeekStep:Double {PlaybackPreferences.seekSteps.contains(storedSeekStep) ? storedSeekStep:30}
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -148,12 +150,12 @@ struct ContentView: View {
                 HStack { Text(playbackTime(cast.position)); Spacer(); Text(playbackTime(cast.duration)) }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             HStack(spacing:36) {
-                Button { cast.seek(to:cast.position-30) } label: { Image(systemName:"gobackward.30").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Indietro di 30 secondi")
+                Button { cast.seek(to:cast.position-configuredSeekStep) } label: { VStack(spacing:2){Image(systemName:"gobackward").font(.system(size:24));Text("\(Int(configuredSeekStep))s").font(.caption2)}.frame(width:48,height:48) }.accessibilityLabel("Indietro di \(Int(configuredSeekStep)) secondi")
                 Button { cast.togglePlayback() } label: {
                     Image(systemName:cast.playing ? "pause.fill" : "play.fill").font(.system(size:24,weight:.semibold)).foregroundStyle(CastPalette.background)
                         .frame(width:70,height:70).background(Color.white,in:Circle())
                 }.accessibilityLabel(cast.playing ? "Pausa" : "Riprendi")
-                Button { cast.seek(to:cast.position+30) } label: { Image(systemName:"goforward.30").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Avanti di 30 secondi")
+                Button { cast.seek(to:cast.position+configuredSeekStep) } label: { VStack(spacing:2){Image(systemName:"goforward").font(.system(size:24));Text("\(Int(configuredSeekStep))s").font(.caption2)}.frame(width:48,height:48) }.accessibilityLabel("Avanti di \(Int(configuredSeekStep)) secondi")
             }.foregroundStyle(.white).buttonStyle(.plain)
             HStack(spacing:12) {
                 Image(systemName:"speaker.fill").font(.caption2).foregroundStyle(.secondary)
@@ -459,6 +461,8 @@ private struct AppPreferencesView:View {
     @EnvironmentObject private var cast:CastController
     @State private var showAppearance=false
     @State private var confirmReset=false
+    @State private var confirmControlReset=false
+    @State private var confirmCacheClear=false
     @Environment(\.dismiss) private var dismiss
     @AppStorage("cast.series.autoplay") private var autoplay=true
     @AppStorage("cast.series.matchSource") private var matchSource=true
@@ -466,6 +470,8 @@ private struct AppPreferencesView:View {
     @AppStorage("cast.series.webFallback") private var webFallback=false
     @AppStorage("cast.preferred.audio") private var audio="auto"
     @AppStorage("cast.preferred.subtitle") private var subtitle="auto"
+    @AppStorage("cast.controls.seekStep") private var seekStep=30.0
+    @AppStorage("cast.activity.enabled") private var liveActivity=true
     var body:some View {
         NavigationStack {
             Form {
@@ -482,15 +488,41 @@ private struct AppPreferencesView:View {
                     Picker("Sottotitoli preferiti",selection:$subtitle) {languages(disabled:true)}
                 } header:{Text("Lingue")} footer:{Text("Le preferenze si applicano alle prossime selezioni. Puoi cambiare traccia per il video corrente dal player.")}
 
+                Section("Controlli") {
+                    Picker("Salto avanti e indietro",selection:$seekStep) {
+                        ForEach(PlaybackPreferences.seekSteps,id:\.self){value in Text("\(Int(value)) secondi").tag(value)}
+                    }
+                    Toggle("Attività in tempo reale",isOn:$liveActivity)
+                    if liveActivity && !cast.liveActivitiesAllowed {
+                        Text("Le attività in tempo reale sono disattivate nelle impostazioni di iOS.").font(.footnote).foregroundStyle(.secondary)
+                        Button("Apri impostazioni iOS"){UIApplication.shared.open(URL(string:UIApplication.openSettingsURLString)!)}
+                    }
+                    Text("Mostra lo stato del video nella schermata di blocco e nella Dynamic Island.").font(.footnote).foregroundStyle(.secondary)
+                    Button("Ripristina controlli") {confirmControlReset=true}
+                }
                 Section("Sottotitoli") {
                     Button { showAppearance=true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
                     Text("La sincronizzazione si regola per il video corrente dal menu Sottotitoli.").font(.footnote).foregroundStyle(.secondary)
                 }
+                Section("Memoria locale") {
+                    LabeledContent("Cache sottotitoli",value:ByteCountFormatter.string(fromByteCount:Int64(cast.captionCacheBytes),countStyle:.file))
+                    Button("Svuota cache sottotitoli",role:.destructive){confirmCacheClear=true}
+                    if let notice=cast.captionCacheMessage{Text(notice).font(.footnote).foregroundStyle(.secondary)}
+                }
                 Section {
                     Button("Ripristina preferenze di serie e lingue",role:.destructive) { confirmReset=true }
-                } footer: { Text("Ripristina i valori iniziali di questa schermata. Configurazioni delle sorgenti, aspetto dei sottotitoli e progressi di visione restano salvati. Le nuove preferenze si applicano alle prossime selezioni.") }
+                } footer: { Text("Ripristina solo serie e lingue. Configurazioni delle sorgenti, aspetto dei sottotitoli e progressi di visione restano salvati. Le nuove preferenze si applicano alle prossime selezioni.") }
             }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
         }
+        .onAppear{cast.refreshCaptionCacheInfo()}
+        .confirmationDialog("Ripristinare i controlli?",isPresented:$confirmControlReset,titleVisibility:.visible){
+            Button("Ripristina"){PlaybackPreferences.resetControls()}
+            Button("Annulla",role:.cancel){}
+        }
+        .confirmationDialog("Svuotare la cache sottotitoli?",isPresented:$confirmCacheClear,titleVisibility:.visible){
+            Button("Svuota cache",role:.destructive){cast.clearCaptionCache()}
+            Button("Annulla",role:.cancel){}
+        } message:{Text("Le prossime tracce verranno preparate di nuovo. Il video e i sottotitoli già attivi continuano.")}
         .sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
         .confirmationDialog("Ripristinare serie e lingue?",isPresented:$confirmReset,titleVisibility:.visible) {
             Button("Ripristina preferenze",role:.destructive) { PlaybackPreferences.resetAppSettings() }

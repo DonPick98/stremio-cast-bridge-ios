@@ -52,10 +52,11 @@ enum CastWire {
         guard p.count == 4, p.allSatisfy({(0...255).contains($0)}) else { return false }
         return p[0] == 10 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16...31).contains(p[1]))
     }
-    static func seekTarget(_ command: String, current: Double, duration: Double) -> Double? {
+    static func seekTarget(_ command: String, current: Double, duration: Double,step:Double = 30) -> Double? {
+        guard step.isFinite,step>0,step<=120 else{return nil}
         let value: Double
-        if command == "back" { value = current-30 }
-        else if command == "forward" { value = current+30 }
+        if command == "back" { value = current-step }
+        else if command == "forward" { value = current+step }
         else if command.hasPrefix("seek:"), let parsed = Double(command.dropFirst(5)) { value = parsed }
         else { return nil }
         guard value.isFinite, current.isFinite else { return nil }
