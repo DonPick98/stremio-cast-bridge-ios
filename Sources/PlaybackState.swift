@@ -52,6 +52,11 @@ struct PlaybackRecoveryState {
     private(set) var pending = false
     private(set) var attempts = 0
     let limit = 2
+    func retrySameProducer(mode:String,code:Int64?)->Bool {
+        // AVERROR_EXTERNAL identifies a backend failure, not a receiver codec
+        // rejection. Allow one fresh H264 producer before changing formats.
+        attempts==0 && !pending && mode=="ffmpegH264" && code == -542398533
+    }
     mutating func request() -> Bool {
         guard attempts < limit else { return false }
         pending = true; return true

@@ -38,12 +38,18 @@ import Foundation
         // The reported outage: failure while disconnected, repeated failure
         // callbacks, then reconnect. Only the real restart consumes a retry.
         var recovery=PlaybackRecoveryState()
+        precondition(recovery.retrySameProducer(mode:"ffmpegH264",code:-542398533))
+        precondition(!recovery.retrySameProducer(mode:"softwareVP8",code:-542398533))
+        precondition(!recovery.retrySameProducer(mode:"ffmpegH264",code:-32))
+        precondition(!recovery.retrySameProducer(mode:"ffmpegH264",code:nil))
         precondition(recovery.request())
+        precondition(!recovery.retrySameProducer(mode:"ffmpegH264",code:-542398533))
         precondition(!recovery.begin(connected:false,blocked:false))
         precondition(recovery.request() && recovery.attempts == 0)
         precondition(!recovery.begin(connected:true,blocked:true))
         precondition(recovery.begin(connected:true,blocked:false))
         precondition(!recovery.pending && recovery.attempts == 1)
+        precondition(!recovery.retrySameProducer(mode:"ffmpegH264",code:-542398533),"Same producer retry must be bounded")
         precondition(!recovery.begin(connected:true,blocked:false))
         precondition(recovery.request() && recovery.begin(connected:true,blocked:false))
         precondition(!recovery.request(),"A persistent failure must not loop forever")

@@ -1,3 +1,26 @@
+# Interruzione background38 — build41 candidata, 2026-11-04
+
+Evidenza completa nel commentoissue1/6640545215 (UTC19:46–19:48). H264 termina
+122ms dopoappbackground conAVERROR_EXTERNAL -542398533; non è prova diJetsam,
+CPU insufficiente o errore sottotitoli(external,burn=false). Successivi VP8 prima
+unsupported, poi buffering/timeoutexhausted. Causa backend/headerVP8 non isolata.
+
+Patch41: una sola ripartenza dello stesso producerH264 perAVERROR_EXTERNAL prima
+dell'escalation codec, dentro il budgetesistente2; altri codici non equiparati.
+refreshConnection non chiama più load(resetta budget) dopo un recupero già iniziato;
+riusa recovery e conserva esaurimento. Vecchio buffer che avanza dopo producerfailed
+non azzera piùbudget. Test policy primo tentativo/codici/pendenza/limite aggiunti.
+
+Metriche: generazioneattiva legataall'engine, requestGeneration separata mentre si
+prepara un candidato; normalize/remux/encode distinguiti. Speed23x inVP8 era dello
+stadioFFmpeg normalizzatore, non delVP8VLC: non usarla come capacità delcodificatore.
+Nessuna sogliaheader allentata né rimossi controlli audio. Nessun test41 passato o
+nuovaIPA qui dichiarati. CB001/004/009/012/019 aperti, P1; verificare causaoriginaria
+su iPhone e unsupportedWebM, oltre ai nuovi gate della matrice. Non promettere
+continuità garantita della transcodifica hardware inbackground senza prova reale.
+
+---
+
 # Priorità sottotitoli — build40 candidata, 2026-11-04
 
 FT003/CB005: impostazioni Selezione automatica con Preferisci esterni, Preferisci

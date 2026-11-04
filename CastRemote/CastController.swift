@@ -269,6 +269,7 @@ import AVFAudio
     private var streamOffset: Double { nativeEngine?.offset ?? 0 }
     private var forceLocalPlayback = false
     private var localFallbackLevel = 0
+    private var nativeEngineGeneration:UUID?
     private var commandRequest: GCKRequest?
     private var commandContinuation: CheckedContinuation<Bool, Never>?
     private var commandTimeout: Task<Void, Never>?
@@ -349,7 +350,7 @@ import AVFAudio
             var format:[String:String]=["phase":"context","codec":video?.codec ?? "unknown",
                 "audio":audio?.codec ?? "unknown","channels":String(audio?.channels ?? 0),
                 "subtitle":subtitle?.codec ?? selectedSubtitle,"mode":nativeEngine.map{String(describing:$0.diagnosticMode)} ?? "direct",
-                "local":String(localProcessing),"generation":String(streamRequests.generation.uuidString.prefix(8)),
+                "local":String(localProcessing),"generation":String((nativeEngineGeneration ?? streamRequests.generation).uuidString.prefix(8)),"requestGeneration":String(streamRequests.generation.uuidString.prefix(8)),
                 "session":String(client?.mediaStatus?.mediaSessionID ?? 0),"previousSession":String(loadedMediaSessionID ?? 0)]
             if let video {
                 format["width"]=String(video.width);format["height"]=String(video.height)
@@ -362,7 +363,7 @@ import AVFAudio
         guard let engine=nativeEngine else { return }
         if var metrics=engine.productionMetrics() {
             metrics["mode"]=String(describing:engine.diagnosticMode)
-            metrics["generation"]=String(streamRequests.generation.uuidString.prefix(8))
+            metrics["generation"]=String((nativeEngineGeneration ?? streamRequests.generation).uuidString.prefix(8))
             metrics["paused"]=String(!playWhenReady)
             PlaybackDiagnostics.record(.producer,metrics)
         }
@@ -373,7 +374,7 @@ import AVFAudio
             if let old=self.transferCheckpoint,old.engine==identity {
                 let seconds=now.timeIntervalSince(old.time)
                 if seconds>0 {
-                    PlaybackDiagnostics.record(.producer,["phase":"transfer","bytes":String(metrics.bytes),"seconds":PlaybackDiagnostics.number(seconds),"rate":PlaybackDiagnostics.number(Double(max(0,metrics.bytes-old.metrics.bytes))*8/seconds),"upstreamWait":PlaybackDiagnostics.number(max(0,metrics.upstreamWait-old.metrics.upstreamWait)),"downstreamWait":PlaybackDiagnostics.number(max(0,metrics.downstreamWait-old.metrics.downstreamWait)),"paused":String(!self.playWhenReady),"mode":String(describing:engine.diagnosticMode),"generation":String(self.streamRequests.generation.uuidString.prefix(8))])
+                    PlaybackDiagnostics.record(.producer,["phase":"transfer","bytes":String(metrics.bytes),"seconds":PlaybackDiagnostics.number(seconds),"rate":PlaybackDiagnostics.number(Double(max(0,metrics.bytes-old.metrics.bytes))*8/seconds),"upstreamWait":PlaybackDiagnostics.number(max(0,metrics.upstreamWait-old.metrics.upstreamWait)),"downstreamWait":PlaybackDiagnostics.number(max(0,metrics.downstreamWait-old.metrics.downstreamWait)),"paused":String(!self.playWhenReady),"mode":String(describing:engine.diagnosticMode),"generation":String((self.nativeEngineGeneration ?? self.streamRequests.generation).uuidString.prefix(8))])
                 }
             }
             self.transferCheckpoint=(identity,now,metrics)
@@ -394,7 +395,14 @@ import AVFAudio
         if let device = castSession?.device { lastDevice = device }
         updateStatus()
         if resumePendingRecovery() { return }
-        if connected && wantsPlayback && prepared != nil && !busy && !loading && !hasLoaded && !loadPending { load() }
+        if connected && wantsPlayback && prepared != nil && !busy && !loading && !hasLoaded && !loadPending {
+            if recovery.attempts>0 {
+                if !recoverPlayback(allowVideoConversion:false) {
+                    message="Il recupero automatico non è riuscito. Puoi riprovare dal punto conservato."
+                    playbackIssue=message
+                }
+            } else {load()}
+        }
     }
     func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager: GCKSessionManager, didResumeSession session: GCKSession) { refreshConnection() }
@@ -498,7 +506,7 @@ import AVFAudio
                 PlaybackDiagnostics.record(.recovery,["phase":"clock_stalled","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
                 if recoverPlayback(allowVideoConversion:false) { return }
             }
-            if progress.stable { recovery.reset() }
+            if progress.stable && (!localProcessing || nativeEngine?.failed != true) { recovery.reset() }
             if ready && confirmed && currentLoad {
                 if loadPending || !hasLoaded { playbackIssue = nil }
                 hasLoaded = true; wantsPlayback = true
@@ -946,7 +954,7 @@ import AVFAudio
                             return
                         }
                         self.nativeEngine?.stop()
-                        self.nativeEngine = engine; self.nativeSelection = selection
+                        self.nativeEngine = engine;self.nativeEngineGeneration=streamToken; self.nativeSelection = selection
                         if burnedSubtitle != "none" { engine.setBurnedSubtitleDelay(self.subtitleDelay) }
                         PlaybackDiagnostics.record(.prepare,["phase":"ready","mode":String(describing:mode)])
                         engine.refreshBackground()
@@ -962,7 +970,9 @@ import AVFAudio
                         engine.onFailure = { [weak self, weak engine] allowVideoConversion in
                             guard let self, let engine, self.nativeEngine === engine, self.sourceRequests.accepts(sourceToken), self.streamRequests.accepts(streamToken), !self.checkingStream else { return }
                             self.loadPending=false;self.loading=false;self.loadTimeout?.cancel();self.loadRequest=nil
-                            if !self.recoverPlayback(allowVideoConversion:allowVideoConversion) { self.playbackIssue = "Il motore integrato ha interrotto la conversione. La posizione è conservata." }
+                            let sameProducer=self.recovery.retrySameProducer(mode:String(describing:engine.diagnosticMode),code:engine.backendExitCode)
+                            if sameProducer{PlaybackDiagnostics.record(.recovery,["phase":"retry_same_producer","mode":String(describing:engine.diagnosticMode),"attempt":String(self.recovery.attempts)])}
+                            if !self.recoverPlayback(allowVideoConversion:allowVideoConversion && !sameProducer) { self.playbackIssue = "Il motore integrato ha interrotto la conversione. La posizione è conservata." }
                         }
                         self.lastGoodPosition = self.timeline.queuedTarget ?? max(0,start); self.position = self.lastGoodPosition
                         self.checkingStream = false; self.loading = false
@@ -1617,7 +1627,7 @@ import AVFAudio
         resetPlayback(); sourceResume = nil; hasLoaded = false; playing = false; message = "Riproduzione interrotta."
     }
     private func stopLocalProcessing() {
-        nativeEngine?.stop(); nativeEngine = nil; nativeSelection = nil
+        nativeEngine?.stop(); nativeEngine = nil; nativeEngineGeneration=nil; nativeSelection = nil
         localProcessing = false; CastActivityCommands.usesLocalStream = false
     }
     private func stopCaptionDelivery(){

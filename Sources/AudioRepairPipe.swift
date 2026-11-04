@@ -11,6 +11,7 @@ import Darwin
         Darwin.signal(SIGPIPE,SIG_IGN)
     }()
     static func required(_ codec:String) -> Bool { ["trhd","truehd","mlp"].contains(codec.lowercased()) }
+    private var diagnosticPhase="normalize"
     private var handle: UnsafeMutableRawPointer?
     // Read synchronously on MainActor, while this instance still owns session.
     // No raw backend output or media identifiers enter the diagnostic report.
@@ -28,7 +29,7 @@ import Darwin
         let duplicate=ffmpeg_kit_statistics_get_dup_frames(stats),dropped=ffmpeg_kit_statistics_get_drop_frames(stats)
         guard frames>=0,bytes>=0,duplicate>=0,dropped>=0,
               [fps,media,wall,speed].allSatisfy({$0.isFinite && $0>=0}) else{return nil}
-        return ["phase":"encode","frames":String(frames),"fps":PlaybackDiagnostics.number(fps),"bytes":String(bytes),
+        return ["phase":diagnosticPhase,"frames":String(frames),"fps":PlaybackDiagnostics.number(fps),"bytes":String(bytes),
                 "mediaSeconds":PlaybackDiagnostics.number(media),"wallSeconds":PlaybackDiagnostics.number(wall),
                 "speed":PlaybackDiagnostics.number(speed),"duplicate":String(duplicate),"dropped":String(dropped)]
     }
@@ -53,6 +54,7 @@ import Darwin
 
     func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0) async throws -> URL {
         _ = Self.initialized
+        diagnosticPhase=outputFD==nil ? "normalize":transcodeVideo==nil ? "remux":"encode"
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
               audioIndex >= 0, position.isFinite, position >= 0 else { throw EmbeddedMediaError.encoder }
         let port = try EmbeddedMediaEngine.freeLoopbackPort()

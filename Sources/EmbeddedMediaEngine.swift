@@ -59,6 +59,7 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var failed = false
     private(set) var usesBitmapOverlay = false
     private(set) var diagnosticMode = VideoMode.copy
+    var backendExitCode:Int64? {audioRepair?.exitCode}
     private var startedStream = false
     private var directRemux = false
     private var producerMonitor: Task<Void,Never>?
