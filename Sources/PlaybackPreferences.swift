@@ -28,13 +28,13 @@ enum PlaybackPreferences {
         if let saved, !["auto","none"].contains(saved) {return language(saved)}
         return language(handoff=="off" ? "en":handoff ?? "en")
     }
-    static func subtitle(_ tracks:[RDTrack],external:Bool,handoff:String?,defaults:UserDefaults = .standard) -> String {
+    static func subtitle(_ tracks:[RDTrack],external:Bool,handoff:String?,externalLanguage:String? = nil,defaults:UserDefaults = .standard) -> String {
         let raw = defaults.string(forKey:"cast.preferred.subtitle")
         let saved = raw == "auto" ? nil : raw
         if saved == "none" || (saved == nil && handoff == "off") { return "none" }
         let wanted = language(saved ?? handoff ?? "en")
         if let track = tracks.first(where:{language($0.language) == wanted}) { return track.key }
-        return external && wanted == language(handoff ?? "en") ? "external" : "none"
+        return external && wanted == language(externalLanguage ?? handoff ?? "en") ? "external" : "none"
     }
 }
 

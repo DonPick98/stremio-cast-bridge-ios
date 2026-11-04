@@ -57,9 +57,9 @@ enum WebVTTTimeline {
         let n = Int((seconds*1000).rounded())
         return String(format:"%02d:%02d:%02d.%03d",n/3_600_000,(n/60_000)%60,(n/1000)%60,n%1000)
     }
-    static func fetch(_ url:URL) async throws -> String {
+    static func fetch(_ url:URL,configuration:URLSessionConfiguration = .ephemeral) async throws -> String {
         guard url.scheme == "https", url.user == nil, url.password == nil else { throw StreamHeaderError.invalid }
-        let config = URLSessionConfiguration.ephemeral
+        let config = configuration
         config.timeoutIntervalForRequest = 8; config.timeoutIntervalForResource = 10
         config.httpCookieStorage = nil; config.urlCredentialStorage = nil; config.urlCache = nil
         let session = URLSession(configuration:config,delegate:CaptionRedirectGuard(),delegateQueue:nil)

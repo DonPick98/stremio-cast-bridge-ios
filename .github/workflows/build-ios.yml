@@ -37,6 +37,14 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/SeriesNavigationTests.swift -o "$RUNNER_TEMP/series-tests"
           "$RUNNER_TEMP/series-tests"
+      - name: Test complete subtitles, transport and language selection
+        run: |
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"
+          "$RUNNER_TEMP/subtitle-catalog-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/SubtitleFetchTests.swift -o "$RUNNER_TEMP/subtitle-fetch-tests"
+          "$RUNNER_TEMP/subtitle-fetch-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/playback-preferences-tests"
+          "$RUNNER_TEMP/playback-preferences-tests"
       - name: Install Cast and embedded media engines
         env:
           LANG: en_US.UTF-8
@@ -46,14 +54,10 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/PlaybackDiagnostics.swift Tests/PlaybackDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostics-tests"
           "$RUNNER_TEMP/diagnostics-tests"
-          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"
-          "$RUNNER_TEMP/subtitle-catalog-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-regressions"
           "$RUNNER_TEMP/playback-regressions"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
-          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/playback-preferences-tests"
-          "$RUNNER_TEMP/playback-preferences-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/SubtitleAppearance.swift CastRemote/BridgeClient.swift Tests/HandoffTests.swift -o "$RUNNER_TEMP/handoff-tests"
           "$RUNNER_TEMP/handoff-tests"
           swiftc -parse-as-library Sources/CastWire.swift Sources/SubtitleAppearance.swift Tests/ControlPreferencesTests.swift -o "$RUNNER_TEMP/control-tests"

@@ -1,3 +1,28 @@
+# Sottotitoli — build30 in verifica, 2026-11-04
+
+Richiesta utente corrente: lavorare sui sottotitoli, prima di proseguire gli altri task.
+Baseline33acb7f/build29, stesso branch/PR2. Seek CB009/021125ms resta aperto;
+questa patch non lo modifica e non elimina il gate nativo.
+
+CB022: normalizzazione SRT senza righe vuote fra battute; documenti completi
+WebVTT vuoti, con intestazione falsa o timing mescolati nel payload rifiutati
+prima di sostituire la selezione. Le finestre incrementali senza battute restano
+ammesse in CaptionDocument: non confondere silenzio temporaneo e file completo vuoto.
+Stessa validazione per estrazioni integrate complete e download esterni.
+CB023: scelta automatica esterni da lingua salvata con alias/regioni; nessun
+ripiego silenzioso su lingua diversa. URL handoff senza lingua mantiene default en.
+Scelta manuale resta esplicita; off rispettato. Diagnostica mantiene provenienza
+Stremio/OpenSubtitles anche per formato/limite e retry riuscito pulisce cache negativa.
+
+Test nuovi formati/lingue e URLProtocol: UTF16, SRT senza separatori, HTTP404,
+HTML/WebVTT vuoti/malformati, limite1MiB, HTTPS, annullamento. Step anticipato
+prima dei pod, senza ripetere gli stessi test. Build app/estensione0.8.1(30).
+Swift/Xcode non disponibili localmente; attendere CI prima di dire test passati.
+Il codec del primo vlc_3 e il file esterno originale restano non identificati;
+non dichiarare risolta la segnalazione storica da queste patch.
+
+---
+
 # Esito priorità 1 — build29 sperimentale, 2026-11-04
 
 Sorgente: 2f025546bd48afd46fd6e1ef9ec91f599af67e44, stesso branch/PR #2 draft.

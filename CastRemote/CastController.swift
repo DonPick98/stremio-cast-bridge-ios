@@ -672,7 +672,7 @@ import AVFAudio
                 for track in result.subtitles { PlaybackDiagnostics.record(.metadata,["kind":"subtitle","subtitle":track.key,"codec":track.codec]) }
                 selectedQuality = result.availableQualities.contains(.high) ? .high : (result.availableQualities.first ?? .high)
                 compatibilityMode = false
-                selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage)
+                selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage,externalLanguage:defaultSubtitleLanguage)
                 restoreSubtitleDelay()
                 busy = false
                 if result.duration > 0 {
@@ -1060,7 +1060,7 @@ import AVFAudio
             return nil
         }
     }
-    var externalSubtitleLanguage:String { selectedOnlineSubtitle?.lang ?? handoff?.subtitleLanguage ?? "en" }
+    var externalSubtitleLanguage:String { selectedOnlineSubtitle?.lang ?? defaultSubtitleLanguage }
     var externalSubtitleLabel:String { SubtitleLanguage.name(externalSubtitleLanguage) }
     var embeddedSubtitleLabel:String { SubtitleLanguage.name(extractedCaptionLanguage) + " · dal file" }
     var hasExtractedCaption:Bool { embeddedSubtitleURL != nil || extractedCaptionText != nil }
@@ -1078,14 +1078,9 @@ import AVFAudio
     }
     var externalSubtitleURL: URL? {
         if let chosen = selectedOnlineSubtitle { return OnlineSubtitle.safeURL(chosen.url) }
-        guard handoff?.subtitleLanguage != "off" else { return nil }
-        let tracks = selectedSource?.subtitles ?? []
-        let languages = handoff?.subtitleLanguage == "ita" ? ["it", "ita", "italian"] : ["en", "eng", "english"]
-        for track in tracks where languages.contains((track.lang ?? "").lowercased()) {
-            if let url = URL(string:track.url), let safe = OnlineSubtitle.safeURL(url) { return safe }
-        }
-        if let url = handoff?.externalSubtitleURL, let safe = OnlineSubtitle.safeURL(url) { return safe }
-        return nil
+        guard PlaybackPreferences.subtitlesRequested(handoff:handoff?.subtitleLanguage) else { return nil }
+        return SubtitleCatalog.sourceURL(sourceSubtitleOptions,language:defaultSubtitleLanguage,
+            fallback:handoff?.externalSubtitleURL,fallbackLanguage:handoff?.subtitleLanguage)
     }
     var sourceSubtitleOptions:[OnlineSubtitle] {
         (selectedSource?.subtitles ?? []).enumerated().compactMap { index,item in
@@ -1149,7 +1144,7 @@ import AVFAudio
                 let text = try await WebVTTTimeline.fetch(url)
                 try validateSource(source); guard subtitleChoices.accepts(choice) else { throw CancellationError() }
                 if captionCache.count >= 8 { captionCache.removeAll() }
-                captionCache[url] = text; selectedOnlineSubtitle = subtitle; selectedSubtitle = "external"
+                captionFailures[url] = nil; captionCache[url] = text; selectedOnlineSubtitle = subtitle; selectedSubtitle = "external"
                 subtitlePlaybackWarning = nil
                 restoreSubtitleDelay()
                 PlaybackPreferences.remember(audio:nil,subtitle:subtitle.lang)
@@ -1161,8 +1156,8 @@ import AVFAudio
                 var fields=PlaybackDiagnostics.errorFields(error,phase:"subtitle_download")
                 fields["kind"]=subtitle.provider == "Stremio" ? "stremio":"opensubtitles"
                 if case SubtitleFetchError.http(let status)=error { fields["status"]=String(status) }
-                if case SubtitleFetchError.format=error { fields["kind"]="format" }
-                if case SubtitleFetchError.limit=error { fields["kind"]="limit" }
+                if case SubtitleFetchError.format=error { fields["result"]="format" }
+                if case SubtitleFetchError.limit=error { fields["result"]="limit" }
                 PlaybackDiagnostics.record(.error,fields)
             }
         }
