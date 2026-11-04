@@ -19,8 +19,10 @@ Verifiche44: nativeprobe aggiunge assertcategoria nonmixable/metadata/seek e
 ritorno mixable dopo clear conworker vivo. FastSDK typecheck classeproduzione
 contro vere APIUIKit/AVFAudio/MediaPlayer/ActivityKit (soloVLChelper stub non
 modificato), oltre a regressioni43. Non equivale alla visibilitàsuLockScreen.
-Build44 e collaudo fisico da acquisire. Non cancellare nativo43/41910000713 con
-pushmain prematuro: preparare branchtest, integrare dopo che termina43.
+Build44 e collaudo fisico da acquisire. Nativo43/41910000713 prosegue: workflow
+nativo ora cancel-in-progressfalse conserva la cattura in corso e accoda44.
+Policy/typecheckcompletoSDK iOS16.1 PASSATI41913225071; solo helperVLC invariato
+stub nelcheckrapido, nessuna visibilitàLockScreen dichiarata.
 
 ---
 

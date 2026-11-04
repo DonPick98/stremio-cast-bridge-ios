@@ -7,7 +7,8 @@ permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve captures already in progress; the latest pending source runs next.
+  cancel-in-progress: false
 jobs:
   probe:
     runs-on: macos-26
