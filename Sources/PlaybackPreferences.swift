@@ -1,7 +1,12 @@
 import Foundation
 
 enum PlaybackPreferences {
-    static let appSettingKeys = ["cast.series.autoplay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.preferred.audio","cast.preferred.subtitle"]
+    static let skipIntervals = [10,15,30,60]
+    static func skipInterval(defaults:UserDefaults = .standard) -> Int {
+        let value=defaults.integer(forKey:"cast.player.skipSeconds")
+        return skipIntervals.contains(value) ? value:30
+    }
+    static let appSettingKeys = ["cast.series.autoplay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.preferred.audio","cast.preferred.subtitle","cast.player.skipSeconds"]
     static func resetAppSettings(defaults:UserDefaults = .standard) {
         for key in appSettingKeys { defaults.removeObject(forKey:key) }
     }

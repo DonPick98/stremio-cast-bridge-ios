@@ -16,6 +16,15 @@ import Foundation
         precondition(CastWire.seekTarget("forward",current:90,duration:100) == 100)
         precondition(CastWire.seekTarget("seek:45.5",current:20,duration:100) == 45.5)
         precondition(CastWire.seekTarget("seek:nan",current:20,duration:100) == nil)
+        for interval in [10.0,15.0,30.0,60.0] {
+            let forward=CastWire.skipCommand(backward:false,interval:interval)!
+            let back=CastWire.skipCommand(backward:true,interval:interval)!
+            precondition(CastWire.seekTarget(forward,current:40,duration:100)==min(100,40+interval))
+            precondition(CastWire.seekTarget(back,current:40,duration:100)==max(0,40-interval))
+        }
+        for interval in [Double.nan,Double.infinity,-15,0,301] {precondition(CastWire.skipCommand(backward:false,interval:interval)==nil)}
+        for command in ["seekdelta:nan","seekdelta:inf","seekdelta:1000"] {precondition(CastWire.seekTarget(command,current:20,duration:100)==nil)}
+        precondition(CastWire.seekTarget("seekdelta:15",current:Double.infinity,duration:100)==nil)
         let suite = "castbridge.tests." + UUID().uuidString
         let defaults = UserDefaults(suiteName:suite)!
         defer { defaults.removePersistentDomain(forName:suite) }
@@ -32,4 +41,3 @@ import Foundation
         print("Control/preferences tests passed: Cast envelopes, LAN scope, seek bounds, persistence, size metadata")
     }
 }
-

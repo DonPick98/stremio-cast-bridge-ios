@@ -12,6 +12,15 @@ import Foundation
         precondition(PlaybackPreferences.appSettingKeys.allSatisfy { defaults.object(forKey:$0)==nil })
         precondition(defaults.string(forKey:"cast.personal.configuration")=="preserve")
         precondition(defaults.double(forKey:"cast.position.example")==321)
+        precondition(PlaybackPreferences.skipInterval(defaults:defaults)==30)
+        for value in PlaybackPreferences.skipIntervals {
+            defaults.set(value,forKey:"cast.player.skipSeconds")
+            precondition(PlaybackPreferences.skipInterval(defaults:UserDefaults(suiteName:suite)!)==value)
+        }
+        defaults.set(999,forKey:"cast.player.skipSeconds")
+        precondition(PlaybackPreferences.skipInterval(defaults:defaults)==30)
+        PlaybackPreferences.resetAppSettings(defaults:defaults)
+        precondition(PlaybackPreferences.skipInterval(defaults:defaults)==30)
         let tracks = [RDTrack(key:"a",language:"eng",label:"English",codec:"aac"),RDTrack(key:"b",language:"ita",label:"Italiano",codec:"ac3")]
         precondition(PlaybackPreferences.audio(tracks,fallback:"a",defaults:defaults) == "a")
         PlaybackPreferences.remember(audio:tracks[1],subtitle:"it",defaults:defaults)
@@ -47,5 +56,3 @@ import Foundation
         print("Playback preferences passed: language aliases, new track IDs, embedded captions first, external fallback, persistent off, clean titles")
     }
 }
-
-

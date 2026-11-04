@@ -120,10 +120,16 @@ import MobileVLCKit
         clear()
     }
     private func bind(_ command:MPRemoteCommand,_ action:String) {
-        let target = command.addTarget { [weak self] _ in
+        let target = command.addTarget { [weak self] event in
+            let requested:String
+            if action == "back" || action == "forward" {
+                guard let skip=event as? MPSkipIntervalCommandEvent,
+                      let value=CastWire.skipCommand(backward:action == "back",interval:skip.interval) else{return .commandFailed}
+                requested=value
+            } else {requested=action}
             Task { @MainActor [weak self] in
                 guard let self, self.active else { return }
-                _ = await self.handler?(action)
+                _ = await self.handler?(requested)
             }
             return .success
         }
@@ -131,6 +137,9 @@ import MobileVLCKit
     }
     func update(title:String,device:String,position:Double,duration:Double,playing:Bool,loading:Bool,local:Bool) {
         active = true; self.local = local
+        let skip=NSNumber(value:PlaybackPreferences.skipInterval())
+        MPRemoteCommandCenter.shared().skipBackwardCommand.preferredIntervals=[skip]
+        MPRemoteCommandCenter.shared().skipForwardCommand.preferredIntervals=[skip]
         var info: [String:Any] = [
             MPMediaItemPropertyTitle:title,
             MPMediaItemPropertyArtist:device,
@@ -159,4 +168,3 @@ import MobileVLCKit
         CastAudioSession.shared.acquire("now_playing")
     }
 }
-
