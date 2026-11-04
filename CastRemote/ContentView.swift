@@ -456,6 +456,9 @@ private func playbackTime(_ seconds: Double) -> String {
 
 
 private struct AppPreferencesView:View {
+    @EnvironmentObject private var cast:CastController
+    @State private var showAppearance=false
+    @State private var confirmReset=false
     @Environment(\.dismiss) private var dismiss
     @AppStorage("cast.series.autoplay") private var autoplay=true
     @AppStorage("cast.series.matchSource") private var matchSource=true
@@ -478,8 +481,20 @@ private struct AppPreferencesView:View {
                     Picker("Audio preferito",selection:$audio) {languages(disabled:false)}
                     Picker("Sottotitoli preferiti",selection:$subtitle) {languages(disabled:true)}
                 } header:{Text("Lingue")} footer:{Text("Le preferenze si applicano alle prossime selezioni. Puoi cambiare traccia per il video corrente dal player.")}
-                Section { Text("Le scelte sono salvate su questo iPhone. Aspetto e sincronizzazione dei sottotitoli restano disponibili nel menu Audio e sottotitoli.").font(.footnote) }
+
+                Section("Sottotitoli") {
+                    Button { showAppearance=true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
+                    Text("La sincronizzazione si regola per il video corrente dal menu Sottotitoli.").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
+                    Button("Ripristina preferenze di serie e lingue",role:.destructive) { confirmReset=true }
+                } footer: { Text("Ripristina i valori iniziali di questa schermata. Configurazioni delle sorgenti, aspetto dei sottotitoli e progressi di visione restano salvati. Le nuove preferenze si applicano alle prossime selezioni.") }
             }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
+        }
+        .sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
+        .confirmationDialog("Ripristinare serie e lingue?",isPresented:$confirmReset,titleVisibility:.visible) {
+            Button("Ripristina preferenze",role:.destructive) { PlaybackPreferences.resetAppSettings() }
+            Button("Annulla",role:.cancel) {}
         }
     }
     @ViewBuilder private func languages(disabled:Bool)->some View {

@@ -5,6 +5,13 @@ import Foundation
         let suite = "cast.preferences." + UUID().uuidString
         let defaults = UserDefaults(suiteName:suite)!
         defer { defaults.removePersistentDomain(forName:suite) }
+        defaults.set("preserve",forKey:"cast.personal.configuration")
+        defaults.set(321.0,forKey:"cast.position.example")
+        for key in PlaybackPreferences.appSettingKeys { defaults.set("changed",forKey:key) }
+        PlaybackPreferences.resetAppSettings(defaults:defaults)
+        precondition(PlaybackPreferences.appSettingKeys.allSatisfy { defaults.object(forKey:$0)==nil })
+        precondition(defaults.string(forKey:"cast.personal.configuration")=="preserve")
+        precondition(defaults.double(forKey:"cast.position.example")==321)
         let tracks = [RDTrack(key:"a",language:"eng",label:"English",codec:"aac"),RDTrack(key:"b",language:"ita",label:"Italiano",codec:"ac3")]
         precondition(PlaybackPreferences.audio(tracks,fallback:"a",defaults:defaults) == "a")
         PlaybackPreferences.remember(audio:tracks[1],subtitle:"it",defaults:defaults)

@@ -1,6 +1,10 @@
 import Foundation
 
 enum PlaybackPreferences {
+    static let appSettingKeys = ["cast.series.autoplay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.preferred.audio","cast.preferred.subtitle"]
+    static func resetAppSettings(defaults:UserDefaults = .standard) {
+        for key in appSettingKeys { defaults.removeObject(forKey:key) }
+    }
     static func language(_ value:String) -> String {
         let code = value.lowercased().split(separator:"-").first.map(String.init) ?? value.lowercased()
         return ["eng":"en","ita":"it","fra":"fr","fre":"fr","deu":"de","ger":"de","spa":"es","jpn":"ja","kor":"ko","por":"pt","zho":"zh","chi":"zh","rus":"ru","ukr":"uk","ara":"ar","heb":"he","hin":"hi","pol":"pl","nld":"nl","dut":"nl","tur":"tr" ][code] ?? code
