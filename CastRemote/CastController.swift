@@ -115,10 +115,12 @@ import AVFAudio
         work=Task { [weak self] in
             let owner="episode-prepare-"+UUID().uuidString
             CastAudioSession.shared.acquire(owner)
-            let background=UIApplication.shared.beginBackgroundTask(withName:"Choose next episode")
+            let background=CastBackgroundLease(name:"Choose next episode") { [weak self] in
+                guard self?.episodeRequest==token else{return};self?.work?.cancel()
+            }
             defer {
                 CastAudioSession.shared.release(owner)
-                if background != .invalid {UIApplication.shared.endBackgroundTask(background)}
+                background.end()
             }
             do {
                 let found=try await BridgeClient.shared.sources(next,manifest:config.manifest)
@@ -290,8 +292,10 @@ import AVFAudio
     var displayTitle: String { MediaDisplayTitle.clean(selectedSource?.filename ?? selectedSource?.descriptionText.components(separatedBy:.newlines).first ?? "Video da Stremio") }
     var deviceName: String { castSession?.device.friendlyName ?? lastDevice?.friendlyName ?? "Chromecast" }
 
+    private let backgroundProcessing=CastBackgroundProcessing()
     override init() {
         super.init()
+        backgroundProcessing.register()
         independentCaptions.onStatus={ [weak self] busy,issue in
             self?.subtitleDownloadBusy=busy
             self?.subtitleIssue=issue
@@ -438,6 +442,7 @@ import AVFAudio
         }
         reconnectTask?.cancel(); reconnectTask = nil
         if resumePendingRecovery() { return }
+        backgroundProcessing.update(position:lastConfirmedPosition)
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         deviceMuted = session.currentDeviceMuted
         if let status = client.mediaStatus {
@@ -573,6 +578,7 @@ import AVFAudio
         guard wantsPlayback || hasLoaded else{return}
         PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
         syncStremioProgress(completed:true,force:true)
+        backgroundProcessing.finish(success:true)
         let continueSeries=(UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true) && (adjacentEpisode(1)?.aired()==true)
         stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished")
         if !continueSeries{liveActivity.end()}
@@ -716,10 +722,12 @@ import AVFAudio
         let owner="source-prepare-"+UUID().uuidString
         CastAudioSession.shared.acquire(owner)
         work = Task {
-            let background=UIApplication.shared.beginBackgroundTask(withName:"Prepare episode source")
+            let background=CastBackgroundLease(name:"Prepare episode source") { [weak self] in
+                guard self?.sourceRequests.accepts(sourceToken)==true else{return};self?.work?.cancel()
+            }
             defer {
                 CastAudioSession.shared.release(owner)
-                if background != .invalid {UIApplication.shared.endBackgroundTask(background)}
+                background.end()
             }
             do {
                 guard let key = configuration?.realDebridKey, !key.isEmpty else { throw BridgeError.cannotResolve }
@@ -887,6 +895,9 @@ import AVFAudio
         }
         guard let host = castSession?.device.ipAddress, CastWire.localIPv4(host) else { playbackIssue = EmbeddedMediaError.address.localizedDescription; return }
         let start = requested ?? timeline.target ?? lastGoodPosition
+        backgroundProcessing.begin(duration:prepared.duration,position:start) { [weak self] in
+            self?.backgroundProcessingExpired()
+        }
         let sourceToken = sourceRequests.generation
         let previousRequests=streamRequests,previousTimeline=timeline
         let previousLoaded=hasLoaded && ownsCurrentMedia
@@ -907,8 +918,10 @@ import AVFAudio
         message = "Preparo il flusso sull’iPhone…"
         updateActivity(status:"Caricamento")
         streamCheckTask = Task { [weak self] in
-            let background = UIApplication.shared.beginBackgroundTask(withName:"Prepare Cast stream")
-            defer { if background != .invalid { UIApplication.shared.endBackgroundTask(background) } }
+            let background=CastBackgroundLease(name:"Prepare Cast stream") { [weak self] in
+                guard self?.streamRequests.accepts(streamToken)==true else{return};self?.streamCheckTask?.cancel()
+            }
+            defer {background.end()}
             do {
                 guard let self else { return }
                 var captions: [Int:String] = [:]
@@ -1010,6 +1023,7 @@ import AVFAudio
                 self.timeline.cancelActive();self.loadedStreamGeneration=nil;self.progress.reset()
                 self.hasLoaded = false
                 if self.advanceAutoplaySource(){return}
+                self.backgroundProcessing.finish()
                 self.processingDetail = "Flusso non disponibile"
                 self.playbackIssue = (error as? EmbeddedMediaError)?.localizedDescription ?? "Il motore integrato non ha preparato questa sorgente."
                 self.message = "Preparazione del flusso non riuscita."
@@ -1626,7 +1640,22 @@ import AVFAudio
         if ownsCurrentMedia { client?.stop() }
         resetPlayback(); sourceResume = nil; hasLoaded = false; playing = false; message = "Riproduzione interrotta."
     }
+    private func backgroundProcessingExpired() {
+        // User cancellation or system expiration must not spawn another job.
+        savePlaybackPosition(phase:"background_expired")
+        wantsPlayback=false;reconnectTask?.cancel();reconnectTask=nil
+        streamCheckTask?.cancel();streamCheckTask=nil;checkingStream=false
+        seekDispatchTask?.cancel();seekDispatchTask=nil
+        loadTimeout?.cancel();loadPending=false;loading=false;loadRequest=nil
+        if ownsCurrentMedia {_ = client?.pause()}
+        stopCaptionDelivery();stopLocalProcessing()
+        hasLoaded=false;playing=false;timeline.cancelActive()
+        lockScreen.clear(reason:"background_expired");liveActivity.end()
+        playbackIssue="La trasmissione in background è stata interrotta da iOS o dai controlli di sistema. La posizione è conservata."
+        message="Premi Riproduci per riprendere dal punto conservato."
+    }
     private func stopLocalProcessing() {
+        backgroundProcessing.finish()
         nativeEngine?.stop(); nativeEngine = nil; nativeEngineGeneration=nil; nativeSelection = nil
         localProcessing = false; CastActivityCommands.usesLocalStream = false
     }

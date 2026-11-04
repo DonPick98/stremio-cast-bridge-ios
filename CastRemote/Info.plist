@@ -24,7 +24,9 @@
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>
-	<array><string>audio</string></array>
+	<array><string>audio</string><string>processing</string></array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array><string>$(PRODUCT_BUNDLE_IDENTIFIER).*</string></array>
 	<key>NSAppTransportSecurity</key>
 	<dict><key>NSAllowsLocalNetworking</key><true/></dict>
 	<key>LSRequiresIPhoneOS</key>

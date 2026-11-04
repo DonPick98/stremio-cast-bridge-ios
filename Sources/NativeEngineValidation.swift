@@ -183,7 +183,8 @@ import ObjectiveC
     private static func backgroundProbe(documents:URL) async throws -> [String:Any] {
         let engine = EmbeddedMediaEngine(); defer { engine.stop() }
         let input = documents.appendingPathComponent("CodecSamples/background-probe.mkv")
-        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.copy,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
+        let format=try await EmbeddedMediaEngine.inspect(input).video
+        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.ffmpegH264,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),video:format,selfTest:true)
         let pauseTest = Task { @MainActor in
             try? await Task.sleep(nanoseconds:12_000_000_000)
             guard !Task.isCancelled else { return (false,false) }
@@ -232,7 +233,7 @@ import ObjectiveC
         engine.stop()
         for _ in 0..<50 { if engine.testingStopCompleted { break }; try await Task.sleep(nanoseconds:100_000_000) }
         let stopped = engine.testingStopCompleted
-        return ["passed":offscreen && helper && stopped && pauseResume && bytes > 4096 && seconds >= 60 && span >= 55 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":producerState,"pauseResume":pauseResume,"pauseAcknowledged":pauseResult.0,"resumeAcknowledged":pauseResult.1,"stoppedCleanly":stopped,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
+        return ["mode":"ffmpegH264","passed":offscreen && helper && stopped && pauseResume && bytes > 4096 && seconds >= 60 && span >= 55 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":producerState,"pauseResume":pauseResume,"pauseAcknowledged":pauseResult.0,"resumeAcknowledged":pauseResult.1,"stoppedCleanly":stopped,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
     }
 }
 

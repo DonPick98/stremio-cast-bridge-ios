@@ -141,10 +141,10 @@ private enum StremioAccountStore {
         let token=generation
         worker=Task { [weak self] in
             guard let self else{return}
-            let background=UIApplication.shared.beginBackgroundTask(withName:"Sync Stremio") {
+            let background=CastBackgroundLease(name:"Sync Stremio") {
                 Task { @MainActor [weak self] in if self?.generation==token{self?.worker?.cancel()} }
             }
-            defer{if background != .invalid{UIApplication.shared.endBackgroundTask(background)};if self.generation==token{self.worker=nil}}
+            defer{background.end();if self.generation==token{self.worker=nil}}
             while !Task.isCancelled,self.generation==token,self.enabled,let entry=self.outbox.entries.first(where:{!self.blocked.contains($0.id)}) {
                 guard let id=entry.event.itemID else{return}
                 do {

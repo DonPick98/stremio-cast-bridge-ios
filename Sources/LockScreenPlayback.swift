@@ -4,6 +4,110 @@ import MediaPlayer
 import UIKit
 import AVFAudio
 import MobileVLCKit
+import BackgroundTasks
+
+/// Finite UIKit assertion. Expiration always ends the assertion immediately;
+/// cancellation work may finish asynchronously without risking a watchdog kill.
+@MainActor final class CastBackgroundLease {
+    private var identifier:UIBackgroundTaskIdentifier = .invalid
+    private var expired=false
+    var valid:Bool {identifier != .invalid}
+    init(name:String,onExpiration:@escaping @MainActor ()->Void = {}) {
+        let id=UIApplication.shared.beginBackgroundTask(withName:name) { [weak self] in
+            guard let self else{return}
+            self.expired=true;self.end();onExpiration()
+        }
+        if expired {if id != .invalid {UIApplication.shared.endBackgroundTask(id)}}
+        else {identifier=id}
+    }
+    func end() {
+        let id=identifier;identifier = .invalid
+        if id != .invalid {UIApplication.shared.endBackgroundTask(id)}
+    }
+}
+
+/// A user-started, finite video delivery job. iOS 26+ owns the execution
+/// assertion; audio ownership alone is not a hardware-encoder assertion.
+/// No GPU entitlement is requested by the sideload build. VideoToolbox can
+/// still invalidate its own session and must retain the bounded recovery path.
+@MainActor final class CastBackgroundProcessing {
+    private var state=BackgroundPlaybackWork()
+    private var identifier:String?
+    private var baseIdentifier:String?
+    private var task:BGTask?
+    private var onExpiration:(()->Void)?
+    private var registered=false
+    private var available=false
+    private var attempted=false
+    func register() {
+        guard !registered else{return};registered=true
+        guard #available(iOS 26.0,*),let bundle=Bundle.main.bundleIdentifier else{return}
+        let id=bundle+".caststream"
+        let permitted=Bundle.main.object(forInfoDictionaryKey:"BGTaskSchedulerPermittedIdentifiers") as? [String] ?? []
+        guard permitted.contains(where:{$0==id || ($0.hasSuffix(".*") && id.hasPrefix(String($0.dropLast())))}) else {
+            PlaybackDiagnostics.record(.app,["phase":"continued_unavailable","code":"bundle_mismatch"]);return
+        }
+        baseIdentifier=id
+        available=true
+    }
+    func begin(duration:Double,position:Double,onExpiration:@escaping ()->Void) {
+        guard !state.active,!attempted else{return}
+        // No deferred queue or automatic resubmission after system cancellation.
+        guard #available(iOS 26.0,*),UIApplication.shared.applicationState == .active else{return}
+        register();attempted=true
+        guard available,let base=baseIdentifier,state.begin(duration:duration,position:position) else{return}
+        let id=base+"."+UUID().uuidString
+        identifier=id;self.onExpiration=onExpiration
+        let accepted=BGTaskScheduler.shared.register(forTaskWithIdentifier:id,using:.main) { [weak self] delivered in
+            Task { @MainActor [weak self] in
+                guard let self,let continued=delivered as? BGContinuedProcessingTask,
+                      self.identifier==id,self.state.active,self.task==nil else {delivered.setTaskCompleted(success:false);return}
+                self.task=continued
+                continued.expirationHandler={ [weak self,weak continued] in
+                    Task { @MainActor [weak self,weak continued] in
+                        guard let self,let continued,self.task === continued else{return}
+                        let handler=self.onExpiration
+                        self.finish(success:false)
+                        PlaybackDiagnostics.record(.app,["phase":"continued_expired"])
+                        handler?()
+                    }
+                }
+                self.applyProgress()
+                PlaybackDiagnostics.record(.app,["phase":"continued_active"])
+            }
+        }
+        guard accepted else {
+            state.finish();self.onExpiration=nil
+            PlaybackDiagnostics.record(.app,["phase":"continued_unavailable","code":"registration"]);return
+        }
+        let request=BGContinuedProcessingTaskRequest(identifier:id,title:"Trasmissione al Chromecast",subtitle:"Preparazione e invio del video")
+        request.strategy = .fail
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            PlaybackDiagnostics.record(.app,["phase":"continued_submitted"])
+        } catch {
+            state.finish();self.onExpiration=nil
+            let e=error as NSError
+            PlaybackDiagnostics.record(.app,["phase":"continued_unavailable","code":String(e.code)])
+        }
+    }
+    func update(position:Double?) {
+        state.update(position:position);applyProgress()
+    }
+    private func applyProgress() {
+        guard #available(iOS 26.0,*),let task=task as? BGContinuedProcessingTask else{return}
+        task.progress.totalUnitCount=state.total
+        task.progress.completedUnitCount=state.completed
+    }
+    func finish(success:Bool=false) {
+        let current=task;task=nil;onExpiration=nil;state.finish()
+        if let identifier {BGTaskScheduler.shared.cancel(taskRequestWithIdentifier:identifier)}
+        identifier=nil
+        current?.expirationHandler=nil;current?.setTaskCompleted(success:success)
+        // A new source or explicit retry may make a new foreground request.
+        attempted=false
+    }
+}
 
 /// One audio session/helper for all local producers and caption workers.
 /// Owners are reference-counted by identity so a replaced engine cannot stop
@@ -13,13 +117,20 @@ import MobileVLCKit
     private var owners = Set<String>()
     private var helper:VLCMediaPlayer?
     private var interrupted = false
+    private var transitionTask:CastBackgroundLease?
+    private var transitionExpired=false
     private var observers:[NSObjectProtocol] = []
     var isPlaying:Bool { helper?.isPlaying == true }
     private init() {
         let center = NotificationCenter.default
-        for name in [UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
+        for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
             observers.append(center.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
-                Task { @MainActor in self?.activate(cause:"lifecycle") }
+                MainActor.assumeIsolated {
+                    guard let self else{return}
+                    if name == UIApplication.didBecomeActiveNotification {self.transitionExpired=false}
+                    if !self.owners.isEmpty {self.beginTransition()}
+                    self.activate(cause:"lifecycle")
+                }
             })
         }
         observers.append(center.addObserver(forName:AVAudioSession.interruptionNotification,object:nil,queue:.main) { [weak self] note in
@@ -47,14 +158,27 @@ import MobileVLCKit
     }
     func acquire(_ owner:String) {
         let inserted = owners.insert(owner).inserted
-        if inserted || !isPlaying { activate(cause:"acquire") }
+        if inserted || !isPlaying { beginTransition();activate(cause:"acquire") }
     }
     func release(_ owner:String) {
         guard owners.remove(owner) != nil, owners.isEmpty else { return }
+        endTransition();transitionExpired=false
         helper?.stop(); helper = nil
         do { try AVAudioSession.sharedInstance().setActive(false,options:.notifyOthersOnDeactivation) }
         catch { PlaybackDiagnostics.record(.error,PlaybackDiagnostics.errorFields(error,phase:"audio_deactivate")) }
         PlaybackDiagnostics.record(.app,["phase":"audio_idle"])
+    }
+    private func beginTransition() {
+        guard transitionTask == nil,!transitionExpired else{return}
+        transitionTask=CastBackgroundLease(name:"Cast service transition") { [weak self] in
+            guard let self else{return}
+            self.transitionExpired=true;self.endTransition()
+            PlaybackDiagnostics.record(.app,["phase":"background_lease_expired"])
+        }
+        PlaybackDiagnostics.record(.app,["phase":"background_lease","result":transitionTask?.valid == true ? "acquired":"unavailable"])
+    }
+    private func endTransition() {
+        transitionTask?.end();transitionTask=nil
     }
     private func activate(cause:String) {
         guard !owners.isEmpty, !interrupted else { return }

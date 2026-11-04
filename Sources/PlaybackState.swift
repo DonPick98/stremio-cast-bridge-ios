@@ -153,3 +153,25 @@ struct LiveActivityUpdatePolicy {
         signature=key;at=now;self.position=position;self.playing=playing;return true
     }
 }
+
+/// Progress is confirmed delivery within a finite video, never an estimated
+/// clock or a seek target. Keep it monotonic across recovery and backward seeks.
+struct BackgroundPlaybackWork {
+    private(set) var active=false
+    private(set) var total:Int64=1
+    private(set) var completed:Int64=0
+    private var start:Double=0
+    mutating func begin(duration:Double,position:Double)->Bool {
+        guard !active,duration.isFinite,duration>0,duration<=7*24*3600,
+              position.isFinite,position>=0,position<duration else{return false}
+        start=position;total=max(1,Int64((duration-position)*1000));completed=0;active=true
+        return true
+    }
+    mutating func update(position:Double?) {
+        guard active,let position,position.isFinite,position>=start else{return}
+        // Completion is owned by the receiver's natural-end event, not a seek.
+        let value=min(Double(total-1),max(0,(position-start)*1000))
+        completed=max(completed,Int64(value))
+    }
+    mutating func finish(){active=false}
+}
