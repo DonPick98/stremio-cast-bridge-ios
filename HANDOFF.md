@@ -1,3 +1,35 @@
+# Checkpoint 2026-11-04 — 0.8.1 (24)
+
+Sorgente applicativa e test: 382fdd068666dc588b7021adaaa4dab6fb789179.
+Branch fix/playback-recovery-20261103; PR #2 ancora draft, non unita.
+
+- Build iPhone e regressioni RIUSCITE: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41799917398
+- IPA senza firma presente: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41799917398/artifacts/13306907789
+  Artefatto CastRemote-unsigned, 33.013.065 byte; digest archivio SHA256
+  248cc7dc0ccf1420261a3f7773044dc9df966975d6d0990b12b01c87696c8eaa.
+  In questa sessione verificati esistenza, log di packaging e sorgenti Xcode 0.8.1(24);
+  NON scaricato/ispezionato nuovamente il singolo IPA: ambiente locale indisponibile.
+- Test passati: episodi, preferenze, handoff/catalogo, resolver, sottotitoli,
+  stream locale, diagnostica, generazioni/seek e receiver; BUILD SUCCEEDED.
+- Audit catture iOS RIUSCITO: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/41799917508
+  40 output decodificati, sei controlli bitmap sottotitoli e dieci qualità passati.
+  h2642997: 119/120 frame, 29,9700345 fps, SSIM 0,999003, offset costante -1 frame.
+  I controlli negativi respingono sia frame rimossi sia ripetizioni con conteggio completo.
+  Riutilizza catture del run 41796455819; una guardia prova identico codice applicativo
+  a 40e401. NON equivale a una nuova prova del simulatore.
+- Nuovo run nativo 41799917489 ancora in corso al checkpoint (build simulatore).
+  Leggere esito e log prima di dichiararlo superato; i run precedenti falliti restano tali.
+
+CB-021 IMPLEMENTATO_DA_VERIFICARE su hardware. FT-001 implementato per IMDb/Cinemeta
+con collaudo fisico pendente; FT-002 e FT-003 parziali; FT-004 account/visti/progresso
+non implementato. Restano da verificare continuità reale in background/blocco schermo,
+Live Activity, sottotitoli esterni originali, micro-buffering e consumo batteria.
+Nessun nuovo codice applicativo in questo checkpoint. Prossima sessione: controllare
+41799917489, recuperare ambiente di sviluppo, poi riprendere issue #1 senza duplicare
+le liste. Nessuna modifica account o pubblicazione effettuata.
+
+---
+
 # 0.8.1 (24) — verifica cadenza frazionaria VLC
 
 Il run nativo build23 41793318870 ha superato report interno, 35 casi codec,
