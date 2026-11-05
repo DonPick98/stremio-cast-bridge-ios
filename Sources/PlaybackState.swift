@@ -175,3 +175,30 @@ struct BackgroundPlaybackWork {
     }
     mutating func finish(){active=false}
 }
+
+/// iOS extrapolates the media clock. Health polling remains independent; only
+/// redundant Now Playing IPC is coalesced between real transport changes.
+struct SystemMediaPublishPolicy {
+    private struct State:Equatable {
+        let title:String,device:String
+        let playing:Bool,loading:Bool,local:Bool,foreground:Bool
+        let duration:Double,step:Double
+    }
+    private var previous:State?
+    private var at:Date?
+    private var position:Double=0
+    mutating func reset(){previous=nil;at=nil}
+    mutating func accept(title:String,device:String,position:Double,duration:Double,playing:Bool,loading:Bool,local:Bool,step:Double,foreground:Bool,now:Date)->Bool {
+        guard position.isFinite,duration.isFinite,position>=0,duration>=0 else{return false}
+        let next=State(title:title,device:device,playing:playing,loading:loading,local:local,foreground:foreground,duration:duration,step:step)
+        let elapsed=at.map{now.timeIntervalSince($0)} ?? .infinity
+        let running=previous.map{$0.playing && !$0.loading} ?? false
+        var expected=self.position+(running && elapsed.isFinite ? max(0,elapsed):0)
+        if let previous,previous.duration>0 {expected=min(expected,previous.duration)}
+        let jump=abs(position-expected)>(running ? 1:0.05)
+        let changed=previous != next
+        let interval:Double=foreground ? 2:10
+        guard changed || elapsed<0 || jump || (playing && !loading && elapsed>=interval) else{return false}
+        previous=next;at=now;self.position=position;return true
+    }
+}

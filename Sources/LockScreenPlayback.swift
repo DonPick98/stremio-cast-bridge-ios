@@ -218,6 +218,7 @@ import BackgroundTasks
     private var targets: [(MPRemoteCommand,Any)] = []
     private var seekTask: Task<Void,Never>?
     private var artwork: MPMediaItemArtwork?
+    private var publishPolicy=SystemMediaPublishPolicy()
     init() {
         let center = MPRemoteCommandCenter.shared()
         bind(center.playCommand,"play")
@@ -247,8 +248,10 @@ import BackgroundTasks
         if let icon = UIImage(systemName:"play.tv.fill",withConfiguration:UIImage.SymbolConfiguration(pointSize:128,weight:.regular)) {
             artwork = MPMediaItemArtwork(boundsSize:icon.size) { _ in icon }
         }
-        for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
-            observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in Task { @MainActor in self?.updateBackground() } })
+        for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification,AVAudioSession.interruptionNotification,AVAudioSession.routeChangeNotification,AVAudioSession.mediaServicesWereResetNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in Task { @MainActor in
+                self?.publishPolicy.reset();self?.updateBackground()
+            } })
         }
         clear()
     }
@@ -273,6 +276,9 @@ import BackgroundTasks
             MPRemoteCommandCenter.shared().skipBackwardCommand.preferredIntervals=[jump]
             MPRemoteCommandCenter.shared().skipForwardCommand.preferredIntervals=[jump]
         }
+        let position=max(0,position.isFinite ? position:0)
+        let duration=max(0,duration.isFinite ? duration:0)
+        guard publishPolicy.accept(title:title,device:device,position:position,duration:duration,playing:playing,loading:loading,local:local,step:step,foreground:UIApplication.shared.applicationState == .active,now:Date()) else{return}
         var info: [String:Any] = [
             MPMediaItemPropertyTitle:title,
             MPMediaItemPropertyArtist:device,
@@ -288,11 +294,11 @@ import BackgroundTasks
         PlaybackDiagnostics.shared.changed("now_playing",event:.app,["phase":"now_playing_publish","local":String(local),"mode":AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers) ? "mixed":"primary"])
         for (command,_) in targets { command.isEnabled = true }
         MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled = duration.isFinite && duration > 0
-        updateBackground()
     }
+    func refreshNextUpdate(){publishPolicy.reset()}
     func clear(reason:String = "clear") {
         PlaybackDiagnostics.record(.app,["phase":"now_playing_clear","kind":reason])
-        active = false; seekTask?.cancel(); seekTask = nil
+        active = false;publishPolicy.reset(); seekTask?.cancel(); seekTask = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         for (command,_) in targets { command.isEnabled = false }
         CastAudioSession.shared.release("now_playing")

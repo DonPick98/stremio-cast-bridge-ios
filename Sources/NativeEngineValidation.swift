@@ -4,6 +4,7 @@ import MobileVLCKit
 import UIKit
 import MediaPlayer
 import AVFAudio
+import Darwin
 import GoogleCast
 import ObjectiveC
 
@@ -51,6 +52,7 @@ import ObjectiveC
             let cadence=try? await CaptionExtractor.videoCadence(input:cadenceInput,codec:"hevc",width:1920,height:1080)
             let cadencePassed=cadence.map{abs($0.frameRate-24000.0/1001)<0.00001 && $0.fixedCadence} ?? false
             result["sourceCadenceProbe"]=["passed":cadencePassed,"fps":cadence?.frameRate ?? 0,"fixed":cadence?.fixedCadence ?? false]
+            result["decoderTrial"]=await decoderTrial(documents:documents)
             trace("decoder")
             let repair = AudioRepairPipe()
             let repairedFile = documents.appendingPathComponent("repair-direct.mkv")
@@ -191,6 +193,48 @@ import ObjectiveC
         }
         return rows
     }
+    /// Four-second synthetic A/B. These CPU figures describe this process in
+    /// the simulator, not phone battery life or proof of hardware use.
+    private static func decoderTrial(documents:URL) async -> [String:Any] {
+        func cpu()->Double? {
+            var usage=rusage()
+            guard getrusage(RUSAGE_SELF,&usage)==0 else{return nil}
+            return Double(usage.ru_utime.tv_sec+usage.ru_stime.tv_sec)+Double(usage.ru_utime.tv_usec+usage.ru_stime.tv_usec)/1_000_000
+        }
+        let input=documents.appendingPathComponent("CodecSamples/caption-hevc-eac3.mkv")
+        let format=VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:24000.0/1001)
+        var trials:[[String:Any]]=[]
+        for requested in [false,true] {
+            let name=requested ? "videotoolbox":"baseline"
+            let pipe=AudioRepairPipe()
+            pipe.testingOutput=documents.appendingPathComponent("decoder-trial-"+name+".mkv")
+            pipe.testingVideoToolboxDecoder=requested;pipe.testingDuration=4
+            let began=Date(),before=cpu()
+            var item:[String:Any]=["name":name,"requestedVideoToolbox":requested]
+            do {
+                _=try await pipe.start(input:input,position:0,audioIndex:1,subtitleIndex:nil,transcodeVideo:format)
+                for _ in 0..<600 {
+                    if pipe.finished {break}
+                    try await Task.sleep(nanoseconds:100_000_000)
+                }
+                item["status"]=pipe.finished && !pipe.failed ? "success":"unavailable"
+                item["exitCode"]=pipe.exitCode ?? -1
+                item["metrics"]=pipe.productionMetrics() ?? [:]
+            } catch {
+                item["status"]="unavailable"
+                item["code"]=(error as? EmbeddedMediaError).map{String(describing:$0)} ?? "other"
+            }
+            if let before,let after=cpu() {item["cpuSeconds"]=max(0,after-before)}
+            item["wallSeconds"]=Date().timeIntervalSince(began)
+            pipe.stop();trials.append(item)
+            let report:[String:Any]=["productionDecoderUnchanged":true,"seconds":4,"trials":trials]
+            if let data=try? JSONSerialization.data(withJSONObject:report,options:.prettyPrinted) {
+                try? data.write(to:documents.appendingPathComponent("decoder-trial.json"),options:.atomic)
+            }
+        }
+        return ["productionDecoderUnchanged":true,"seconds":4,"trials":trials]
+    }
+
     private static func backgroundProbe(documents:URL) async throws -> [String:Any] {
         let engine = EmbeddedMediaEngine(); defer { engine.stop() }
         let input = documents.appendingPathComponent("CodecSamples/background-probe.mkv")

@@ -1,3 +1,27 @@
+# CB014 — ottimizzazioni batteria build46, 2026-11-05
+
+Ridotti gli aggiornamenti ridondanti Now Playing (2s foreground / 10s background),
+con pubblicazione immediata per comandi, seek, stato, tracce e lifecycle. Il clock
+nativo avanza autonomamente. Timer salute invariato 1s con tolleranza 100ms.
+Diagnostica ordinaria raggruppata 2s; errori, recuperi e flush lifecycle immediati;
+nessuna riscrittura di dati invariati. Contatore writes per lancio, non I/O fisico.
+Nessun cambiamento a qualità, codec, frame, soglie recupero o sessione audio.
+
+VideoToolbox decoder soltanto CAST_ENGINE_TESTING: confronto sintetico 4s contro
+baseline, CPU processo/simulatore, identità 96 frame NTSC, gap <=1.5 frame e SSIM
+>=0.98. Decoder prodotto invariato. Test locale CLI dei gate passato per controllo
+valido, frame mancante respinto e decoder sperimentale indisponibile. Workflow YAML
+/shell validi. Policy/diagnostica Swift e build iPhone/native ancora da eseguire.
+Raccolta evidenze anche in errore simctl; apertura Safari limitata a 20s senza
+saltare l'asserzione offscreen. Vedere Docs/ENERGY.md per limiti e protocollo A/B.
+
+Issue1 CB014 IN_CORSO. Archivio esatto corpo precedente verificato nel commento
+6652854175 prima di accorciare la sola cronologia. Non dichiarare risparmio batteria
+senza confronto reale iPhone. Ultima IPA consegnata resta45 finché46 non compilata.
+CB009/021 seek ancora aperti: il gate rigoroso preesistente resta invariato.
+
+---
+
 # Audit batteria CB014 — 2026-11-05, nessuna modifica prodotto
 
 Screenshotprivato: CastBridge12% delconsumo selezionato,10minforeground e58min

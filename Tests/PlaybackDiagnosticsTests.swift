@@ -1,7 +1,7 @@
 import Foundation
 
 @main struct PlaybackDiagnosticsTests {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         var now = Date(timeIntervalSince1970:1_000_000)
         let log = DiagnosticRecorder(retention:600,limit:3,clock:{now})
         log.record(.source,["phase":"start","url":"https://secret.example/key","code":"https://secret.example/key"])
@@ -44,6 +44,25 @@ import Foundation
         saved.record(.prepare,["mode":"ffmpegH264"]); saved.flush()
         let restored = DiagnosticRecorder(file:file,clock:{now})
         precondition(restored.report().contains("mode=ffmpegH264"))
+        let batched=DiagnosticRecorder(file:folder.appendingPathComponent("batched.json"),flushDelayNanoseconds:10_000_000,clock:{now})
+        for i in 0..<100 {batched.record(.snapshot,["position":String(i)])}
+        precondition(batched.persistenceWrites==0,"Ordinary events must stay coalesced")
+        for _ in 0..<200 {
+            if batched.persistenceWrites>0{break}
+            try await Task.sleep(nanoseconds:10_000_000)
+        }
+        precondition(batched.persistenceWrites==1,"A burst should produce one disk write")
+        batched.flush();_=batched.report();batched.flush()
+        precondition(batched.persistenceWrites==1,"Unchanged report/flush must not rewrite the file")
+        batched.record(.snapshot,["position":"100"])
+        batched.record(.error,["code":"CB203"])
+        precondition(batched.persistenceWrites==2,"Errors must flush synchronously")
+        try await Task.sleep(nanoseconds:30_000_000)
+        precondition(batched.persistenceWrites==2,"A cancelled pending flush must not write again")
+        let durable=DiagnosticRecorder(file:folder.appendingPathComponent("batched.json"),clock:{now})
+        precondition(durable.report().contains("code=CB203"))
+        batched.record(.recovery,["phase":"queued"])
+        precondition(batched.persistenceWrites==3,"Recovery evidence must also be durable immediately")
         print("Diagnostics: redaction, deduplication, bounded history, expiry and restoration passed")
     }
 }

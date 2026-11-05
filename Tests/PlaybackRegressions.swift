@@ -25,6 +25,27 @@ import Foundation
         precondition(VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:30000.0/1001).conversionKeyframeInterval==60)
         precondition(VideoFormat(codec:"hevc",width:1280,height:720,frameRate:60000.0/1001).conversionKeyframeInterval==120)
         precondition(VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:0).conversionKeyframeInterval==60)
+        var publish=SystemMediaPublishPolicy()
+        let origin=Date(timeIntervalSince1970:1_000)
+        func accepts(_ t:Double,_ p:Double,playing:Bool=true,loading:Bool=false,foreground:Bool=false,step:Double=30)->Bool {
+            publish.accept(title:"Synthetic video",device:"Synthetic receiver",position:p,duration:240,playing:playing,loading:loading,local:true,step:step,foreground:foreground,now:origin.addingTimeInterval(t))
+        }
+        var publishes=0
+        for i in 0...60 {if accepts(Double(i),Double(i)){publishes+=1}}
+        precondition(publishes==7,"A stable minute needs seven background publishes, not 61")
+        precondition(accepts(60.1,60.1,playing:false),"Pause must publish immediately")
+        precondition(!accepts(90,60.1,playing:false),"Paused clock must not cause writes")
+        precondition(accepts(90.1,61,playing:false),"A small paused seek must publish immediately")
+        precondition(accepts(90.2,61,playing:true),"Resume must publish immediately")
+        precondition(accepts(90.3,91),"Seek must publish immediately")
+        precondition(accepts(90.4,91.1,step:15),"Changed controls must publish immediately")
+        precondition(accepts(90.5,91.2,foreground:true,step:15))
+        precondition(!accepts(91,91.7,foreground:true,step:15))
+        precondition(accepts(92.5,93.2,foreground:true,step:15))
+        publish.reset();precondition(accepts(92.6,93.3,foreground:true,step:15),"Lifecycle recovery must refresh metadata")
+        precondition(accepts(92.7,93.4,loading:true,foreground:true,step:15),"Buffering must freeze the system clock immediately")
+        publish.reset();precondition(accepts(100,100,playing:false))
+        publish.reset();precondition(accepts(100.01,100.01,playing:false),"An explicit tiny seek invalidates throttling")
         let ntsc=VideoFormat(codec:"h264",width:320,height:180,frameRate:29.9706288)
         precondition(ntsc.vlcFrameRate=="30000/1001")
         precondition(VideoFormat(codec:"h264",width:640,height:360,frameRate:24).vlcFrameRate=="24")

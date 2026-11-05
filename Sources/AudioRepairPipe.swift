@@ -41,6 +41,8 @@ import Darwin
 #if CAST_ENGINE_TESTING
     private(set) var testingStopCompleted = true
     var testingOutput: URL?
+    var testingVideoToolboxDecoder=false
+    var testingDuration:Double?
     private var diagnostics: URL?
     private func record(_ handle:UnsafeMutableRawPointer) {
         guard let diagnostics else { return }
@@ -79,7 +81,17 @@ import Darwin
 #endif
         if position > 0 { args += ["-ss",String(position)] }
         if !input.isFileURL { args += ["-rw_timeout","15000000","-tls_verify","1"] }
+#if CAST_ENGINE_TESTING
+        // Controlled experiment only. Shipping builds keep the validated
+        // decoding route until device energy and frame gates are satisfied.
+        if testingVideoToolboxDecoder {args += ["-hwaccel","videotoolbox"]}
+#endif
         args += ["-i",input.isFileURL ? input.path : input.absoluteString]
+#if CAST_ENGINE_TESTING
+        if let testingDuration,testingDuration.isFinite,testingDuration>0,testingDuration<=10 {
+            args += ["-t",String(testingDuration)]
+        }
+#endif
         // Input seeking retains video packets from the preceding keyframe.
         // Discard negative preroll before rebasing, or an audio change can
         // replay seconds before the requested point and shift its timeline.

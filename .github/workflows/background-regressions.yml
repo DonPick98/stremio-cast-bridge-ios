@@ -8,6 +8,7 @@ on:
       - Sources/PlaybackDiagnostics.swift
       - CastRemote/CastController.swift
       - Tests/PlaybackRegressions.swift
+      - Tests/PlaybackDiagnosticsTests.swift
       - .github/workflows/background-regressions.yml
   workflow_dispatch:
 permissions:
@@ -25,6 +26,8 @@ jobs:
         run: |
           swiftc -swift-version 5 -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-tests"
           "$RUNNER_TEMP/playback-tests"
+          swiftc -swift-version 5 -parse-as-library Sources/PlaybackDiagnostics.swift Tests/PlaybackDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostics-tests"
+          "$RUNNER_TEMP/diagnostics-tests"
       - name: Typecheck production background adapters against iOS SDK
         run: |
           python3 - <<'PY'

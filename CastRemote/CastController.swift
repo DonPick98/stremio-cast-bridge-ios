@@ -316,6 +316,7 @@ import AVFAudio
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.updateStatus() }
         }
+        timer?.tolerance=0.1
     }
     private var castSession: GCKCastSession? { GCKCastContext.sharedInstance().sessionManager.currentCastSession }
     private var client: GCKRemoteMediaClient? { castSession?.remoteMediaClient }
@@ -366,7 +367,7 @@ import AVFAudio
             PlaybackDiagnostics.record(.metadata,format)
         }
         let device=UIDevice.current
-        PlaybackDiagnostics.record(.snapshot,["phase":"energy","battery":device.batteryLevel < 0 ? "unknown":PlaybackDiagnostics.number(Double(device.batteryLevel)*100),"power":String(device.batteryState.rawValue),"thermal":String(ProcessInfo.processInfo.thermalState.rawValue),"lowPower":String(ProcessInfo.processInfo.isLowPowerModeEnabled),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
+        PlaybackDiagnostics.record(.snapshot,["phase":"energy","writes":String(PlaybackDiagnostics.shared.persistenceWrites),"battery":device.batteryLevel < 0 ? "unknown":PlaybackDiagnostics.number(Double(device.batteryLevel)*100),"power":String(device.batteryState.rawValue),"thermal":String(ProcessInfo.processInfo.thermalState.rawValue),"lowPower":String(ProcessInfo.processInfo.isLowPowerModeEnabled),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
         guard let engine=nativeEngine else { return }
         if var metrics=engine.productionMetrics() {
             metrics["mode"]=String(describing:engine.diagnosticMode)
@@ -1611,6 +1612,7 @@ import AVFAudio
         }
     }
     func seek(to value: Double) {
+        lockScreen.refreshNextUpdate()
         PlaybackDiagnostics.record(.seek,["target":PlaybackDiagnostics.number(value),"position":PlaybackDiagnostics.number(position)])
         guard hasLoaded || loadPending || loading, value.isFinite else { return }
         let target = min(duration > 0 ? max(0,duration-(localProcessing ? 1 : 0)) : value,max(0,value))
@@ -1751,6 +1753,7 @@ import AVFAudio
         }
     }
     private func handleCommand(_ command:String) async -> Bool {
+        lockScreen.refreshNextUpdate()
         PlaybackDiagnostics.record(.command,["kind":command,"connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
         if backgroundServiceStopped {
             if command == "play" || command == "toggle" {playWhenReady=true;load(preservePosition:true);return true}
