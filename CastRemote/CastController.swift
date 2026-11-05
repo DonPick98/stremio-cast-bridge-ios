@@ -461,6 +461,12 @@ import AVFAudio
         UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic:PlaybackDiagnostics.shared.report()]],options:[.localOnly:true,.expirationDate:Date().addingTimeInterval(3600)])
     }
     func refreshConnection() {
+        // A handoff/permission alert can start preparation while inactive.
+        // Declare the ongoing finite job once foreground becomes available;
+        // never recreate a job expired/cancelled by the system or the user.
+        if !backgroundServiceStopped,wantsPlayback,(localProcessing || checkingStream),!backgroundProcessing.active,let prepared {
+            backgroundProcessing.begin(duration:prepared.duration,position:timeline.target ?? lastConfirmedPosition ?? lastGoodPosition){[weak self] in self?.backgroundProcessingExpired()}
+        }
         independentCaptions.attach(castSession)
         let manager = GCKCastContext.sharedInstance().sessionManager
         if !listenersAttached { manager.add(self); listenersAttached = true }

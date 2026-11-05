@@ -42,6 +42,7 @@ import BackgroundTasks
     private var available=false
     private var attempted=false
     private var lastProgressAt:TimeInterval?
+    var active:Bool {state.active}
     func register() {
         guard !registered else{return};registered=true
         guard #available(iOS 26.0,*),let bundle=Bundle.main.bundleIdentifier else{return}
