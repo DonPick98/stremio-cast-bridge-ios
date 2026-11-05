@@ -1,3 +1,41 @@
+# IPA48 pronta — suite completa e audit passati, 2026-11-05
+
+Sorgente prodotto 05b8bedbdcf61a14558a01264f512b6bb480f792, branch fix e PR2 draft.
+iPhone42021487799 SUCCESSO. Nativo42021487683 SUCCESSO/artifact13412498846:
+35 codec, 40 output decodificati, pixel caption, gate seek originale e10 casi
+qualità passati. Testo H264/VP8:210 frame e identità corrette, audio440Hz/stereo,
+delay+0.5s, cleanup. VP8 29.97:120frame/EOF. H264 offscreen65.093s/7667385byte,
+pausa/ripresa/cleanup; probe23.976. Nessuna soglia indebolita.
+
+Audit42022216814 SUCCESSO: app/estensione0.8.1(48), unsigned, CC1AD845,
+audio+processing, MIT verificati. IPA69336712byte SHA256
+f086ad2c6ee52c5f331d2c73e4d82f5aca40e470028b650bd3e72ceb8028a11b.
+ZIP IPA+inspection.json (scade2026-11-12):
+https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/42022216814/artifacts/13411518641
+Estrarre IPA e importare in SideStore. Runtime locale disconnesso durante consegna:
+download GitHub disponibile, nessun caricamento diretto in chat dichiarato.
+
+Testo integrato passa a FFmpeg/libass da documenti/cache/font locali bounded.
+VP8 passa a FFmpeg/libvpx+libvorbis con drain/EOF; risolto troncamento102/120frame
+della candidata18fef57. Preferenze/aspetto/delay conservati. Sidecar invariati.
+CB021 IMPLEMENTATO_DA_VERIFICARE; CB009 IN_CORSO per timeline/recupero completo.
+
+CB024 IN_ANALISI: prima suite stessa05b8bed42021316992 FAIL solo probefps=0;
+video/testo/qualità passati. Seconda suite completa passa probe23.976. Causa
+intermittenza sconosciuta, aggiungere diagnostica errore/durata e prove cold/warm,
+senza retry ciechi né allentare gate. Non confondere fps mancanti con frameerrati.
+Registro canonico aggiornato:
+https://github.com/DonPick98/stremio-cast-bridge-ios/issues/1#issuecomment-6657687027
+
+Nessuna prova fisica iPhone/TV/account, nessun risparmio batteria misurato.
+Prossimi: CB024; fonte reale integrata/seek e background/blocco/buffering;
+A/B energia; syncStremio/account e installazione in-place; origine app/PWA,
+tema/accessibilità/profili e updater stabile. Main non modificato.
+I checkpoint sotto sono cronologia: questo sostituisce le vecchie indicazioni
+“nessuna IPA48” e “nativo in corso”. Commit seguente solo documentazione.
+
+---
+
 # Candidata48 — gate testo passato; correggere fallback VP8 troncato
 
 18fef57/42017281562/artifact13409969866: gate testo integrato bounded PASSATO
