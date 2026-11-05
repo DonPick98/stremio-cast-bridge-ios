@@ -1,3 +1,14 @@
+# FT-001 — patch Stremio Core verificata nei test, commit120adda
+
+Workflow42009722543 SUCCESSO: alias name/titolo assente/priorità title, ordine
+speciali, navigazione, policy/diagnostica e typecheck SDK. Issue #1 aggiornata.
+Patch in PR separata dal branch test verso fix, draft; non ancora nella IPA46
+energetica. Prima della nuova IPA aggiornare build oltre46. Collo di bottiglia
+reale Cinemeta/rete e fonte utente da collaudare; non dichiarare risolto il suo
+caso. Autoplay con data assente resta conservativo; bingeGroup già implementata.
+
+---
+
 # FT-001 — compatibilità Stremio Core, in verifica
 
 Confronto con Stremio/stremio-core 3417c2e7: Video accetta name come alias di
@@ -67,8 +78,8 @@ CB009/021 seek ancora aperti: il gate rigoroso preesistente resta invariato.
 
 # Audit batteria CB014 — 2026-11-05, nessuna modifica prodotto
 
-Screenshotprivato: CastBridge12% delconsumo selezionato,10minforeground e58min
-background; non12puntidicarica/ora e nonconfrontoA/B. Non pubblicare screenshot.
+Segnalazione privata di consumo da verificare mediante confronto A/B.
+Non pubblicare screenshot o metriche personali della schermata Batteria.
 Audit349e37a: H264VTencoder giàpresente, decoderVT nonrichiesto esplicitamente.
 Profilare decodificahardware controsoftware evalidateframe/subtitle/background;
 non assumere accelerazione semprepiùefficiente (copie/formati possono costare).

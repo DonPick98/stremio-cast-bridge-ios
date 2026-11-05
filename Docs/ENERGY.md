@@ -1,8 +1,7 @@
 # CB014 — ridurre lavoro evitabile, build46
 
-La schermata del5novembre assegna12% delconsumo del periodo aCastBridge, con10min
-foreground/58minbackground. Non misura12punti/ora né prova un eccesso. Nessuno
-screenshot/titolo privato nel repository. Nessuna percentuale di risparmio promessa.
+Segnalazione di consumo da verificare con misure A/B. Nessuno screenshot o
+dato personale della schermata Batteria. Nessuna percentuale di risparmio promessa.
 
 ## Modifiche attive
 
