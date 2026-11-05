@@ -1,3 +1,32 @@
+# IPA47 pronta — episodi Stremio integrati
+
+Commit ccbdc0e1494b09b032c91fa7e1321ec3c59f8722, branchfix e PR2 draft.
+PR5 risulta integrata per avanzamento del branchfix. iPhone42010715581 SUCCESSO;
+policy/SDK42010715369 e documenti sottotitoli42010715354 PASSATI. Artifact13406658794
+estratto: app ed estensione0.8.1(47), receiverCC1AD845, audio+processing e namespace
+BG verificati. Stremio-Core.txt incluso nel bundle, identico al notice MIT.
+IPA unsigned33540315byte, SHA256
+38416c171159efe7fdb402a6e2b912a2a7b8081f6c2dfa53e006bd238b283fcd,
+CastBridge-0.8.1-47-unsigned.ipa disponibile nella chat. Nessun ID privato qui.
+
+Comprende ottimizzazioni46 + parser titoli/name e ordine speciali Stremio + blocco
+autoplay stagione regolare→speciali. Entro speciali e manuale conservati. Test
+passati; FT001/002 da collaudare sulla serie reale, supporto ancora IMDb/Cinemeta.
+Nativo47/42010715495 ancora in corso al checkpoint: acquisire risultato/artifact.
+Ultimo completo46: offscreen65.184s/probe23.976/decodertrial passati, FAIL seek
+212/210frame e125.125ms. CB009/021 restano aperti, pipeline media invariata in47.
+Nessuna garanzia di consumo/buffering/continuità fisica da test simulatore.
+
+Residui di sviluppo: contesto origine app/scheda/PWA nel contratto handoff;
+personalizzazione tema/accessibilità, eccezioni e profili conversione; canale
+release stabile per updater. Sync account e installazione SideStore in-place da
+collaudare. Ranking sorgenti, salto10/15/30/60s, cache clear e priorità sottotitoli
+interni/esterni/solo esterni già presenti (inventario issue aggiornato).
+Priorità successiva: CB009/021 seek, poi fonti sottotitoli originali e collaudo
+background/buffering/energia su iPhone+TV. Non chiudere quei criteri senza prove.
+
+---
+
 # Iterazione47 — episodi compatibili Stremio e confine speciali
 
 Base6591e9d, include patch120adda parser e ordine speciali, test42009722543 passati.
