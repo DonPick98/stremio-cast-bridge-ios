@@ -1,3 +1,30 @@
+# Build 46 pronta — CB-014 implementato, consumo fisico da verificare
+
+Commit prodotto: 9127bddf7f0368761ed6eab6505f4fc1835833af, PR #2 draft.
+Build iPhone 41993979997 e policy/SDK 41993980048: SUCCESSO. IPA unsigned
+CastBridge-0.8.1-46-unsigned.ipa, 33537710 byte, SHA256
+ aeb1c479ffe662b197847dc2683ab5bb3c724fdf297441f0531c499b4dc81d56.
+App ed estensione 0.8.1 (46); background audio/processing e namespace BG verificati.
+File disponibile nella chat; nessun identificatore privato da pubblicare qui.
+
+Nativo 41993979995: compilazione/regressioni passate, report completo raccolto
+(artifact 13399957680). H264 offscreen 65.184s / 7536313 byte, pausa/ripresa e
+cleanup PASSATI. Now Playing, sessione primaria e rilascio preparazione PASSATI.
+sourceCadenceProbe: 23.976023976 fps, fixed=true, PASSATO sul backend incorporato.
+Trial decoder: entrambi 96 frame, identità e tempi corretti, SSIM 1. CPU processo
+simulatore 5.726s baseline / 4.073s richiesta VT: dato esplorativo, ordine fisso,
+non misura batteria e non prova hardware. Decoder della IPA resta invariato.
+Suite nativa complessiva FAIL al difetto preesistente seek: 212/210 frame,
+gap 125.125ms, identità iniziali 73,73,77,77 invece 79. CB-009/021 ancora aperti;
+nessun gate allentato. Il fallimento non riguarda le policy energetiche nuove.
+
+CB-014 IMPLEMENTATO_DA_VERIFICARE; issue #1 aggiornata con codice, prove e limiti.
+Prossimo passo: confronto fisico 45/46 stesso video/tracce/rete/durata e schermo,
+conferma pausa/seek/cambio app/blocco e nessun lavoro dopo stop. Nessun risparmio
+percentuale o correzione del seek dichiarati. Vedere Docs/ENERGY.md.
+
+---
+
 # CB014 — ottimizzazioni batteria build46, 2026-11-05
 
 Ridotti gli aggiornamenti ridondanti Now Playing (2s foreground / 10s background),

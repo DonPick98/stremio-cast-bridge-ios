@@ -52,3 +52,17 @@ assenza ricarica, medesimo schermo/altreapp e condizioniLowPower. Confrontare45/
 prima gli overhead, poi decoder solo dopo i gate. Verificare nessun lavoro dopo
 stop/fine e corretti controlli sotto pausa/seek/interruzioni. Nessuna prova fisica
 qui disponibile: CB014 resta IMPLEMENTATO_DA_VERIFICARE dopo build/test.
+
+
+## Esito build 46
+
+Commit 9127bdd: build iPhone e policy/SDK passati. Il confronto sintetico dei
+pubblicatori produce 7 chiamate invece di 61 in un minuto regolare in background;
+non equivale a una riduzione analoga del consumo totale.
+
+Nativo 41993979995: H264 offscreen 65.184s e 7.54 MB, pausa/ripresa/cleanup e
+controlli nativi passati. Probe framerate 23.976023976 passato. Trial decoder:
+96 frame in entrambi, identità/PTS corretti, SSIM 1. CPU simulatore 5.726s/4.073s,
+non estrapolare a batteria iPhone. Il decoder di produzione resta invariato.
+La suite complessiva fallisce al vecchio seek di CB-009/021 (212/210 frame,
+gap 125.125ms). La prova fisica A/B richiesta sopra rimane aperta.
