@@ -105,7 +105,7 @@ import AVFAudio
     }
     func moveEpisode(_ direction:Int,automatic:Bool=false) {
         guard !busy,!loading,!episodeBusy,let current=handoff,let target=adjacentEpisode(direction),
-              !automatic || target.aired() else{return}
+              !automatic || SeriesNavigation.autoplayNext(orderedEpisodes,current:currentEpisodeID)?.id==target.id else{return}
         let family=selectedSource?.behaviorHints?.bingeGroup
         let next=BridgeHandoff(version:current.version,status:current.status,provider:current.provider,type:current.type,id:target.id,selection:nil,subtitleLanguage:current.subtitleLanguage,externalSubtitleURL:nil)
         guard let config=configuration else{fallbackEpisode=target;episodeIssue="Configura le sorgenti oppure continua da Stremio.";if automatic{returnToStremioAutomatically()};return}
@@ -584,7 +584,7 @@ import AVFAudio
         PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
         syncStremioProgress(completed:true,force:true)
         backgroundProcessing.finish(success:true)
-        let continueSeries=(UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true) && (adjacentEpisode(1)?.aired()==true)
+        let continueSeries=(UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true) && (SeriesNavigation.autoplayNext(orderedEpisodes,current:currentEpisodeID) != nil)
         stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished")
         loadPending=false;loading=false;loadTimeout?.cancel();loadRequest=nil
         if let positionKey { UserDefaults.standard.set(0,forKey:positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated") }

@@ -130,6 +130,14 @@ enum SeriesNavigation {
               videos.indices.contains(index+direction) else{return nil}
         return videos[index+direction]
     }
+    /// Mirror Stremio's next_video boundary: normal seasons never autoplay
+    /// into season-zero extras. Manual navigation remains available.
+    static func autoplayNext(_ videos:[SeriesEpisode],current:String,at now:Date=Date()) -> SeriesEpisode? {
+        guard let index=videos.firstIndex(where:{$0.id==current}),
+              let next=adjacent(videos,current:current,direction:1),next.aired(at:now),
+              next.season != 0 || videos[index].season == 0 else{return nil}
+        return next
+    }
     static func stremioURL(videoID:String,web:Bool) -> URL? {
         guard let series=seriesID(videoID) else{return nil}
         let base=web ? "https://web.stremio.com/#/detail/series/" : "stremio:///detail/series/"

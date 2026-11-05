@@ -1,3 +1,17 @@
+# Iterazione47 — episodi compatibili Stremio e confine speciali
+
+Base6591e9d, include patch120adda parser e ordine speciali, test42009722543 passati.
+Nuovo: autoplay da stagione regolare non entra negli speciali; navigazione manuale
+conservata e autoplay speciale→speciale consentito con data trascorsa. Stremio Core
+next_video è il riferimento, senza importare tutto il runtime Rust. La politica
+conservativa per data assente resta invariata. Licenza MIT aggiunta alle risorse
+app della IPA. App/estensione47. Test nuovi, build iPhone/native ancora da eseguire.
+Ultima IPA consegnata46; non dichiarare47 pronta prima di acquisirla. Registro
+issue1 commento avvio47; FT001/002 restano da collaudare con sorgente reale.
+CB009/021 seek, CB014 energia, CB001 background fisico ancora aperti.
+
+---
+
 # FT-001 — patch Stremio Core verificata nei test, commit120adda
 
 Workflow42009722543 SUCCESSO: alias name/titolo assente/priorità title, ordine
