@@ -1,3 +1,38 @@
+# IPA52: sottotitoli ancora assenti su TV — CB028 RIAPERTO (2026-11-06)
+
+Nessuna nuova IPA o correzione hardware dichiarata. Prodotto52 resta74748b2;
+HEAD documentazione4a0a598 prima di questo checkpoint. Suite esatta52
+42120072440 ora SUCCESSO, distinta dalla prova hardware ancora fallita.
+
+Nuovo log utente23:05:51→23:07:38UTC: catalogo16SSA, conversione completata
+23:07:00.386 con3720byteASS/5eventi/dropped0 e454byteVTT. Promozioneembedded,
+secondoLOAD daoffset265.600, clockvideo procede. Nessun erroreconversione.
+Questo non dimostra completezza né visibilità della traccia suTV. Cinquecue
+potrebbero essere forced/signs, una traccia sparsa corretta o estrazione interrotta.
+Non scegliere una causa senza prova; nessun HTTPfetch/ack di attivazione texttrack
+né intervallo cue nel log attuale.
+
+Risposta utente al tipo traccia: Inglese-nelfile. Difetti accertati nel codice:
+PlaybackPreferences.subtitle sceglie tracks.first per lingua senza distinguere
+forced/full; trackLabel omette RDTrack.label e mostra lingua/numero soltanto;
+embeddedSubtitleLabel perde anche il numero e descrizione originale dopo
+promoteReadyEmbeddedText. CaptionCatalog ignora disposition.forced/default.
+Questi difetti possono scegliere/nascondere una traccia sparse, ma non provano
+che questa sia la causa del file privato. OffsetVTT viene correttamente ribasato
+inEmbeddedMediaEngine.start; selectedembedded attiva kind2 conIDpresente.
+Proxy serveVTT conCORS; manca evidenza del fetch effettivo in questo caso.
+
+Prossimo passo hardware minimo: scegliere un'altra voce Inglese-Traccia…-nelfile,
+diversa dalla prima e dall'alias estratto, attendere preparazione; verificare
+visibilità. Evitare un'altra build a tentativi senza questo riscontro. Se fallisce
+servono metadati sanitizzati forced/default+intervallo/countcue, stato GET VTT e
+activeTrackIDs sul ricevitore; eventualmente sample originale autorizzato senza
+credenziali. Poi correggere scelta automatica e nomi preservando selezione manuale,
+lingua e OpenSubtitles. Nessuna scelta silenziosa basata solo sul numero5cue.
+Issue1 riaperta con evidenze; nessun codice prodotto cambiato in questa analisi.
+
+---
+
 # IPA52 pronta — CB028 implementato, collaudo file privato richiesto
 
 Prodotto74748b2a503188748fe03950e7be7fa7a1f59f83; branch fix/captions-background-20261105,
