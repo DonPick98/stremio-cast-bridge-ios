@@ -1,3 +1,57 @@
+# IPA49 compilata — selettore episodi e attesa autoplay, 2026-11-05
+
+Sorgente prodotto40dfd8eba5d3e44cd3e8f4efc944849d2e49d1ef.
+Branch feature/episode-picker-20261105, PR7 draft verso fix/playback-recovery-20261103.
+Build iPhone e regressioni42059128287 SUCCESSO; lifecycle/API iOS42059128067 SUCCESSO.
+Artifact IPA13430746684, ZIP68772212byte, digest ZIP
+sha256:3fcfb7a2e86b402f76f9447a6fa6db95e6ee9524eab59813b4fa813c887b818a.
+Download: https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/42059128287/artifacts/13430746684
+Disponibile fino2026-11-12. Estrarre CastRemote-unsigned.ipa dal pacchetto ZIP.
+Non confondere il digest ZIP con quello dell'IPA interna. Nessun audit binario
+aggiuntivo effettuato; packaging e controlli previsti nel workflow passati.
+
+App/estensione impostate0.8.1(49) nel progetto. FT001/002/003 implementate da verificare:
+selettore stagione/puntata, countdown0/5/10/15s (default0), Avvia ora/Annulla.
+La riproduzione manuale annulla anch'essa l'attesa; in background serve lease valida.
+Tutte le regressioni build passate, incluso Stremio/offline, lingue/caption,
+cataloghi, preferenze/reset, resolver, hosting e receiver. Nessun nuovo collaudo
+di queste feature su iPhone/TV. Pipeline media48 invariata; non rieseguita la
+suite nativa dei codec in questa iterazione. Nessun merge su fix/main compiuto.
+L'utente conferma background e controlli iOS nella versione già in uso, fps finora:
+preservare quei riscontri senza estenderli ai nuovi passaggi episodio.
+Registro canonico issue1 aggiornato; restano contesto origine, personalizzazione
+restante, sync/account e updater stabile/in-place. Checkpoint sotto storici.
+
+---
+
+# Iterazione49 — selezione puntata e attesa autoplay (FT-001/002/003)
+
+Base prodotto 05b8bed / IPA48, branch feature/episode-picker-20261105.
+L'utente conferma ora continuità in background, fps rilevati finora e ritorno
+dei controlli iOS. Non equivale a ogni scenario di interruzione/recupero né
+alla chiusura del probe intermittente CB024. Preservati Now Playing nativo,
+receiver CC1AD845 e pipeline media48. Nessuna nuova ActivityKit personalizzata.
+
+Nuovo: elenco stagioni/puntate dal catalogo validato esistente, selezione diretta
+anche fra stagioni usando la stessa preparazione transazionale della navigazione.
+Nessun episodio inventato; speciali secondo preferenza. Puntata corrente marcata.
+Attesa autoplay facoltativa 0/5/10/15s, default immediato conservato; si attiva solo
+alla fine confermata e per il prossimo episodio già ammesso dalla policy esistente.
+Avvia ora/Annulla, deadline monotona, token invalidato prima dell'avvio e su reset,
+stop, cambio fonte/episodio o ritorno a Stremio. Lease UIKit limitata per l'attesa;
+alla scadenza annulla, nessun rinnovo o garanzia background illimitato.
+Disattivare autoplay annulla l'attesa. Le modifiche alla durata valgono dal
+passaggio successivo. Codec, fps, qualità e preferenze tracce invariati.
+
+Test policy: destinazioni valide/stessa serie, buchi, invalidi, ritardo/default/reset,
+wake tardivo e contesto cambiato. CI regressioni e build iPhone da acquisire;
+non dichiarare IPA49 pronta prima della build. App/estensione impostate49.
+Restano collaudo due episodi e picker su iPhone/TV, contesto origine app/web,
+tema/accessibilità/profili conversione, sync account e updater stabile/in-place.
+Registro canonico issue1. Gli altri checkpoint sotto sono storici.
+
+---
+
 # Candidata48 — gate testo passato; correggere fallback VP8 troncato
 
 18fef57/42017281562/artifact13409969866: gate testo integrato bounded PASSATO

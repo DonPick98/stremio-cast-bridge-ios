@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var showOnlineSubtitles = false
     @State private var diagnosticsCopied = false
     @State private var showPreferences=false
+    @State private var showEpisodes=false
     @ObservedObject private var updater=AppUpdater.shared
     @AppStorage("cast.controls.seekStep") private var storedSeekStep=30.0
     private var configuredSeekStep:Double {PlaybackPreferences.seekSteps.contains(storedSeekStep) ? storedSeekStep:30}
@@ -57,6 +58,7 @@ struct ContentView: View {
         }.preferredColorScheme(.dark).tint(CastPalette.accent)
             .task{await updater.checkIfNeeded()}
             .sheet(isPresented:$showPreferences) { AppPreferencesView() }
+            .sheet(isPresented:$showEpisodes) { EpisodePickerView().environmentObject(cast) }
             .sheet(isPresented:$cast.showSetup) { AddonSetupView().environmentObject(cast) }
             .sheet(isPresented:$showTrackOptions) { TrackOptionsView().environmentObject(cast) }
             .sheet(isPresented:$showSubtitleAppearance) { SubtitleAppearanceView().environmentObject(cast) }
@@ -73,6 +75,19 @@ struct ContentView: View {
     private var episodeControls:some View {
         VStack(alignment:.leading,spacing:12) {
             Text(cast.orderedEpisodes.first(where:{$0.id==cast.currentEpisodeID})?.label ?? "Episodi").font(.headline)
+            Button {showEpisodes=true} label:{Label("Scegli stagione e puntata",systemImage:"list.bullet")}
+                .disabled(cast.orderedEpisodes.isEmpty || cast.episodeBusy || cast.busy || cast.loading)
+            if let next=cast.upcomingEpisode {
+                VStack(alignment:.leading,spacing:10) {
+                    Text("Prossima puntata tra \(cast.autoplaySecondsRemaining) s").font(.subheadline.weight(.semibold))
+                        .monospacedDigit()
+                    Text(next.label).font(.footnote).foregroundStyle(.secondary)
+                    ViewThatFits(in:.horizontal) {
+                        HStack {Button("Avvia ora"){cast.startUpcomingEpisode()};Spacer();Button("Annulla"){cast.cancelUpcomingEpisode()}}
+                        VStack(alignment:.leading,spacing:12) {Button("Avvia ora"){cast.startUpcomingEpisode()};Button("Annulla"){cast.cancelUpcomingEpisode()}}
+                    }
+                }.padding(.vertical,6)
+            }
             HStack {
                 Button {cast.moveEpisode(-1)} label:{Label("Precedente",systemImage:"backward.end")}
                     .disabled(cast.adjacentEpisode(-1)==nil || cast.episodeBusy || cast.busy || cast.loading)
@@ -471,6 +486,7 @@ private struct AppPreferencesView:View {
     @State private var confirmCacheClear=false
     @Environment(\.dismiss) private var dismiss
     @AppStorage("cast.series.autoplay") private var autoplay=true
+    @AppStorage("cast.series.autoplayDelay") private var autoplayDelay=0
     @AppStorage("cast.series.matchSource") private var matchSource=true
     @AppStorage("cast.series.specials") private var specials=false
     @AppStorage("cast.series.webFallback") private var webFallback=false
@@ -489,6 +505,12 @@ private struct AppPreferencesView:View {
             Form {
                 Section("Serie") {
                     Toggle("Avvia la puntata successiva",isOn:$autoplay)
+                    Picker("Attesa prima della prossima puntata",selection:$autoplayDelay) {
+                        ForEach(PlaybackPreferences.autoplayDelays,id:\.self){seconds in
+                            Text(seconds==0 ? "Nessuna attesa":"\(seconds) secondi").tag(seconds)
+                        }
+                    }.disabled(!autoplay)
+                    Text("L’attesa inizia a fine puntata. Puoi annullarla o avviare subito la successiva dal player.").font(.footnote).foregroundStyle(.secondary)
                     Toggle("Riutilizza una sorgente equivalente",isOn:$matchSource)
                     Picker("Tentativi su sorgenti equivalenti",selection:$sourceAttempts) {
                         ForEach(1...3,id:\.self){Text("\($0)").tag($0)}
@@ -562,6 +584,7 @@ private struct AppPreferencesView:View {
             }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
         }
         .onAppear{cast.refreshCaptionCacheInfo()}
+        .onChange(of:autoplay){enabled in if !enabled,cast.upcomingEpisode != nil{cast.cancelUpcomingEpisode()}}
         .onChange(of:sourceOrder){_ in cast.reorderSources()}
         .onChange(of:sourceResolution){_ in cast.reorderSources()}
         .onChange(of:automaticUpdates){_ in Task{await updater.checkIfNeeded()}}
@@ -639,5 +662,60 @@ private struct StremioSettingsView:View {
             Button("Mantieni Stremio"){sync.discardConflicts()}
             Button("Annulla",role:.cancel){}
         } message:{Text("Ignora solo gli aggiornamenti locali in conflitto. Gli altri progressi in attesa rimangono in coda.")}
+    }
+}
+
+private struct EpisodePickerView:View {
+    @EnvironmentObject private var cast:CastController
+    @Environment(\.dismiss) private var dismiss
+    @State private var season:Int?
+    private var seasons:[Int] {
+        let values=Set(cast.orderedEpisodes.compactMap(\.season))
+        return values.sorted {left,right in
+            if left==0 || right==0{return left != 0 && right==0}
+            return left<right
+        }
+    }
+    var body:some View {
+        NavigationStack {
+            List {
+                if !seasons.isEmpty {
+                    Section {
+                        Picker("Stagione",selection:$season) {
+                            ForEach(seasons,id:\.self){value in
+                                Text(value==0 ? "Speciali":"Stagione \(value)").tag(Optional(value))
+                            }
+                        }.pickerStyle(.menu)
+                    }
+                }
+                Section {
+                    ForEach(cast.orderedEpisodes.filter{$0.season==season}){episode in
+                        Button {
+                            if cast.selectEpisode(episode.id){dismiss()}
+                        } label:{
+                            HStack(alignment:.top,spacing:12) {
+                                VStack(alignment:.leading,spacing:4) {
+                                    Text("Puntata \(episode.episode ?? 0)").font(.subheadline.weight(.semibold))
+                                    if !episode.title.isEmpty {Text(episode.title).font(.subheadline).foregroundStyle(.secondary)}
+                                }
+                                Spacer(minLength:0)
+                                if episode.id==cast.currentEpisodeID {
+                                    Image(systemName:"checkmark.circle.fill").foregroundStyle(CastPalette.accent)
+                                        .accessibilityLabel("Puntata corrente")
+                                }
+                            }.padding(.vertical,5).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                            .disabled(episode.id==cast.currentEpisodeID || cast.episodeBusy || cast.busy || cast.loading)
+                    }
+                } footer:{
+                    Text("Il cambio mantiene la puntata attuale finché sono disponibili le nuove sorgenti. Le preferenze audio e sottotitoli restano applicate.")
+                }
+                if let issue=cast.episodeIssue {Text(issue).font(.footnote).foregroundStyle(.orange)}
+            }
+            .navigationTitle("Episodi").navigationBarTitleDisplayMode(.inline)
+            .toolbar{ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
+            .onAppear{season=cast.orderedEpisodes.first{$0.id==cast.currentEpisodeID}?.season ?? seasons.first}
+            .onChange(of:seasons){values in if season.map({!values.contains($0)}) ?? true{season=values.first}}
+        }.preferredColorScheme(.dark).tint(CastPalette.accent)
     }
 }

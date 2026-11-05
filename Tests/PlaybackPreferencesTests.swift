@@ -21,6 +21,27 @@ import Foundation
             defaults.set(valid,forKey:"cast.series.sourceAttempts")
             precondition(PlaybackPreferences.sourceAttempts(defaults:defaults)==valid)
         }
+        precondition(PlaybackPreferences.autoplayDelay(defaults:defaults)==0)
+        for delay in PlaybackPreferences.autoplayDelays {
+            defaults.set(delay,forKey:"cast.series.autoplayDelay")
+            precondition(PlaybackPreferences.autoplayDelay(defaults:defaults)==delay)
+        }
+        for invalid in [-1.0,1.0,5.5,16.0,1_000_000.0] {
+            defaults.set(invalid,forKey:"cast.series.autoplayDelay")
+            precondition(PlaybackPreferences.autoplayDelay(defaults:defaults)==0)
+        }
+        let wait=EpisodeAutoplayWait(sourceID:"tt1:1:1",targetID:"tt1:1:3",delay:10,now:100)
+        precondition(wait.remaining(at:100)==10 && wait.remaining(at:100.1)==10)
+        precondition(wait.remaining(at:109.1)==1 && wait.remaining(at:110)==0)
+        precondition(wait.remaining(at:160)==0,"A delayed wake must not restart the wait")
+        precondition(wait.remaining(at:.nan)==0)
+        precondition(wait.matches(current:"tt1:1:1",next:"tt1:1:3",enabled:true))
+        precondition(!wait.matches(current:"tt1:1:2",next:"tt1:1:3",enabled:true))
+        precondition(!wait.matches(current:"tt1:1:1",next:"tt1:1:4",enabled:true))
+        precondition(!wait.matches(current:"tt1:1:1",next:nil,enabled:true))
+        precondition(!wait.matches(current:"tt1:1:1",next:"tt1:1:3",enabled:false))
+        PlaybackPreferences.resetAppSettings(defaults:defaults)
+        precondition(PlaybackPreferences.autoplayDelay(defaults:defaults)==0)
         var plan=AutoplayRetryPlan(["", "a", "a", "b", "c", "d"])
         precondition(plan.limit==3 && plan.attempt==0)
         precondition(plan.next()=="a" && plan.next()=="b" && plan.next()=="c")

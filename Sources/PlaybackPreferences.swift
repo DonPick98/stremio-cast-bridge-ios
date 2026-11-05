@@ -1,9 +1,15 @@
 import Foundation
 
 enum PlaybackPreferences {
-    static let appSettingKeys = ["cast.series.autoplay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.series.autoReturn","cast.series.sourceAttempts","cast.preferred.audio","cast.preferred.subtitle","cast.preferred.subtitleSource"]
+    static let appSettingKeys = ["cast.series.autoplay","cast.series.autoplayDelay","cast.series.matchSource","cast.series.specials","cast.series.webFallback","cast.series.autoReturn","cast.series.sourceAttempts","cast.preferred.audio","cast.preferred.subtitle","cast.preferred.subtitleSource"]
     static func resetAppSettings(defaults:UserDefaults = .standard) {
         for key in appSettingKeys { defaults.removeObject(forKey:key) }
+    }
+    static let autoplayDelays = [0,5,10,15]
+    static func autoplayDelay(defaults:UserDefaults = .standard)->Int {
+        guard let number=defaults.object(forKey:"cast.series.autoplayDelay") as? NSNumber else{return 0}
+        let seconds=number.doubleValue
+        return seconds.isFinite && autoplayDelays.contains(where:{Double($0)==seconds}) ? Int(seconds):0
     }
     static func sourceAttempts(defaults:UserDefaults = .standard)->Int {
         let n=(defaults.object(forKey:"cast.series.sourceAttempts") as? NSNumber)?.intValue ?? 3
@@ -125,6 +131,10 @@ enum SeriesNavigation {
             return ($0.season!,$0.episode!) < ($1.season!,$1.episode!)
         }
     }
+    static func target(_ videos:[SeriesEpisode],current:String,id:String)->SeriesEpisode? {
+        guard id != current,let series=seriesID(current),seriesID(id)==series else{return nil}
+        return videos.first{$0.id==id}
+    }
     static func adjacent(_ videos:[SeriesEpisode],current:String,direction:Int) -> SeriesEpisode? {
         guard [-1,1].contains(direction),let index=videos.firstIndex(where:{$0.id==current}),
               videos.indices.contains(index+direction) else{return nil}
@@ -174,5 +184,24 @@ enum StremioReturnLink {
             path="movie/"+id
         } else {return URL(string:root)!}
         return URL(string:(web ? "https://web.stremio.com/#/detail/":"stremio:///detail/")+path)!
+    }
+}
+
+/// Monotonic deadline: wall-clock changes and delayed wakes cannot extend the wait.
+/// Controller owns cancellation and consumes the pending request before launching.
+struct EpisodeAutoplayWait {
+    let sourceID:String
+    let targetID:String
+    let deadline:TimeInterval
+    init(sourceID:String,targetID:String,delay:Int,now:TimeInterval) {
+        self.sourceID=sourceID;self.targetID=targetID
+        deadline=now+Double(PlaybackPreferences.autoplayDelays.contains(delay) ? delay:0)
+    }
+    func remaining(at now:TimeInterval)->Int {
+        guard now.isFinite,deadline.isFinite else{return 0}
+        return Int(ceil(max(0,min(15,deadline-now))))
+    }
+    func matches(current:String,next:String?,enabled:Bool)->Bool {
+        enabled && current==sourceID && next==targetID
     }
 }

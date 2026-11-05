@@ -11,6 +11,63 @@ import AVFAudio
     @Published private(set) var episodeIssue:String?
     @Published private(set) var episodeBusy=false
     @Published private(set) var fallbackEpisode:SeriesEpisode?
+    @Published private(set) var upcomingEpisode:SeriesEpisode?
+    @Published private(set) var autoplaySecondsRemaining=0
+    private var autoplayWait:EpisodeAutoplayWait?
+    private var autoplayWaitTask:Task<Void,Never>?
+    private var autoplayWaitToken=UUID()
+    private func clearUpcomingEpisode() {
+        autoplayWaitToken=UUID()
+        autoplayWaitTask?.cancel();autoplayWaitTask=nil
+        autoplayWait=nil;upcomingEpisode=nil;autoplaySecondsRemaining=0
+    }
+    func cancelUpcomingEpisode() {
+        clearUpcomingEpisode()
+        message="Avvio automatico annullato. Puoi scegliere una puntata."
+    }
+    func startUpcomingEpisode() {
+        guard let wait=autoplayWait else{return}
+        let valid=wait.matches(current:currentEpisodeID,
+            next:SeriesNavigation.autoplayNext(orderedEpisodes,current:currentEpisodeID)?.id,
+            enabled:UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true)
+        // Consume before starting work: timer and button can never launch twice.
+        clearUpcomingEpisode()
+        guard valid else{return}
+        selectEpisode(wait.targetID,automatic:true)
+    }
+    private func scheduleUpcomingEpisode() {
+        clearUpcomingEpisode()
+        guard let next=SeriesNavigation.autoplayNext(orderedEpisodes,current:currentEpisodeID) else{return}
+        let delay=PlaybackPreferences.autoplayDelay()
+        guard delay>0 else{moveEpisode(1,automatic:true);return}
+        let wait=EpisodeAutoplayWait(sourceID:currentEpisodeID,targetID:next.id,
+            delay:delay,now:ProcessInfo.processInfo.systemUptime)
+        let token=autoplayWaitToken
+        autoplayWait=wait;upcomingEpisode=next;autoplaySecondsRemaining=delay
+        autoplayWaitTask=Task { [weak self] in
+            let lease=CastBackgroundLease(name:"Next episode countdown") { [weak self] in
+                guard let self,self.autoplayWaitToken==token else{return}
+                self.cancelUpcomingEpisode()
+            }
+            defer{lease.end()}
+            guard lease.valid || UIApplication.shared.applicationState == .active else {
+                if let self,self.autoplayWaitToken==token {self.cancelUpcomingEpisode()}
+                return
+            }
+            while !Task.isCancelled {
+                guard let self,self.autoplayWaitToken==token else{return}
+                guard wait.matches(current:self.currentEpisodeID,
+                    next:SeriesNavigation.autoplayNext(self.orderedEpisodes,current:self.currentEpisodeID)?.id,
+                    enabled:UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true) else{
+                    self.clearUpcomingEpisode();return
+                }
+                let remaining=wait.remaining(at:ProcessInfo.processInfo.systemUptime)
+                self.autoplaySecondsRemaining=remaining
+                if remaining==0 {self.startUpcomingEpisode();return}
+                do{try await Task.sleep(nanoseconds:1_000_000_000)}catch{return}
+            }
+        }
+    }
     private var episodeTask:Task<Void,Never>?
     private var episodeRequest=UUID()
     private var requireEpisodeLanguage=false
@@ -81,6 +138,7 @@ import AVFAudio
     }
     func returnToStremio() {
         // This navigation does not reset or cancel the playing Cast session.
+        clearUpcomingEpisode()
         openStremio(type:handoff?.type,id:handoff?.id)
     }
     private func openStremio(type:String?,id:String?) {
@@ -104,11 +162,17 @@ import AVFAudio
         openStremio(type:"series",id:target.id)
     }
     func moveEpisode(_ direction:Int,automatic:Bool=false) {
-        guard !busy,!loading,!episodeBusy,let current=handoff,let target=adjacentEpisode(direction),
-              !automatic || SeriesNavigation.autoplayNext(orderedEpisodes,current:currentEpisodeID)?.id==target.id else{return}
+        guard let target=adjacentEpisode(direction) else{return}
+        selectEpisode(target.id,automatic:automatic)
+    }
+    @discardableResult func selectEpisode(_ id:String,automatic:Bool=false)->Bool {
+        guard !busy,!loading,!episodeBusy,let current=handoff,
+              let target=SeriesNavigation.target(orderedEpisodes,current:currentEpisodeID,id:id),
+              !automatic || SeriesNavigation.autoplayNext(orderedEpisodes,current:currentEpisodeID)?.id==target.id else{return false}
+        clearUpcomingEpisode()
         let family=selectedSource?.behaviorHints?.bingeGroup
         let next=BridgeHandoff(version:current.version,status:current.status,provider:current.provider,type:current.type,id:target.id,selection:nil,subtitleLanguage:current.subtitleLanguage,externalSubtitleURL:nil)
-        guard let config=configuration else{fallbackEpisode=target;episodeIssue="Configura le sorgenti oppure continua da Stremio.";if automatic{returnToStremioAutomatically()};return}
+        guard let config=configuration else{fallbackEpisode=target;episodeIssue="Configura le sorgenti oppure continua da Stremio.";if automatic{returnToStremioAutomatically()};return false}
         episodeRequest=UUID();let token=episodeRequest
         episodeBusy=true;episodeIssue=nil;fallbackEpisode=nil
         if automatic{updateActivity(status:"Preparo la prossima puntata")}
@@ -154,6 +218,7 @@ import AVFAudio
                 if automatic{self.returnToStremioAutomatically()}
             }
         }
+        return true
     }
     @Published var showSetup = false
     @Published private(set) var sourceRevision = UUID()
@@ -590,8 +655,8 @@ import AVFAudio
         if let positionKey { UserDefaults.standard.set(0,forKey:positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated") }
         sourceResume=nil;hasLoaded=false;lastGoodPosition=0;lastConfirmedPosition=nil
         loadedMediaSessionID=nil;timeline.reset();recovery.reset();progress.reset()
-        stopLocalProcessing();message="Riproduzione terminata."
-        if continueSeries {moveEpisode(1,automatic:true)}
+        stopLocalProcessing();playing=false;message="Riproduzione terminata."
+        if continueSeries {scheduleUpcomingEpisode()}
     }
     private func prepareDirectControls() {
         guard connected, ownsCurrentMedia, let session = castSession,
@@ -851,6 +916,7 @@ import AVFAudio
         startPlayback(requestedPosition:nil,autoplay:playWhenReady)
     }
     private func startPlayback(requestedPosition: Double?, autoplay: Bool) {
+        clearUpcomingEpisode()
         guard let prepared, client != nil else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loading, !loadPending, subtitleRequest == nil else { return }
         guard embeddedCaptionTask == nil || selectedEmbeddedText else { return }
@@ -1642,6 +1708,7 @@ import AVFAudio
         }
     }
     func stopPlayback() {
+        clearUpcomingEpisode()
         Task { if !(await handleCommand("stop")) { endPlayback() } }
     }
     private func endPlayback() {
@@ -1650,6 +1717,7 @@ import AVFAudio
         resetPlayback(); sourceResume = nil; hasLoaded = false; playing = false; message = "Riproduzione interrotta."
     }
     private func backgroundProcessingExpired() {
+        clearUpcomingEpisode()
         // User cancellation or system expiration must not spawn another job.
         backgroundServiceStopped=true
         savePlaybackPosition(phase:"background_expired")
@@ -1863,6 +1931,7 @@ import AVFAudio
         if success { updateStatus() }
     }
     private func resetPlayback(preserveAutoplay:Bool=false) {
+        clearUpcomingEpisode()
         backgroundServiceStopped=false
         syncStremioProgress(force:true)
         if !preserveAutoplay{episodeAutoplay=nil}
