@@ -16,16 +16,16 @@ Cast Bridge is independent of VideoLAN. It does not redistribute VideoLAN brandi
 
 ## FFmpegKit Extended
 
-The LGPL base build of FFmpegKit Extended copies compatible original video packets into fragmented MP4 and selects or converts audio, including TrueHD/MLP omitted from the pinned VideoLAN distribution. Output uses a bounded local socket. Video conversion can receive selected video/audio/subtitle packets through a private Matroska loopback stream. All processing runs on the phone.
+The LGPL video build of FFmpegKit Extended copies compatible original video packets into fragmented MP4 and selects or converts audio, including TrueHD/MLP omitted from the pinned VideoLAN distribution. Output uses a bounded local socket. Video conversion can receive selected video/audio/subtitle packets through a private Matroska loopback stream. All processing runs on the phone.
 
 - Copyright Akash Patel, FFmpeg authors and contributors.
 - License: LGPL 3.0 or later. Included texts: ThirdPartyLicenses/LGPL-3.0.txt and GPL-3.0.txt (referenced by LGPL).
 - Source/build scripts: https://github.com/akashskypatel/ffmpeg-kit-builders/tree/fac2076d06a473b8e1c1ed5a1fabe52ee974a5c0
-- Release: v0.11.2-ios, bundle-base-ios-universal-lgpl.xcframework.zip.
-- SHA256: 2c152562cd107281cf2a8034ac8eb45629497f5eec2fb346f29ba9d0a62bde5f.
+- Release: v0.11.2-ios, bundle-video-ios-universal-lgpl.xcframework.zip.
+- SHA256: 772310d94274a5721e302960bc3f6aab706115409cb03dd2839d67fd4f718891.
 - The pinned build declares CONFIG_GPL=0, CONFIG_NONFREE=0, CONFIG_TRUEHD_DECODER=1, CONFIG_AAC_ENCODER=1 and CONFIG_SECURETRANSPORT=1.
 
-The dependency is dynamically linked. To relink a modified version, build the same base LGPL variant from the supplied upstream scripts, replace the archive in ThirdParty/CastFFmpegKit.podspec, run pod install and rebuild this app from source. CastFFmpegBridge.h declares only the public C ABI needed by this integration; no library binary is modified.
+The dependency is dynamically linked. To relink a modified version, build the same video LGPL variant from the supplied upstream scripts, replace the archive in ThirdParty/CastFFmpegKit.podspec, run pod install and rebuild this app from source. CastFFmpegBridge.h declares only the public C ABI needed by this integration; no library binary is modified.
 
 
 ## Independent caption receiver

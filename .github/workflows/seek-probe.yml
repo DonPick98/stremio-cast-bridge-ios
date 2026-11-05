@@ -1,8 +1,5 @@
 name: Isolate native overlay seek timing
 on:
-  push:
-    branches: [test/background-processing-20261104]
-    paths: [Sources/EmbeddedMediaEngine.swift, Sources/NativeEngineValidation.swift, .github/workflows/seek-probe.yml, Tests/verify-seek-trials.mjs, Sources/AudioRepairPipe.swift, Podfile, ThirdParty/CastFFmpegKitAssProbe.podspec]
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,6 +12,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Boot simulator while building
+        run: |
+          device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid))')
+          xcrun simctl boot "$device" || true
       - name: Install native engines
         env:
           LANG: en_US.UTF-8

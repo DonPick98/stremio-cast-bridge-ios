@@ -267,7 +267,7 @@ import AVFAudio
         let external: URL?
         let extracted: URL?
         let captionIdentity:String
-        let bitmapDelay:Double
+        let overlayDelay:Double
     }
     private var nativeSelection: NativeSelection?
     private var streamOffset: Double { nativeEngine?.offset ?? 0 }
@@ -889,7 +889,7 @@ import AVFAudio
         }
         let appearance = burnedSubtitle == "none" ? SubtitleAppearance() : SubtitleAppearance.load()
         let bitmapSubtitle=prepared.subtitles.first(where:{$0.key==burnedSubtitle})?.codec.lowercased()=="bdpg"
-        let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity,bitmapDelay:bitmapSubtitle ? subtitleDelay:0)
+        let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity,overlayDelay:burnedSubtitle != "none" ? subtitleDelay:0)
         // Burning a subtitle is not a permanent reason to re-encode the movie.
         // Re-evaluate the original-video route when the selected tracks change.
         let previousFallback=localFallbackLevel
@@ -963,7 +963,7 @@ import AVFAudio
                         let repairAudio = AudioRepairPipe.required(audioTrack?.codec ?? "")
                         let audioIndex = prepared.audio.firstIndex(where:{$0.key == audio}) ?? 0
                         let subtitleIndex = prepared.subtitles.firstIndex(where:{$0.key == burnedSubtitle})
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video,bitmapSubtitle:bitmapSubtitle,audioCodec:audioTrack?.codec ?? "")
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video,bitmapSubtitle:bitmapSubtitle,audioCodec:audioTrack?.codec ?? "",subtitleTrack:prepared.subtitles.first(where:{$0.key==burnedSubtitle}))
                         try self.validateStream(source:sourceToken,stream:streamToken)
                         guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, separateCaption ? self.captionIsIndependent:self.selectedSubtitle == subtitle,
                               separateCaption || (self.externalSubtitleURL == selection.external && self.subtitleIdentity == selection.captionIdentity),
@@ -1324,7 +1324,7 @@ import AVFAudio
             guard subtitleRequest == nil else { return }; load(preservePosition:true); return
         }
         if selectedSubtitle.hasPrefix("vlc_") {
-            if nativeEngine?.usesBitmapOverlay == true,lastAppliedSubtitleDelay != subtitleDelay { load(preservePosition:true);return }
+            if nativeEngine?.requiresOverlayRestart == true,lastAppliedSubtitleDelay != subtitleDelay { load(preservePosition:true);return }
             nativeEngine?.setBurnedSubtitleDelay(subtitleDelay); lastAppliedSubtitleDelay = subtitleDelay; return
         }
         guard subtitleRequest == nil else { return }

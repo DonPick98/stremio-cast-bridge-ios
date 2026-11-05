@@ -24,7 +24,7 @@ enum EmbeddedMediaError: LocalizedError {
 #endif
     enum VideoMode: Equatable { case copy, ffmpegH264, hardwareH264, softwareVP8 }
     static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false,bitmap:Bool = false) -> [VideoMode] {
-        if burn,bitmap,fallbackLevel < 2 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
+        if burn,fallbackLevel < 2 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
         let legacy = ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "")
         // The pinned LGPL FFmpeg build lacks a working software AV1 decoder
         // on this platform; VLC's bundled decoder handles this source instead.
@@ -62,6 +62,8 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var running = false
     private(set) var failed = false
     private(set) var usesBitmapOverlay = false
+    private var usesTextOverlay=false
+    var requiresOverlayRestart:Bool {usesBitmapOverlay || usesTextOverlay}
     private(set) var diagnosticMode = VideoMode.copy
     var backendExitCode:Int64? {audioRepair?.exitCode}
     private var startedStream = false
@@ -150,7 +152,7 @@ enum EmbeddedMediaError: LocalizedError {
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false,audioCodec:String = "") async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false,audioCodec:String = "",subtitleTrack:RDTrack? = nil) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         diagnosticMode = videoMode
         offset = start.isFinite ? max(0,start) : 0
@@ -171,13 +173,34 @@ enum EmbeddedMediaError: LocalizedError {
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
         usesBitmapOverlay = videoMode == .ffmpegH264 && bitmapSubtitle && subtitleID != nil
-        if ((videoMode == .copy || videoMode == .ffmpegH264) && subtitleID == nil) || usesBitmapOverlay {
+        usesTextOverlay = videoMode == .ffmpegH264 && !bitmapSubtitle && subtitleID != nil
+        var textCaption:CaptionBurnDocument?
+        if usesTextOverlay {
+            guard let ordinal=subtitleIndex else{throw EmbeddedMediaError.metadata}
+            let catalog=try await CaptionExtractor.catalog(input)
+            let track:CaptionTrack
+            if let subtitleTrack {track=try catalog.selected(ordinal:ordinal,vlcID:subtitleID,language:subtitleTrack.language,codec:subtitleTrack.codec)}
+            else {
+                guard let found=catalog.tracks.first(where:{$0.ordinal==ordinal}) else{throw EmbeddedMediaError.metadata}
+                track=found
+            }
+            guard track.isText else{throw EmbeddedMediaError.metadata}
+            let cache=CaptionDocumentCache(),key=CaptionDocumentCache.key(input:input,track:"vlc_\(subtitleID!)")
+            let text:String
+            if let cached=cache.get(key){text=cached}
+            else {text=try await CaptionExtractor.fullDocument(input:input,track:track);cache.put(text,key:key)}
+            try Task.checkCancellation()
+            let fonts=try await CaptionExtractor.fonts(input,catalog:catalog)
+            try Task.checkCancellation()
+            textCaption=CaptionBurnDocument(text:text,fonts:fonts,appearance:style,delay:subtitleDelay)
+        }
+        if ((videoMode == .copy || videoMode == .ffmpegH264) && subtitleID == nil) || usesBitmapOverlay || usesTextOverlay {
             // VLC's H.264 packetizer can drop/reorder B frames on remux. FFmpeg
             // copies every original packet and normalizes the selected audio.
             directRemux = true; running = true; producerEnded = false
             observeLifecycle(); updateBackground()
             let repair = AudioRepairPipe(); audioRepair = repair
-            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:videoMode == .ffmpegH264 ? video : nil,bitmapSubtitleIndex:usesBitmapOverlay ? subtitleIndex:nil,subtitleDelay:subtitleDelay)
+            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:videoMode == .ffmpegH264 ? video : nil,bitmapSubtitleIndex:usesBitmapOverlay ? subtitleIndex:nil,subtitleDelay:subtitleDelay,textCaption:textCaption)
             producerMonitor = Task { [weak self] in
                 while !Task.isCancelled {
                     guard let self, self.running else { return }
@@ -403,6 +426,7 @@ enum EmbeddedMediaError: LocalizedError {
 #if CAST_ENGINE_TESTING
     private var testingVideoStopped = true
     private var testingStoppedRepair: AudioRepairPipe?
+    var testingRenderDirectory:URL? {audioRepair?.testingRenderDirectory}
     var testingStopCompleted: Bool { testingVideoStopped && (testingStoppedRepair?.testingStopCompleted ?? true) }
     func testingDeliveredBytes() async -> Int { await proxy?.testingDeliveredBytes() ?? 0 }
     func testingPauseDrained() async -> Bool { await proxy?.testingPauseDrained() ?? false }

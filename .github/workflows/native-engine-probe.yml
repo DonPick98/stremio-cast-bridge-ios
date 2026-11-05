@@ -1,7 +1,7 @@
 name: Validate embedded iOS media engine
 on:
   push:
-    branches: [native/embedded-media-engine, fix/playback-recovery-20261103]
+    branches: [native/embedded-media-engine, fix/playback-recovery-20261103, test/background-processing-20261104]
   workflow_dispatch:
 permissions:
   contents: read
@@ -74,7 +74,7 @@ jobs:
           cp -R "$RUNNER_TEMP/codec-matrix" "$data/Documents/CodecSamples"
           mkdir -p native-engine-report
           collect_evidence() {
-            find "$data/Documents" -type f \( -name 'engine-validation.json' -o -name 'gateway-*' -o -name 'matrix-*' -o -name 'quality-*' -o -name 'repair-*' -o -name 'stdio*' -o -name 'background-*.json' -o -name 'decoder-trial*' \) -exec cp '{}' native-engine-report/ \; || true
+            find "$data/Documents" -type f \( -name 'engine-validation.json' -o -name 'gateway-*' -o -name 'matrix-*' -o -name 'quality-*' -o -name 'repair-*' -o -name 'stdio*' -o -name 'background-*.json' -o -name 'decoder-trial*' -o -name 'text-overlay-*' \) -exec cp '{}' native-engine-report/ \; || true
           }
           trap collect_evidence EXIT
           SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch --stdout="$data/Documents/stdio.log" --stderr="$data/Documents/stdio-error.log" "$device" app.example.castbridge
@@ -108,6 +108,7 @@ jobs:
               find "$data/Documents" -name 'caption-window-*' -exec cp '{}' native-engine-report/ \;
               collect_evidence
               cat native-engine-report/engine-validation.json
+              node Tests/verify-text-overlay.mjs native-engine-report "$RUNNER_TEMP/codec-matrix/caption-hevc-eac3.mkv"
               node Tests/verify-decoder-trial.mjs native-engine-report "$RUNNER_TEMP/codec-matrix/caption-hevc-eac3.mkv"
               tail -n 50 "$data/Documents/stdio.log"
               node Tests/verify-decoded-media.mjs native-engine-report Tests/CodecSamples/h264-ac3.mkv

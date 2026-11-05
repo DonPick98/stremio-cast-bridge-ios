@@ -1,3 +1,27 @@
+# Candidata48 — rendering testo FFmpeg/libass con documenti bounded
+
+Prototipo locale iOS ca0aa416 /42015146268/artifact13409701754: libass PASSA gate
+rigoroso con210frame/210, prime identità79..90, gap42ms. Le quattro varianti VLC
+sul backend video non hanno completato prepare (nessun confronto frame lì);
+i risultati VLC affidabili restano ddbeb9b con basebackend. Non attribuire a
+sola microprecisione la soluzione. CLI locale: anche VTT completo, stile e delay
++0.5s passati (pixel quiet/on/quiet) con210frame e timeline corretta.
+
+48 usa il backend LGPL video pinned v0.11.2, SHA772310d94274a5721e302960bc3f6aab706115409cb03dd2839d67fd4f718891.
+Primo percorso FFmpeg anche per testo integrato. Prima estrae/cache documento
+completo1MiB con timeout120s, catalogo2MiB e font bounded12MiB/8file; selezione
+convalida indice/codec/lingua. Renderer riceve soltanto file VTT/font locali privati;
+nessuna riapertura URL remoto nel filtro. Rispetta stile e shift timeline/delay,
+con riavvio e cache-key aggiornata per modifiche delay. Directory rimossa dopo
+rilascio backend, anche stop/errori. Percorsi sidecar/OpenSubtitles restano.
+
+Nuovo gate text-overlay: identità completa, testo negli intervalli attesi con
++0.5s, tono440Hz/stereo e cleanup. Suite nativa completa sul branch test; NON
+promuovere a fix o consegnare48 prima di gate estesi. IPA47 resta ultima consegnata.
+Il gate seek originale non è allentato. Default receiver invariato, nessun deploy.
+
+---
+
 # CB009/021 — nessuna variante VLC supera il gate, prova libass locale
 
 Esperimento ddbeb9b /42012879991/artifact13407854195: baseline e decoder software

@@ -1,6 +1,13 @@
 import Foundation
 import Darwin
 
+struct CaptionBurnDocument {
+    let text:String
+    let fonts:[CaptionFontData]
+    let appearance:SubtitleAppearance
+    let delay:Double
+}
+
 /// Copies video packets and selects/normalizes audio. fMP4 goes directly to
 /// the bounded output socket; video conversion receives Matroska over loopback.
 @MainActor final class AudioRepairPipe {
@@ -13,6 +20,7 @@ import Darwin
     static func required(_ codec:String) -> Bool { ["trhd","truehd","mlp"].contains(codec.lowercased()) }
     private var diagnosticPhase="normalize"
     private var handle: UnsafeMutableRawPointer?
+    private var renderDirectory:URL?
     // Read synchronously on MainActor, while this instance still owns session.
     // No raw backend output or media identifiers enter the diagnostic report.
     func productionMetrics()->[String:String]? {
@@ -41,6 +49,7 @@ import Darwin
 #if CAST_ENGINE_TESTING
     private(set) var testingStopCompleted = true
     var testingOutput: URL?
+    var testingRenderDirectory:URL? {renderDirectory}
     var testingASSInput:URL?
     var testingVideoToolboxDecoder=false
     var testingDuration:Double?
@@ -55,7 +64,7 @@ import Darwin
     }
 #endif
 
-    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0) async throws -> URL {
+    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0,textCaption:CaptionBurnDocument? = nil) async throws -> URL {
         _ = Self.initialized
         diagnosticPhase=outputFD==nil ? "normalize":transcodeVideo==nil ? "remux":"encode"
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
@@ -76,6 +85,29 @@ import Darwin
 #endif
         if outputFD != nil { useHTTP = false }
         url = selectedPath
+        var textFilter:String?
+        if let caption=textCaption {
+            guard transcodeVideo != nil,bitmapSubtitleIndex == nil,caption.delay.isFinite,abs(caption.delay)<=300,
+                  caption.text.utf8.count<=1_048_576,caption.text.hasPrefix("WEBVTT"),caption.fonts.count<=8,
+                  caption.fonts.reduce(0,{$0+$1.data.count})<=12_582_912 else{throw EmbeddedMediaError.encoder}
+            let directory=FileManager.default.temporaryDirectory.appendingPathComponent("CastCaptionRender-"+UUID().uuidString)
+            renderDirectory=directory
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+            let file=directory.appendingPathComponent("document.vtt")
+            try Data(caption.text.utf8).write(to:file,options:.atomic)
+            for (i,font) in caption.fonts.enumerated() {
+                guard ["ttf","otf","woff","woff2"].contains(font.kind),font.data.count<=2_097_152 else{throw EmbeddedMediaError.encoder}
+                try font.data.write(to:directory.appendingPathComponent("font-\(i).\(font.kind)"),options:.atomic)
+            }
+            // Both paths are generated inside the sandbox, not provider input.
+            guard file.path.range(of:"^[A-Za-z0-9/_. -]+$",options:.regularExpression) != nil else{throw EmbeddedMediaError.encoder}
+            let style=caption.appearance.normalized
+            let font=style.font=="serif" ? "Georgia":style.font=="mono" ? "Courier New":"Arial"
+            let color=["white":"FFFFFF","yellow":"00FFFF","cyan":"FFFF00","green":"00FF00"][style.color] ?? "FFFFFF"
+            let background=String(format:"%02X000000",Int((1-style.background)*255))
+            let settings="FontName=\(font),FontSize=\(18*style.scale),PrimaryColour=&H00\(color),BackColour=&H\(background),BorderStyle=\(style.background>0 ? 3:1),Outline=\(style.outline ? 1.5:0),Shadow=0"
+            textFilter="setpts=PTS+\(position-caption.delay)/TB,subtitles=filename='\(file.path)':fontsdir='\(directory.path)':force_style='\(settings)',setpts=PTS-STARTPTS"
+        }
         var args = ["-hide_banner","-nostdin","-loglevel","quiet","-y"]
 #if CAST_ENGINE_TESTING
         args[3] = "error"
@@ -114,13 +146,14 @@ import Darwin
             args += ["-vf",filter]
         }
 #endif
+        if let textFilter {args += ["-vf",textFilter+","+scale]}
         if let video = transcodeVideo {
             // Software decode legacy MPEG-4 ASP, then encode a Cast-compatible
             // H.264 stream directly. Do not force 30 fps or upscale SD sources.
             args += ["-c:v","h264_videotoolbox","-allow_sw","1","-realtime","1","-pix_fmt","yuv420p",
                      "-profile:v","high","-level:v","4.1","-b:v",String(video.conversionBitrate * 1000),
                      "-fps_mode",video.conversionFrameRate == nil ? "passthrough":"cfr","-g",String(video.conversionKeyframeInterval)]
-            var needsScale=bitmapSubtitleIndex == nil
+            var needsScale=bitmapSubtitleIndex == nil && textFilter == nil
 #if CAST_ENGINE_TESTING
             if testingASSInput != nil {needsScale=false}
 #endif
@@ -181,6 +214,7 @@ import Darwin
         return result != 0 && errno == EADDRINUSE
     }
     func stop() {
+        let directory=renderDirectory;renderDirectory=nil
         monitor?.cancel(); monitor = nil
         if let handle {
 #if CAST_ENGINE_TESTING
@@ -192,11 +226,13 @@ import Darwin
             // last handle. Never block the player/UI during a seek or stop.
             DispatchQueue.global(qos:.utility).async { [weak self] in
                 ffmpeg_kit_handle_release(handle)
+                if let directory {try? FileManager.default.removeItem(at:directory)}
 #if CAST_ENGINE_TESTING
                 Task { @MainActor [weak self] in self?.testingStopCompleted = true }
 #endif
             }
         }
+        if handle == nil,let directory {try? FileManager.default.removeItem(at:directory)}
         handle = nil; url = nil
     }
 }
