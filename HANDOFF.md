@@ -1,3 +1,22 @@
+# CB009/021 — nessuna variante VLC supera il gate, prova libass locale
+
+Esperimento ddbeb9b /42012879991/artifact13407854195: baseline e decoder software
+212frame, gap125.125ms, prime identità73,73,77,77; clock fine elimina duplicati
+ma conserva73,75,77 prima del target79, gap83.416ms. Quattro output catturati,
+nessuno passa checkOverlaySeek: nessuna variante attivata in produzione.
+Nativo47/42010715495 concluso FAIL allo stesso seek; background65.036s/8.26MB,
+probe23.976 e controlli nativi passati, artifact13406869574. IPA47 invariata.
+
+Seconda prova: workflow seek-probe richiede CAST_ENGINE_ASS_TEST=1 solo durante
+pod install; Podfile normale continua a usare il backend base originale. Variante
+LGPL video v0.11.2 con SHA256 del release asset verificato, per libass. Nuovo
+trial usa soltanto fixture locale sintetica con subtitles filter e seek FFmpeg,
+riporta timeline originale al renderer prima di ribasare. NON è una funzione
+remota pronta: serve poi estrazione locale bounded/cache/fonti/font/style/delay,
+licenze distribuite e gate estesi prima della produzione. Nessuna nuova IPA48.
+
+---
+
 # CB009/021 — esperimento seek isolato, prodotto invariato
 
 Da a5f8fb2 / IPA47. Nuovo workflow seek-probe sul branchtest confronta baseline,

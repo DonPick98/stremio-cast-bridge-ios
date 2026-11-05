@@ -2,7 +2,7 @@ name: Isolate native overlay seek timing
 on:
   push:
     branches: [test/background-processing-20261104]
-    paths: [Sources/EmbeddedMediaEngine.swift, Sources/NativeEngineValidation.swift, .github/workflows/seek-probe.yml, Tests/verify-seek-trials.mjs]
+    paths: [Sources/EmbeddedMediaEngine.swift, Sources/NativeEngineValidation.swift, .github/workflows/seek-probe.yml, Tests/verify-seek-trials.mjs, Sources/AudioRepairPipe.swift, Podfile, ThirdParty/CastFFmpegKitAssProbe.podspec]
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,6 +18,7 @@ jobs:
       - name: Install native engines
         env:
           LANG: en_US.UTF-8
+          CAST_ENGINE_ASS_TEST: "1"
         run: pod install --repo-update
       - name: Prepare controlled source
         run: |
@@ -25,7 +26,7 @@ jobs:
           node Tests/make-codec-matrix.mjs "$RUNNER_TEMP/codec-matrix"
       - name: Build native experiment
         run: xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES CAST_ENGINE_VALIDATION=CAST_ENGINE_TESTING -jobs 1 -derivedDataPath "$RUNNER_TEMP/seek-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-      - name: Capture four timing variants and check frame identity
+      - name: Capture timing variants and local libass route and check frame identity
         run: |
           set -euo pipefail
           device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid))')
@@ -40,7 +41,7 @@ jobs:
           trap collect EXIT
           SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 SIMCTL_CHILD_CAST_ENGINE_SEEKTEST=1 xcrun simctl launch --stdout="$data/Documents/stdio.log" --stderr="$data/Documents/stdio-error.log" "$device" app.example.castbridge
           for i in $(seq 1 300); do
-            if test -f "$data/Documents/seek-trials.json" && node -e 'process.exit(require(process.argv[1]).trials.length===4?0:1)' "$data/Documents/seek-trials.json"; then
+            if test -f "$data/Documents/seek-trials.json" && node -e 'process.exit(require(process.argv[1]).trials.length===5?0:1)' "$data/Documents/seek-trials.json"; then
               collect
               node Tests/verify-seek-trials.mjs seek-evidence
               exit 0

@@ -220,6 +220,25 @@ import ObjectiveC
                 try? data.write(to:documents.appendingPathComponent("seek-trials.json"),options:.atomic)
             }
         }
+        let pipe=AudioRepairPipe()
+        let output=documents.appendingPathComponent("seek-trial-libass.mp4")
+        pipe.testingOutput=output;pipe.testingASSInput=input
+        var row:[String:Any]=["name":"libass","localSyntheticOnly":true]
+        do {
+            let source=try await EmbeddedMediaEngine.inspect(input)
+            _=try await pipe.start(input:input,position:3.25,audioIndex:1,subtitleIndex:nil,transcodeVideo:source.video)
+            for _ in 0..<600 {
+                if pipe.finished {break}
+                try await Task.sleep(nanoseconds:100_000_000)
+            }
+            row["captured"]=pipe.finished && !pipe.failed
+            row["exitCode"]=pipe.exitCode ?? -1
+        } catch {row["captured"]=false;row["code"]="conversion"}
+        pipe.stop();rows.append(row)
+        let report:[String:Any]=["productionUnchanged":true,"position":3.25,"trials":rows]
+        if let data=try? JSONSerialization.data(withJSONObject:report,options:.prettyPrinted) {
+            try? data.write(to:documents.appendingPathComponent("seek-trials.json"),options:.atomic)
+        }
     }
 
     /// Four-second synthetic A/B. These CPU figures describe this process in

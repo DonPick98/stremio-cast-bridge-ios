@@ -41,6 +41,7 @@ import Darwin
 #if CAST_ENGINE_TESTING
     private(set) var testingStopCompleted = true
     var testingOutput: URL?
+    var testingASSInput:URL?
     var testingVideoToolboxDecoder=false
     var testingDuration:Double?
     private var diagnostics: URL?
@@ -104,13 +105,26 @@ import Darwin
         if let subtitleIndex { args += ["-map","0:s:\(subtitleIndex)","-c:s","copy"] }
         else { args += ["-sn"] }
         args += ["-dn"]
+#if CAST_ENGINE_TESTING
+        if let ass=testingASSInput,ass.isFileURL {
+            // Only a local synthetic input is permitted. This is not a remote
+            // subtitle-fetch implementation and cannot be enabled in release.
+            let file=ass.path.replacingOccurrences(of:"\\",with:"\\\\").replacingOccurrences(of:":",with:"\\:").replacingOccurrences(of:"'",with:"'\\''")
+            let filter="setpts=PTS+\(position)/TB,subtitles=filename='\(file)':si=0,setpts=PTS-STARTPTS,\(scale)"
+            args += ["-vf",filter]
+        }
+#endif
         if let video = transcodeVideo {
             // Software decode legacy MPEG-4 ASP, then encode a Cast-compatible
             // H.264 stream directly. Do not force 30 fps or upscale SD sources.
             args += ["-c:v","h264_videotoolbox","-allow_sw","1","-realtime","1","-pix_fmt","yuv420p",
                      "-profile:v","high","-level:v","4.1","-b:v",String(video.conversionBitrate * 1000),
                      "-fps_mode",video.conversionFrameRate == nil ? "passthrough":"cfr","-g",String(video.conversionKeyframeInterval)]
-            if bitmapSubtitleIndex == nil { args += ["-vf",scale] }
+            var needsScale=bitmapSubtitleIndex == nil
+#if CAST_ENGINE_TESTING
+            if testingASSInput != nil {needsScale=false}
+#endif
+            if needsScale { args += ["-vf",scale] }
             if let rate = video.conversionFrameRate { args += ["-r",String(rate)] }
         } else { args += ["-c:v","copy"] }
         if copyAudio { args += ["-c:a","copy"] }
