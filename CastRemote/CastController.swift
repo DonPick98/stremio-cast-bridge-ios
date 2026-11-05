@@ -1735,7 +1735,9 @@ import AVFAudio
             }
             var success = false
             if !connected && !localProcessing { success = await directCommand("seek:\(target)") }
+            guard !Task.isCancelled,sourceRequests.accepts(sourceToken),seekIntent.accepts(seekToken) else{return}
             if !success { success = await performActivityCommand("seek:\(target)") }
+            guard !Task.isCancelled,sourceRequests.accepts(sourceToken),seekIntent.accepts(seekToken) else{return}
             if !success && !localProcessing { success = await directCommand("seek:\(target)") }
             guard !Task.isCancelled,sourceRequests.accepts(sourceToken),seekIntent.accepts(seekToken) else{return}
             if !success { timeline.cancelActive(); message = "La TV non ha confermato lo spostamento. Puoi riprovare." }
@@ -1915,10 +1917,11 @@ import AVFAudio
         let sourceToken = sourceRequests.generation
         if client == nil || !connected { reconnectControls() }
         for _ in 0..<20 {
+            guard !Task.isCancelled else{return false}
             if client != nil { break }
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
-        guard sourceRequests.accepts(sourceToken) else { return false }
+        guard !Task.isCancelled,sourceRequests.accepts(sourceToken) else { return false }
         if command == "stop" { endPlayback(); return true }
         guard !loadPending, !checkingStream, commandContinuation == nil else { return false }
         guard let client, ownsCurrentMedia else {
