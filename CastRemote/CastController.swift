@@ -50,6 +50,10 @@ import AVFAudio
                 self.cancelUpcomingEpisode()
             }
             defer{lease.end()}
+            guard lease.valid || UIApplication.shared.applicationState == .active else {
+                if let self,self.autoplayWaitToken==token {self.cancelUpcomingEpisode()}
+                return
+            }
             while !Task.isCancelled {
                 guard let self,self.autoplayWaitToken==token else{return}
                 guard wait.matches(current:self.currentEpisodeID,
@@ -912,6 +916,7 @@ import AVFAudio
         startPlayback(requestedPosition:nil,autoplay:playWhenReady)
     }
     private func startPlayback(requestedPosition: Double?, autoplay: Bool) {
+        clearUpcomingEpisode()
         guard let prepared, client != nil else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loading, !loadPending, subtitleRequest == nil else { return }
         guard embeddedCaptionTask == nil || selectedEmbeddedText else { return }
