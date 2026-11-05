@@ -8,9 +8,13 @@ import Foundation
         precondition(converted.events==8 && converted.skipped==3)
         precondition(converted.text.components(separatedBy:"-->").count==6)
         precondition(converted.text.contains("Valid\nSecond line") && converted.text.contains("Spoken text"))
-        precondition(converted.text.contains("00:00:10.000 --> 00:00:12.000"))
+        precondition(converted.text.contains("00:00:09.990 --> 00:00:12.000"))
         precondition(converted.text.contains("Overlap, with comma &amp; &lt;literal&gt;"))
         precondition(!converted.text.contains("m 0 0") && !converted.text.contains("Zero") && !converted.text.contains("Hidden comment"))
+        // Higher-precision imported ASS is handled by our parser, but stays
+        // outside the native mux fixture (ASS packets use centiseconds).
+        let rounding=try SubtitleDocument.embeddedASS(Data("[Events]\nDialogue: 0,0:00:09.9999,0:00:12.00,Default,,0,0,0,,Rounding".utf8))
+        precondition(rounding.text.contains("00:00:10.000 --> 00:00:12.000"))
         let original=try SubtitleDocument.normalize(Data(contentsOf:fixture))
         precondition(original==converted.text)
         let shift=try WebVTTTimeline.rebased(converted.text,offset:7,delay:0)
