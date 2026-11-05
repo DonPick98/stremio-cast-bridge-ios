@@ -82,7 +82,7 @@ enum DirectCaptionPolicy {
     }
 }
 
-enum CaptionFailure:Error { case input,probe,track,unsupported,limit,timeout,process,network,cancelled }
+enum CaptionFailure:Error { case input,probe,track,unsupported,limit,timeout,process,empty,document,network,cancelled }
 enum CaptionFormat:String,Codable { case vtt,ass }
 struct CaptionTrack:Equatable {
     let index:Int

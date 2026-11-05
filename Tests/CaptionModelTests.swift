@@ -1,6 +1,23 @@
 import Foundation
 @main struct CaptionModelTests{
     static func main()throws{
+        // The old direct FFmpeg VTT path includes a zero-duration cue, a
+        // blank paragraph and drawing coordinates for this valid ASS script.
+        let fixture=URL(fileURLWithPath:#filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/captions-degenerate.ass")
+        let converted=try SubtitleDocument.embeddedASS(Data(contentsOf:fixture))
+        precondition(converted.events==8 && converted.skipped==3)
+        precondition(converted.text.components(separatedBy:"-->").count==6)
+        precondition(converted.text.contains("Valid\nSecond line") && converted.text.contains("Spoken text"))
+        precondition(converted.text.contains("00:00:10.000 --> 00:00:12.000"))
+        precondition(converted.text.contains("Overlap, with comma &amp; &lt;literal&gt;"))
+        precondition(!converted.text.contains("m 0 0") && !converted.text.contains("Zero") && !converted.text.contains("Hidden comment"))
+        let original=try SubtitleDocument.normalize(Data(contentsOf:fixture))
+        precondition(original==converted.text)
+        let shift=try WebVTTTimeline.rebased(converted.text,offset:7,delay:0)
+        precondition(String(decoding:shift,as:UTF8.self).contains("00:00:00.000 --> 00:00:02.000"))
+        for invalid in ["[Events]\nDialogue: 0,0:00:01.00,0:00:01.00,Default,,0,0,0,,zero", "[Events]\nComment: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,hidden"] {
+            do{_=try SubtitleDocument.embeddedASS(Data(invalid.utf8));preconditionFailure("Unusable ASS accepted")}catch{}
+        }
         let data=Data(#"{"streams":[{"index":0,"codec_type":"video","codec_name":"hevc"},{"index":4,"codec_type":"subtitle","codec_name":"hdmv_pgs_subtitle","tags":{"language":"eng"}},{"index":7,"codec_type":"subtitle","codec_name":"ass","tags":{"language":"ita"}},{"index":12,"codec_type":"attachment","tags":{"filename":"../untrusted/font.ttf"}}]}"#.utf8)
         let catalog=try CaptionCatalog.parse(data)
         precondition(catalog.tracks.count==2&&catalog.fonts.first?.index==12)

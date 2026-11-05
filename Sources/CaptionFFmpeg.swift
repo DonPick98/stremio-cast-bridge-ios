@@ -103,11 +103,14 @@ import AVFAudio
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
         var cleanupWithProcess=false
         defer{if !cleanupWithProcess{try? FileManager.default.removeItem(at:directory)}}
-        let files=tracks.map{directory.appendingPathComponent("\($0.index).vtt")}
+        let files=tracks.map{directory.appendingPathComponent("\($0.index)."+($0.isASS ? "ass":"vtt"))}
         var args=["-hide_banner","-nostdin","-loglevel","error","-nostats","-y","-copyts"]
         if !input.isFileURL{args += CaptionArguments.networkInputOptions}
         args += ["-i",input.isFileURL ? input.path:input.absoluteString]
-        for (track,file) in zip(tracks,files){args += ["-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-fs","1048577","-f","webvtt",file.path]}
+        // As in Jellyfin, preserve native ASS events during demux, then parse
+        // and serialize text separately. FFmpeg VTT flattens drawings into text
+        // and can preserve zero-duration/blank-line events as invalid WebVTT.
+        for (track,file) in zip(tracks,files){args += ["-map","0:\(track.index)","-an","-vn","-dn","-c:s",track.isASS ? "copy":"webvtt","-fs","1048577","-f",track.isASS ? "ass":"webvtt",file.path]}
         let audioOwner="caption-"+UUID().uuidString
         CastAudioSession.shared.acquire(audioOwner)
         defer{CastAudioSession.shared.release(audioOwner)}
@@ -130,8 +133,18 @@ import AVFAudio
                 if track.index==tracks[0].index{throw CaptionFailure.limit};continue
             }
             let data=try Data(contentsOf:file)
-            // An empty optional track must not discard the selected document.
-            if let text=try? SubtitleDocument.normalize(data+Data([10])){results[track.index]=text}
+            do {
+                guard !data.isEmpty else{throw CaptionFailure.empty}
+                if track.isASS {
+                    let converted=try SubtitleDocument.embeddedASS(data)
+                    results[track.index]=converted.text
+                    PlaybackDiagnostics.record(.tracks,["phase":"caption_converted","kind":"ass","bytes":String(data.count),"tracks":String(converted.events),"dropped":String(converted.skipped)])
+                } else {results[track.index]=try SubtitleDocument.normalize(data+Data([10]))}
+            }catch {
+                // No raw stderr, paths, subtitle text or stream URLs in logs.
+                PlaybackDiagnostics.record(.tracks,["phase":data.isEmpty ? "caption_empty":"caption_document_invalid","kind":track.isASS ? "ass":"vtt","bytes":String(data.count)])
+                if track.index==tracks[0].index{throw data.isEmpty ? CaptionFailure.empty:CaptionFailure.document}
+            }
         }
         guard results[tracks[0].index] != nil else{throw CaptionFailure.process}
         return results

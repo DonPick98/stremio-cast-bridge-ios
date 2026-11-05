@@ -30,6 +30,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+// ASS event parsing also adapts Subtitle Edit (Nikolaj Olsson, MIT).
+// Full notice: Docs/SubtitleEdit-LICENSE; upstream revision is recorded below.
 import Foundation
 
 enum SubtitleDocument {
@@ -145,28 +147,80 @@ enum SubtitleDocument {
         return text
     }
     private static func ass(_ text:String) throws -> String {
-        var fields = ["Layer","Start","End","Style","Name","MarginL","MarginR","MarginV","Effect","Text"]
-        var result = "WEBVTT\n\n", events = false, count = 0
-        func stamp(_ value:String) throws -> String {
-            let parts = value.trimmingCharacters(in:.whitespaces).split(separator:":")
-            guard parts.count == 3, let h = Int(parts[0]), let m = Int(parts[1]), let s = Double(parts[2]), h >= 0, h < 10000, (0..<60).contains(m), s >= 0, s < 60 else { throw StreamHeaderError.invalid }
-            let ms = Int((s*1000).rounded())
-            return String(format:"%02d:%02d:%02d.%03d",h,m,ms/1000,ms%1000)
+        try convertASS(text).text
+    }
+    /// Native extraction keeps the original ASS events instead of passing
+    /// through FFmpeg's WebVTT encoder (which can emit invalid empty cues and
+    /// blank paragraphs). Counts are safe for diagnostics; never log event text.
+    static func embeddedASS(_ data:Data) throws -> (text:String,events:Int,skipped:Int) {
+        guard !data.isEmpty,data.count<=1_048_576,let text=decode(data) else{throw StreamHeaderError.invalid}
+        return try convertASS(text.replacingOccurrences(of:"\r\n",with:"\n").replacingOccurrences(of:"\r",with:"\n"))
+    }
+    // Event-section, case-insensitive Format and per-event error isolation are
+    // adapted from Subtitle Edit SubStationAlpha.LoadSubtitle, MIT, revision
+    // 540ade3229bcdfb64493abb0b0309cb8dd483a1c. Swift bounded text-only port:
+    // omit comments/drawings/zero durations, preserve overlapping dialogue,
+    // sort by start stably, escape literal text before serializing WebVTT.
+    private static func convertASS(_ text:String) throws -> (text:String,events:Int,skipped:Int) {
+        var fields=["layer","start","end","style","name","marginl","marginr","marginv","effect","text"]
+        var events=false,seen=0,skipped=0
+        var cues:[(start:Int,end:Int,body:String,order:Int)]=[]
+        func clock(_ value:String)->Int? {
+            let p=value.trimmingCharacters(in:.whitespaces).split(separator:":",omittingEmptySubsequences:false)
+            guard p.count==3,let h=Int(p[0]),let m=Int(p[1]),let seconds=Double(p[2]),
+                  h>=0,h<10000,(0..<60).contains(m),seconds.isFinite,seconds>=0,seconds<60 else{return nil}
+            return (h*3600+m*60)*1000+Int((seconds*1000).rounded())
+        }
+        func stamp(_ n:Int)->String {String(format:"%02d:%02d:%02d.%03d",n/3_600_000,(n/60_000)%60,(n/1000)%60,n%1000)}
+        // Interpret drawing switches before removing tags, otherwise vector
+        // coordinates become visible dialogue. Transform tags do not execute
+        // drawing switches: only top-level \pN and \r reset drawing state.
+        func body(_ source:String)->String {
+            var output="",drawing=false,index=source.startIndex
+            while index<source.endIndex {
+                if source[index]=="{",let close=source[index...].firstIndex(of:"}") {
+                    let tag=String(source[source.index(after:index)..<close])
+                    var depth=0,top=""
+                    for c in tag {if c=="("{depth+=1};if depth==0{top.append(c)};if c==")"{depth=max(0,depth-1)}}
+                    let pattern=#"\\(?:p([0-9]+)(?=\s|\\|$)|r[^\\]*)"#
+                    if let regex=try? NSRegularExpression(pattern:pattern) {
+                        let ns=top as NSString
+                        for match in regex.matches(in:top,range:NSRange(location:0,length:ns.length)) {
+                            drawing=match.range(at:1).location != NSNotFound && (Int(ns.substring(with:match.range(at:1))) ?? 0)>0
+                        }
+                    }
+                    index=source.index(after:close);continue
+                }
+                if !drawing{output.append(source[index])}
+                index=source.index(after:index)
+            }
+            output=output.replacingOccurrences(of:"\\N",with:"\n").replacingOccurrences(of:"\\n",with:"\n").replacingOccurrences(of:"\\h",with:" ")
+            // A blank line terminates a WebVTT cue. ASS can contain several \N
+            // separators in one event; retain the nonempty lines as one cue.
+            output=output.components(separatedBy:"\n").map{$0.trimmingCharacters(in:.whitespaces)}.filter{!$0.isEmpty}.joined(separator:"\n")
+            return output.replacingOccurrences(of:"&",with:"&amp;").replacingOccurrences(of:"<",with:"&lt;").replacingOccurrences(of:">",with:"&gt;")
         }
         for raw in text.components(separatedBy:"\n") {
-            let line=raw.trimmingCharacters(in:.whitespaces)
-            if line.hasPrefix("[") { events = line.caseInsensitiveCompare("[Events]") == .orderedSame; continue }
-            guard events else { continue }
-            if line.lowercased().hasPrefix("format:") { fields = String(line.dropFirst(7)).components(separatedBy:",").map{$0.trimmingCharacters(in:.whitespaces)} }
-            if line.lowercased().hasPrefix("dialogue:"), let start = fields.firstIndex(where:{$0.caseInsensitiveCompare("Start") == .orderedSame}), let end = fields.firstIndex(where:{$0.caseInsensitiveCompare("End") == .orderedSame}), let body = fields.firstIndex(where:{$0.caseInsensitiveCompare("Text") == .orderedSame}) {
-                let values = line.dropFirst(9).split(separator:",",maxSplits:fields.count-1,omittingEmptySubsequences:false).map(String.init)
-                guard values.count == fields.count, body == fields.count-1 else { throw StreamHeaderError.invalid }
-                let caption = values[body].replacingOccurrences(of:#"\{[^}]*\}"#,with:"",options:.regularExpression).replacingOccurrences(of:"\\N",with:"\n").replacingOccurrences(of:"\\n",with:"\n").replacingOccurrences(of:"\\h",with:" ")
-                result += try stamp(values[start])+" --> "+stamp(values[end])+"\n"+caption+"\n\n"; count += 1
+            let line=raw.trimmingCharacters(in:.whitespacesAndNewlines),lower=line.lowercased()
+            if line.hasPrefix("["){events=lower=="[events]";continue}
+            if lower.hasPrefix("dialogue:") || lower.hasPrefix("dialog:"){events=true}
+            guard events else{continue}
+            if lower.hasPrefix("format:") {
+                fields=String(line.dropFirst(7)).components(separatedBy:",").map{$0.trimmingCharacters(in:.whitespaces).lowercased()};continue
             }
+            guard lower.hasPrefix("dialogue:") || lower.hasPrefix("dialog:") else{continue}
+            seen+=1
+            guard fields.count<=32,let start=fields.firstIndex(of:"start"),let end=fields.firstIndex(of:"end"),let textIndex=fields.firstIndex(of:"text"),textIndex==fields.count-1,
+                  let colon=line.firstIndex(of:":") else{skipped+=1;continue}
+            let values=line[line.index(after:colon)...].split(separator:",",maxSplits:fields.count-1,omittingEmptySubsequences:false).map(String.init)
+            guard values.count==fields.count,let first=clock(values[start]),let last=clock(values[end]),last>first else{skipped+=1;continue}
+            let caption=body(values[textIndex]);guard !caption.isEmpty else{skipped+=1;continue}
+            cues.append((first,last,caption,seen))
         }
-        guard count > 0 else { throw StreamHeaderError.invalid }
-        return try validated(result)
+        guard !cues.isEmpty else{throw StreamHeaderError.invalid}
+        cues.sort{$0.start==$1.start ? $0.order<$1.order:$0.start<$1.start}
+        let result="WEBVTT\n\n"+cues.map{stamp($0.start)+" --> "+stamp($0.end)+"\n"+$0.body}.joined(separator:"\n\n")+"\n\n"
+        guard result.utf8.count<=1_048_576 else{throw StreamHeaderError.tooLarge}
+        return (try validated(result),seen,skipped)
     }
 }
-

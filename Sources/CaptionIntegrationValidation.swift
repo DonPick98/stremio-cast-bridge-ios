@@ -28,6 +28,16 @@ import Foundation
         let singleDocument=try await CaptionExtractor.fullDocument(input:multi,track:chosen)
         func content(_ document:String)->[String]{document.components(separatedBy:"\n").filter{!$0.contains("-->")}}
         let multiPassed=multiCatalog.tracks.count==16 && chosen.index==1 && content(singleDocument)==content(complete)
+        // A real demux/convert regression, not a parser-only fixture: FFmpeg
+        // emits invalid VTT for zero-duration and blank-paragraph ASS events.
+        let problematic=root.appendingPathComponent("caption-degenerate.ass")
+        let problematicMKV=root.appendingPathComponent("caption-degenerate.mkv")
+        let mux=try CaptionProcess(["-hide_banner","-nostdin","-loglevel","error","-y","-i",input.path,"-i",problematic.path,"-map","1:0","-map","0:v:0","-c","copy",problematicMKV.path])
+        defer{mux.stop();try? FileManager.default.removeItem(at:problematicMKV)}
+        try await mux.wait(seconds:20)
+        let degenerateCatalog=try await CaptionExtractor.catalog(problematicMKV)
+        let repaired=try await CaptionExtractor.fullDocument(input:problematicMKV,track:degenerateCatalog.tracks[0])
+        let degeneratePassed=repaired.components(separatedBy:"-->").count==6 && repaired.contains("Valid\nSecond line") && repaired.contains("Spoken text") && repaired.contains("Overlap, with comma &amp; &lt;literal&gt;") && !repaired.contains("m 0 0") && !repaired.contains("Zero")
         let standard=StandardCaptionHost();defer{standard.stop()}
         try await standard.prepare(text:sparse,kind:2,identity:"late",delay:0,peer:"127.0.0.1",localIP:"127.0.0.1")
         let standardURLs=standard.urls
@@ -71,7 +81,7 @@ import Foundation
         var bad=URLComponents(url:stateURL,resolvingAgainstBaseURL:false)!;bad.queryItems=[URLQueryItem(name:"epoch",value:"wrong")]
         let(_,denied)=try await URLSession.shared.data(from:bad.url!)
         let gateway=(response as? HTTPURLResponse)?.statusCode==200 && body==Data("WEBVTT\n\n".utf8) && (response as? HTTPURLResponse)?.value(forHTTPHeaderField:"Access-Control-Allow-Origin")=="*" && (denied as? HTTPURLResponse)?.statusCode==410
-        return ["passed":results.count==6&&results.allSatisfy{$0["passed"] as? Bool==true}&&callbacks==0&&gateway&&fontPassed&&fullPassed&&batchPassed&&standardPassed&&multiPassed,"windows":results,"cancelledCleanly":callbacks==0,"gateway":gateway,"fontPreserved":fontPassed,"fullDocuments":fullPassed,"batchDocuments":batchPassed,"standardDirectText":standardPassed,"sixteenSSA":multiPassed]
+        return ["passed":results.count==6&&results.allSatisfy{$0["passed"] as? Bool==true}&&callbacks==0&&gateway&&fontPassed&&fullPassed&&batchPassed&&standardPassed&&multiPassed&&degeneratePassed,"windows":results,"cancelledCleanly":callbacks==0,"gateway":gateway,"fontPreserved":fontPassed,"fullDocuments":fullPassed,"batchDocuments":batchPassed,"standardDirectText":standardPassed,"sixteenSSA":multiPassed,"degenerateASS":degeneratePassed]
     }
 }
 #endif

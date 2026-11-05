@@ -1,3 +1,33 @@
+# Candidata52 — CB028 riaperto dopo prova hardware51
+
+Base df38ad5, branch fix/captions-background-20261105, PR9 draft. IPA51 fallisce
+ancora: catalogo16tracce riuscito, errore process successivo senza exit-code.
+Non attribuire il caso originale a una causa non ancora provata.
+
+Riproduzione concreta locale FFmpeg6.1.1: ASS con evento durata0 e \\N\\N
+produce WebVTT non valido pur con exit0. Validazione51 scarta l'intera traccia.
+Nuovo percorso: demux ASS/SSA originale (-c:s copy, -f ass), parser Swift
+text-only adattato dal trattamento eventi Subtitle Edit (MIT, licenza inDocs),
+poi WebVTT. Scarta commenti/disegni/durate0 ed eventi non interpretabili, isola
+le anomalie per evento, conserva overlap/virgole, ordina i tempi, escapeHTML e
+linee non vuote per evitare delimitatori VTT nel payload. Nessun parser generico
+VTT reso permissivo; altri codec/media/receiver/OpenSubtitles invariati.
+Diagnostica distingue exit FFmpeg, output vuoto, documento invalido e conteggi
+conversione; nessun testo/URL privato. Dimensione/timeout/cancellazione conservati.
+Test unitari e demux nativo suMKV con ASS problematico aggiunti. App/estensione52.
+
+Prima suite esatta51 42106877735: caption indipendenti/sixteenSSA PASSATI,
+righe audio/video decoder PASSATE; workflow FAILURE perché simulatore non entra
+in offscreen (comando openurl fallito, background.offscreen=false). Non è un
+passaggio della prova background né una regressione caption dimostrata.
+Parent51 42106360183 resta SUCCESSO distinto. Non indebolire le asserzioni.
+
+CI52 da acquisire; nessuna IPA52 dichiarata pronta. File privato originale
+non disponibile: prova iPhone/TV specifica necessaria, CB028 IN_CORSO. Non toccati
+accountStremio/altrefeatures. Non fare merge/main o pubblicazione release.
+
+---
+
 # IPA51 pronta — priorità SSA, CB027/028 (2026-11-05)
 
 Prodotto620f7544e840cbeff128b425e650a80d0dd95d5a; branch fix/captions-background-20261105,
