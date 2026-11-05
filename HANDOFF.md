@@ -1,3 +1,21 @@
+# Candidata48 — gate testo passato; correggere fallback VP8 troncato
+
+18fef57/42017281562/artifact13409969866: gate testo integrato bounded PASSATO
+210frame, identità79..90, audio440Hz/stereo, delay+0.5s e cleanup. Tutte35 righe
+matrice e6pixel-caption PASSATE; background65.039s/7.87MB e controlli PASSATI.
+Suite complessiva FAIL al quality vp82997: timeout -1001 e soli102/120frame,
+WebM incompleto. Non era un semplice ritardo da ignorare. Gate seek e quality
+successivi al decodecheck non eseguiti in CI: verificare senza abbassare soglie.
+
+Nuovo: softwareVP8 passa anch'esso a FFmpeg/libvpx, con drain encoder e EOF
+esplicito. Mantiene Vorbis192k/stereo; preferisce libvorbis se disponibile, altrimenti
+encoder Vorbis nativo con flag experimental esplicito. Encoder disponibili letti
+via API C pubblica della versione pinned, senza ipotesi sulla build. Il gate testo
+ora copre anche VP8 con clock, audio, pixel e cleanup. Nessuna nuova IPA pronta;
+47 resta ultima consegnata. Serve nuova suite prima di promozione/IPA48.
+
+---
+
 # Candidata48 — rendering testo FFmpeg/libass con documenti bounded
 
 Prototipo locale iOS ca0aa416 /42015146268/artifact13409701754: libass PASSA gate

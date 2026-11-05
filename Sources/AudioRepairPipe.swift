@@ -21,6 +21,7 @@ struct CaptionBurnDocument {
     private var diagnosticPhase="normalize"
     private var handle: UnsafeMutableRawPointer?
     private var renderDirectory:URL?
+    private(set) var softwareAudioEncoder:String?
     // Read synchronously on MainActor, while this instance still owns session.
     // No raw backend output or media identifiers enter the diagnostic report.
     func productionMetrics()->[String:String]? {
@@ -64,7 +65,7 @@ struct CaptionBurnDocument {
     }
 #endif
 
-    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0,textCaption:CaptionBurnDocument? = nil) async throws -> URL {
+    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0,textCaption:CaptionBurnDocument? = nil,softwareVideo:Bool=false) async throws -> URL {
         _ = Self.initialized
         diagnosticPhase=outputFD==nil ? "normalize":transcodeVideo==nil ? "remux":"encode"
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
@@ -148,22 +149,35 @@ struct CaptionBurnDocument {
 #endif
         if let textFilter {args += ["-vf",textFilter+","+scale]}
         if let video = transcodeVideo {
-            // Software decode legacy MPEG-4 ASP, then encode a Cast-compatible
-            // H.264 stream directly. Do not force 30 fps or upscale SD sources.
-            args += ["-c:v","h264_videotoolbox","-allow_sw","1","-realtime","1","-pix_fmt","yuv420p",
-                     "-profile:v","high","-level:v","4.1","-b:v",String(video.conversionBitrate * 1000),
-                     "-fps_mode",video.conversionFrameRate == nil ? "passthrough":"cfr","-g",String(video.conversionKeyframeInterval)]
+            if softwareVideo {
+                guard let pointer=ffmpeg_kit_packages_get_registered_encoders() else{throw EmbeddedMediaError.encoder}
+                defer{ffmpeg_kit_free(pointer)}
+                guard strnlen(pointer,65_537)<=65_536 else{throw EmbeddedMediaError.encoder}
+                let names=Set(String(cString:pointer).split(separator:",").map{String($0).trimmingCharacters(in:.whitespacesAndNewlines)})
+                guard names.contains("libvpx") else{throw EmbeddedMediaError.encoder}
+                let audio=names.contains("libvorbis") ? "libvorbis":names.contains("vorbis") ? "vorbis":nil
+                guard let audio else{throw EmbeddedMediaError.encoder}
+                softwareAudioEncoder=audio
+                args += ["-c:v","libvpx","-deadline","realtime","-cpu-used","8","-threads","4","-lag-in-frames","0","-auto-alt-ref","0","-pix_fmt","yuv420p","-b:v",String(video.conversionBitrate*1000)]
+            } else {
+                args += ["-c:v","h264_videotoolbox","-allow_sw","1","-realtime","1","-pix_fmt","yuv420p","-profile:v","high","-level:v","4.1","-b:v",String(video.conversionBitrate*1000)]
+            }
+            args += ["-fps_mode",video.conversionFrameRate == nil ? "passthrough":"cfr","-g",String(video.conversionKeyframeInterval)]
             var needsScale=bitmapSubtitleIndex == nil && textFilter == nil
 #if CAST_ENGINE_TESTING
             if testingASSInput != nil {needsScale=false}
 #endif
-            if needsScale { args += ["-vf",scale] }
-            if let rate = video.conversionFrameRate { args += ["-r",String(rate)] }
-        } else { args += ["-c:v","copy"] }
-        if copyAudio { args += ["-c:a","copy"] }
-        else { args += ["-c:a","aac","-b:a","192k","-ac","2"] }
+            if needsScale {args += ["-vf",scale]}
+            if let rate=video.conversionFrameRate {args += ["-r",String(rate)]}
+        } else {args += ["-c:v","copy"]}
+        if softwareVideo {
+            if softwareAudioEncoder=="vorbis" {args += ["-strict","-2"]}
+            args += ["-c:a",softwareAudioEncoder ?? "vorbis","-b:a","192k","-ac","2"]
+        } else if copyAudio {args += ["-c:a","copy"]}
+        else {args += ["-c:a","aac","-b:a","192k","-ac","2"]}
         args += ["-max_muxing_queue_size","2048","-avoid_negative_ts","make_zero"]
-        if outputFD != nil { args += ["-f","mp4","-movflags","frag_keyframe+empty_moov+default_base_moof","-flush_packets","1"] }
+        if softwareVideo {args += ["-f","webm","-live","1","-cluster_time_limit","500","-flush_packets","1"]}
+        else if outputFD != nil { args += ["-f","mp4","-movflags","frag_keyframe+empty_moov+default_base_moof","-flush_packets","1"] }
         else { args += ["-f","matroska","-live","1","-cluster_time_limit","500","-flush_packets","1"] }
         if useHTTP { args += ["-listen","1"] }
         args += [outputFD.map { "pipe:\($0)" } ?? (useHTTP ? selectedPath.absoluteString : selectedPath.path)]

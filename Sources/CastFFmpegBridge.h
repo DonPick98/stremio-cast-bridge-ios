@@ -35,5 +35,6 @@ void media_information_session_execute_async(void *session, int64_t timeout);
 void *media_information_session_get_media_information(void *session);
 char *media_information_get_all_properties_json(void *information);
 void ffprobe_kit_cancel_session(int64_t session_id);
+// Public C API, pinned v0.11.2-ios; returned string uses ffmpeg_kit_free.
+char *ffmpeg_kit_packages_get_registered_encoders(void);
 #endif
-

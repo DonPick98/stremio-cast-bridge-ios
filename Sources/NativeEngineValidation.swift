@@ -131,6 +131,9 @@ import ObjectiveC
             let captionSync = try await captionProbe(documents:documents,input:input)
             let textOverlay=try await textOverlayProbe(documents:documents)
             result["textOverlay"]=textOverlay
+            let textOverlayVP8=try await textOverlayProbe(documents:documents,mode:.softwareVP8)
+            result["textOverlayVP8"]=textOverlayVP8
+            result["passed"]=(result["passed"] as? Bool == true) && (textOverlayVP8["passed"] as? Bool == true)
             result["passed"]=(result["passed"] as? Bool == true) && (textOverlay["passed"] as? Bool == true)
             result["captionSync"] = captionSync
             result["passed"] = (result["passed"] as? Bool == true) && (captionSync["passed"] as? Bool == true)
@@ -199,22 +202,23 @@ import ObjectiveC
         }
         return rows
     }
-    private static func textOverlayProbe(documents:URL) async throws -> [String:Any] {
+    private static func textOverlayProbe(documents:URL,mode:EmbeddedMediaEngine.VideoMode = .ffmpegH264) async throws -> [String:Any] {
         let input=documents.appendingPathComponent("CodecSamples/caption-hevc-eac3.mkv")
         let source=try await EmbeddedMediaEngine.inspect(input)
         guard source.audio.count>1,let subtitle=source.subtitles.first else{throw EmbeddedMediaError.metadata}
         let engine=EmbeddedMediaEngine();defer{engine.stop()}
-        let url=try await engine.start(input:input,deviceIP:"127.0.0.1",start:3.25,videoMode:.ffmpegH264,audioID:Int(source.audio[1].key.dropFirst(4)),subtitleID:Int(subtitle.key.dropFirst(4)),style:SubtitleAppearance(),audioIndex:1,subtitleIndex:0,subtitleDelay:0.5,video:source.video,selfTest:true,audioCodec:source.audio[1].codec,subtitleTrack:subtitle)
+        let url=try await engine.start(input:input,deviceIP:"127.0.0.1",start:3.25,videoMode:mode,audioID:Int(source.audio[1].key.dropFirst(4)),subtitleID:Int(subtitle.key.dropFirst(4)),style:SubtitleAppearance(),audioIndex:1,subtitleIndex:0,subtitleDelay:0.5,video:source.video,selfTest:true,audioCodec:source.audio[1].codec,subtitleTrack:subtitle)
         let directory=engine.testingRenderDirectory
+        let audioEncoder=engine.testingSoftwareAudioEncoder ?? "aac"
         let (body,_,eof)=try await NativeStreamCapture().read(url)
-        try body.write(to:documents.appendingPathComponent("text-overlay-delay.mp4"))
+        try body.write(to:documents.appendingPathComponent(mode == .softwareVP8 ? "text-overlay-delay.webm":"text-overlay-delay.mp4"))
         engine.stop()
         for _ in 0..<100 {
             if engine.testingStopCompleted {break}
             try await Task.sleep(nanoseconds:50_000_000)
         }
         let cleaned=directory.map{!FileManager.default.fileExists(atPath:$0.path)} ?? false
-        return ["passed":eof && cleaned && engine.testingStopCompleted,"cleanup":cleaned,"delay":0.5,"position":3.25]
+        return ["passed":eof && cleaned && engine.testingStopCompleted,"cleanup":cleaned,"delay":0.5,"position":3.25,"audioEncoder":audioEncoder]
     }
 
     /// Isolate decoder preroll from encoder time-base rounding. Production

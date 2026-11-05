@@ -172,8 +172,8 @@ enum EmbeddedMediaError: LocalizedError {
         try await channel.start(port:port,path:bridge.path,type:contentType)
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
-        usesBitmapOverlay = videoMode == .ffmpegH264 && bitmapSubtitle && subtitleID != nil
-        usesTextOverlay = videoMode == .ffmpegH264 && !bitmapSubtitle && subtitleID != nil
+        usesBitmapOverlay = (videoMode == .ffmpegH264 || videoMode == .softwareVP8) && bitmapSubtitle && subtitleID != nil
+        usesTextOverlay = (videoMode == .ffmpegH264 || videoMode == .softwareVP8) && !bitmapSubtitle && subtitleID != nil
         var textCaption:CaptionBurnDocument?
         if usesTextOverlay {
             guard let ordinal=subtitleIndex else{throw EmbeddedMediaError.metadata}
@@ -194,13 +194,18 @@ enum EmbeddedMediaError: LocalizedError {
             try Task.checkCancellation()
             textCaption=CaptionBurnDocument(text:text,fonts:fonts,appearance:style,delay:subtitleDelay)
         }
-        if ((videoMode == .copy || videoMode == .ffmpegH264) && subtitleID == nil) || usesBitmapOverlay || usesTextOverlay {
+        if ((videoMode == .copy || videoMode == .ffmpegH264 || videoMode == .softwareVP8) && subtitleID == nil) || usesBitmapOverlay || usesTextOverlay {
             // VLC's H.264 packetizer can drop/reorder B frames on remux. FFmpeg
             // copies every original packet and normalizes the selected audio.
             directRemux = true; running = true; producerEnded = false
             observeLifecycle(); updateBackground()
+            let format:VideoFormat?
+            if videoMode == .copy {format=nil}
+            else if let video {format=video}
+            else {format=try await Self.inspect(input).video}
+            guard videoMode == .copy || format != nil else{throw EmbeddedMediaError.metadata}
             let repair = AudioRepairPipe(); audioRepair = repair
-            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:videoMode == .ffmpegH264 ? video : nil,bitmapSubtitleIndex:usesBitmapOverlay ? subtitleIndex:nil,subtitleDelay:subtitleDelay,textCaption:textCaption)
+            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:format,bitmapSubtitleIndex:usesBitmapOverlay ? subtitleIndex:nil,subtitleDelay:subtitleDelay,textCaption:textCaption,softwareVideo:videoMode == .softwareVP8)
             producerMonitor = Task { [weak self] in
                 while !Task.isCancelled {
                     guard let self, self.running else { return }
@@ -426,6 +431,7 @@ enum EmbeddedMediaError: LocalizedError {
 #if CAST_ENGINE_TESTING
     private var testingVideoStopped = true
     private var testingStoppedRepair: AudioRepairPipe?
+    var testingSoftwareAudioEncoder:String? {audioRepair?.softwareAudioEncoder}
     var testingRenderDirectory:URL? {audioRepair?.testingRenderDirectory}
     var testingStopCompleted: Bool { testingVideoStopped && (testingStoppedRepair?.testingStopCompleted ?? true) }
     func testingDeliveredBytes() async -> Int { await proxy?.testingDeliveredBytes() ?? 0 }
