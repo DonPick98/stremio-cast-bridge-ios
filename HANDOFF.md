@@ -1,3 +1,27 @@
+# Candidata51 — priorità SSA e progresso background (CB027/028)
+
+Base db3f114 / IPA50, branch fix/captions-background-20261105. Due riscontri:
+-16SSA/HEVC2160: fallimenti probe/proccess prima del testo; causa originale non
+ancora provata. Catalogo header-only con fallback analizzato, scelta singola
+anziché batch alternativo, recupero HTTP temporaneo bounded, codici d'uscita
+sanitizzati e retry della stessa traccia visibile senza cambiare sorgente.
+-Seek2061→556: BackgroundPlaybackWork ignorava le posizioni sotto start1952 e
+pubblicava progresso fermo. Ora conta consegna confermata per segmento, rebase
+non guadagna unità e aggiorna lavoro residuo; clock vecchi/preparazione esclusi.
+Rollback riallinea l'anchor precedente. Log completed/total/tempo da ultimo
+progresso a cadenza snapshot e prima di expiry. Nessun heartbeat fittizio,
+nessun rinnovo automatico dopo expiry, posizione originale50 preservata.
+
+Test previsti: regressioni tempi reali e16SSA, vero backend iOS/probe/estrazione,
+SDK e buildiPhone. App/estensione51. Da acquisire risultati prima della consegna;
+nessuna IPA51 ancora dichiarata. Il file privato non è stato acquisito e un test
+sintetico non certifica quel caso, né la causa precisa della scadenza di iOS.
+Nessuna finestra VTT parziale servita come documento completo. Receiver gratuito,
+OpenSubtitles e decoder invariati. SyncStremio non modificata: login separato
+dal toggle, come documentato nella issue1. Nessun account reale usato.
+
+---
+
 # IPA50 pronta — CB025/026, 2026-11-05
 
 Sorgente prodotto750ad1d06c8c6e708a21c571e96797931170dc3e; branch fix/seek-burst-20261105, PR8 draft.

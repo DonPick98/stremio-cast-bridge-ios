@@ -130,6 +130,37 @@ import Foundation
         precondition(!background.active)
         precondition(background.begin(duration:100,position:0) && background.completed==0)
         let episode = PlaybackContent(type:"series",id:"tt1234567:1:1")
+        // Actual build50 sequence. Replaying after a backward seek must keep
+        // reporting real work instead of waiting to reach the old timestamp.
+        var replayWork=BackgroundPlaybackWork()
+        precondition(replayWork.begin(duration:2816.768,position:1952.945))
+        replayWork.update(position:2061.340)
+        let beforeRewind=replayWork.completed
+        precondition(beforeRewind>108_000)
+        replayWork.rebase(duration:2816.768,position:556.727)
+        precondition(replayWork.completed==beforeRewind,"A seek is not completed work")
+        precondition(replayWork.total>2_300_000,"Replaying expands the real remaining workload")
+        replayWork.update(position:567.851)
+        precondition(replayWork.completed>beforeRewind+11_000)
+        let firstReplay=replayWork.completed
+        for p in [583.108,596.148,612.039,624.104]{replayWork.update(position:p)}
+        precondition(replayWork.completed>firstReplay+56_000,"Progress cannot freeze below the old start")
+        let pausedWork=replayWork.completed
+        replayWork.update(position:624.104);replayWork.update(position:nil)
+        precondition(replayWork.completed==pausedWork,"No heartbeat while paused or unconfirmed")
+        replayWork.rebase(duration:2816.768,position:2500)
+        precondition(replayWork.completed==pausedWork)
+        replayWork.update(position:2502)
+        precondition(replayWork.completed>=pausedWork+1999)
+        let atEnd=replayWork.completed
+        replayWork.rebase(duration:2816.768,position:2000)
+        replayWork.update(position:2001)
+        precondition(replayWork.completed>=atEnd+999,"Track change/recovery starts a fresh confirmed segment")
+        replayWork.rebase(duration:.nan,position:0)
+        precondition(replayWork.active && replayWork.completed<replayWork.total)
+        replayWork.finish();let endedWork=replayWork.completed
+        replayWork.update(position:2800)
+        precondition(!replayWork.active && replayWork.completed==endedWork)
         precondition(PlaybackResume.validated(4600.572,duration:2915) == 0)
         precondition(PlaybackResume.validated(2914,duration:2915) == 0)
         precondition(PlaybackResume.validated(422.058,duration:2915) == 422.058)

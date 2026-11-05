@@ -1,7 +1,7 @@
 name: Validate embedded iOS media engine
 on:
   push:
-    branches: [native/embedded-media-engine, fix/playback-recovery-20261103, test/background-processing-20261104]
+    branches: [native/embedded-media-engine, fix/playback-recovery-20261103, test/background-processing-20261104, fix/captions-background-20261105]
   workflow_dispatch:
 permissions:
   contents: read
@@ -133,6 +133,7 @@ jobs:
           name: embedded-engine-evidence
           path: native-engine-report
           if-no-files-found: ignore
+
 
 
 

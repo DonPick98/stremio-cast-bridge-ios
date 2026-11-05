@@ -418,6 +418,7 @@ import AVFAudio
         StremioSync.shared.observe(type:handoff.type,videoID:handoff.id,title:title,position:ended ? duration:confirmed,duration:duration,completed:ended,force:force,episodes:ids)
     }
     private func recordEnergySnapshot() {
+        backgroundProcessing.recordSnapshot()
         if let prepared {
             let video=prepared.video
             let audio=prepared.audio.first(where:{$0.key==selectedAudio})
@@ -514,7 +515,6 @@ import AVFAudio
         }
         reconnectTask?.cancel(); reconnectTask = nil
         if resumePendingRecovery() { return }
-        backgroundProcessing.update(position:lastConfirmedPosition)
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         deviceMuted = session.currentDeviceMuted
         if let status = client.mediaStatus {
@@ -566,7 +566,7 @@ import AVFAudio
             if confirmed && timeline.queuedTarget == nil {
                 lastGoodPosition = observed
                 let actual=status.streamPosition+streamOffset
-                if actual.isFinite,actual >= 0 { lastConfirmedPosition=actual }
+                if actual.isFinite,actual >= 0 { lastConfirmedPosition=actual;backgroundProcessing.update(position:actual) }
                 if let positionKey, observed > 0, Date().timeIntervalSince(lastPositionSave) >= 10 {
                     UserDefaults.standard.set(observed, forKey: positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated"); lastPositionSave = Date()
                 }
@@ -1088,6 +1088,7 @@ import AVFAudio
                 // Restore the generation and timeline as well as the UI, or
                 // old receiver updates and the next selection remain blocked.
                 if previousLoaded,previousEngine?.failed != true,self.ownsCurrentMedia {
+                    self.backgroundProcessing.rebase(duration:prepared.duration,position:self.lastConfirmedPosition ?? self.streamOffset)
                     let latestChoiceChanged=self.selectedAudio != audio || self.selectedSubtitle != subtitle
                     self.streamRequests=previousRequests;self.timeline=self.timeline.restoring(previousTimeline)
                     self.hasLoaded=true;self.processingDetail=previousDetail;self.localFallbackLevel=previousFallback
@@ -1611,6 +1612,13 @@ import AVFAudio
             }
         }
     }
+    var canRetryEmbeddedText:Bool {selectedEmbeddedText && subtitleIssue != nil && !subtitleDownloadBusy}
+    func retryEmbeddedText() {
+        guard canRetryEmbeddedText else{return}
+        subtitleChoices.invalidate();embeddedCaptionTask?.cancel();embeddedCaptionTask=nil
+        cachedCaptionCatalog=nil;attemptedEmbeddedCaptions.remove(selectedSubtitle)
+        beginEmbeddedTextPreparation()
+    }
     private func beginEmbeddedTextPreparation(){
         guard selectedEmbeddedText else{return}
         embeddedCaptionTask?.cancel();attemptedEmbeddedCaptions.insert(selectedSubtitle)
@@ -1645,26 +1653,17 @@ import AVFAudio
                 if let cached=cachedCaptionCatalog,cached.0==prepared.directURL{catalog=cached.1}
                 else{catalog=try await CaptionExtractor.catalog(prepared.directURL);try validateSource(token);cachedCaptionCatalog=(prepared.directURL,catalog)}
                 let actual=try catalog.selected(ordinal:ordinal,vlcID:Int(selected.dropFirst(4)),language:track.language,codec:track.codec)
-                var batch:[(String,CaptionTrack)]=[(selected,actual)]
-                let candidates=prepared.subtitles.enumerated().sorted{a,b in
-                    let first=a.element.language==track.language,second=b.element.language==track.language
-                    return first==second ? a.offset<b.offset:first
-                }
-                for (index,candidate) in candidates where candidate.key != selected && batch.count<4{
-                    guard completeCaptionCache.get(CaptionDocumentCache.key(input:prepared.directURL,track:candidate.key))==nil,
-                          let mapped=try? catalog.selected(ordinal:index,vlcID:Int(candidate.key.dropFirst(4)),language:candidate.language,codec:candidate.codec),
-                          ["ass","ssa","subrip","srt","webvtt"].contains(mapped.codec),!batch.contains(where:{$0.1.index==mapped.index}) else{continue}
-                    batch.append((candidate.key,mapped))
-                }
-                let documents=try await CaptionExtractor.fullDocuments(input:prepared.directURL,tracks:batch.map{$0.1}){[weak self] elapsed in
+                // The selected document owns this request. Speculative alternate
+                // languages must not delay or invalidate the chosen subtitle.
+                text=try await CaptionExtractor.fullDocument(input:prepared.directURL,track:actual){[weak self] elapsed in
                     guard let self,self.sourceRequests.accepts(token),self.subtitleChoices.accepts(choice) else{return}
                     let seconds=Int(elapsed)
-                    self.subtitlePreparation=seconds<8 ? "Preparo i sottotitoli dal file…":"Leggo i sottotitoli · \(seconds) s. Il video può continuare."
+                    self.subtitlePreparation=seconds<8 ? "Preparo la traccia selezionata…":"Leggo la traccia selezionata · \(seconds) s. Il video può continuare."
                 }
                 try validateSource(token);try Task.checkCancellation()
-                guard let selectedText=documents[actual.index] else{throw CaptionFailure.process};text=selectedText
-                for (key,mapped) in batch{if let document=documents[mapped.index]{completeCaptionCache.put(document,key:CaptionDocumentCache.key(input:prepared.directURL,track:key))}}
-                PlaybackDiagnostics.record(.tracks,["phase":"full_caption_batch","tracks":String(documents.count)])
+                completeCaptionCache.put(text,key:cacheKey)
+                PlaybackDiagnostics.record(.tracks,["phase":"full_caption_selected","tracks":"1"])
+
             }
             try validateSource(token)
             guard !Task.isCancelled,subtitleChoices.accepts(choice),selectedSubtitle==selected else{throw CancellationError()}

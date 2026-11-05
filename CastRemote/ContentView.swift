@@ -43,6 +43,7 @@ struct ContentView: View {
                             Label(warning,systemImage:"captions.bubble").font(.subheadline).foregroundStyle(.orange).multilineTextAlignment(.leading).fixedSize(horizontal:false,vertical:true).castCard()
                         }.buttonStyle(.plain)
                     }
+                    if cast.canRetryEmbeddedText { Button("Riprova sottotitoli dal file"){cast.retryEmbeddedText()} }
                     if cast.isSeries { episodeControls }
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
@@ -719,3 +720,4 @@ private struct EpisodePickerView:View {
         }.preferredColorScheme(.dark).tint(CastPalette.accent)
     }
 }
+

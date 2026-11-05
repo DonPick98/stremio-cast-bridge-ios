@@ -21,10 +21,15 @@ import AVFAudio
     }
     var finished:Bool { guard let handle else { return true }; return [2,3].contains(Int(ffmpeg_kit_session_get_state(handle))) }
     var successful:Bool { guard let handle else { return false }; return finished && ffmpeg_kit_session_get_return_code(handle) == 0 }
+    func recordFailure(_ phase:String) {
+        guard let handle else{return}
+        PlaybackDiagnostics.record(.error,["phase":phase,"code":String(ffmpeg_kit_session_get_return_code(handle)),
+            "status":String(ffmpeg_kit_session_get_state(handle)),"kind":kind == .probe ? "probe":"ffmpeg"])
+    }
     func information() throws -> Data {
-        guard let handle, successful, let info = media_information_session_get_media_information(handle) else { throw CaptionFailure.probe }
+        guard let handle, successful, let info = media_information_session_get_media_information(handle) else {recordFailure("caption_probe_json");throw CaptionFailure.probe}
         defer { ffmpeg_kit_handle_release(info) }
-        guard let pointer = media_information_get_all_properties_json(info) else { throw CaptionFailure.probe }
+        guard let pointer = media_information_get_all_properties_json(info) else {recordFailure("caption_probe_properties");throw CaptionFailure.probe}
         defer { ffmpeg_kit_free(pointer) }
         let count = strnlen(pointer,2_097_153); guard count <= 2_097_152 else { throw CaptionFailure.limit }
         return Data(bytes:pointer,count:count)
@@ -35,7 +40,7 @@ import AVFAudio
             try Task.checkCancellation(); guard Date() < deadline else { throw CaptionFailure.timeout }
             try await Task.sleep(nanoseconds:100_000_000)
         }
-        guard successful else { throw CaptionFailure.process }
+        guard successful else {recordFailure(kind == .probe ? "caption_probe_exit":"caption_process_exit");throw CaptionFailure.process}
     }
     func stop(keeping object:AnyObject? = nil,afterRelease:(@Sendable ()->Void)? = nil) {
         guard let handle else { return }; self.handle = nil
@@ -52,12 +57,23 @@ import AVFAudio
     private var generation = UUID()
     static func catalog(_ input:URL) async throws -> CaptionCatalog {
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil) else { throw CaptionFailure.input }
-        var args = ["-v","quiet","-probesize","8388608","-analyzeduration","3000000","-print_format","json","-show_streams","-show_format"]
-        if !input.isFileURL { args += ["-rw_timeout","5000000","-tls_verify","1"] }
-        args += [input.isFileURL ? input.path : input.absoluteString]
-        let process = try CaptionProcess(args,kind:.probe); defer { process.stop() }
-        try await process.wait(seconds:12)
-        return try CaptionCatalog.parse(process.information())
+        // MKV track headers identify subtitle streams without decoding/probing
+        // the 4K video. Keep the analyzed probe as one bounded fallback.
+        var lastError:Error=CaptionFailure.probe
+        for headerOnly in [true,false] {
+            try Task.checkCancellation()
+            let process=try CaptionProcess(CaptionArguments.catalog(input:input,headerOnly:headerOnly),kind:.probe)
+            defer{process.stop()}
+            do {
+                try await process.wait(seconds:12)
+                let catalog=try CaptionCatalog.parse(process.information())
+                if headerOnly && catalog.tracks.isEmpty{continue}
+                PlaybackDiagnostics.record(.tracks,["phase":"caption_catalog","kind":headerOnly ? "header":"analyzed","tracks":String(catalog.tracks.count)])
+                return catalog
+            }catch is CancellationError{throw CancellationError()}
+            catch{lastError=error;process.recordFailure("caption_catalog_failed")}
+        }
+        throw lastError
     }
     /// Bounded metadata fallback for VLC parsers that expose a zero frame rate.
     /// No whole-file scan, subtitle extraction or guessed 24/30 fps default.
@@ -75,8 +91,8 @@ import AVFAudio
     }
     /// A standard Cast text track must be a complete document. Never serve a
     /// ninety-second extraction window as if it covered the whole movie.
-    static func fullDocument(input:URL,track:CaptionTrack) async throws -> String {
-        let result=try await fullDocuments(input:input,tracks:[track])
+    static func fullDocument(input:URL,track:CaptionTrack,progress:((Double)->Void)?=nil) async throws -> String {
+        let result=try await fullDocuments(input:input,tracks:[track],progress:progress)
         guard let text=result[track.index] else{throw CaptionFailure.process};return text
     }
     /// One demux pass prepares the selected language and a few alternatives.
@@ -89,7 +105,7 @@ import AVFAudio
         defer{if !cleanupWithProcess{try? FileManager.default.removeItem(at:directory)}}
         let files=tracks.map{directory.appendingPathComponent("\($0.index).vtt")}
         var args=["-hide_banner","-nostdin","-loglevel","error","-nostats","-y","-copyts"]
-        if !input.isFileURL{args += ["-rw_timeout","5000000","-tls_verify","1"]}
+        if !input.isFileURL{args += CaptionArguments.networkInputOptions}
         args += ["-i",input.isFileURL ? input.path:input.absoluteString]
         for (track,file) in zip(tracks,files){args += ["-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-fs","1048577","-f","webvtt",file.path]}
         let audioOwner="caption-"+UUID().uuidString
@@ -107,7 +123,7 @@ import AVFAudio
             if Int(elapsed) != lastProgress{lastProgress=Int(elapsed);progress?(elapsed)}
             try await Task.sleep(nanoseconds:100_000_000)
         }
-        try Task.checkCancellation();guard process.successful else{throw CaptionFailure.process}
+        try Task.checkCancellation();guard process.successful else{process.recordFailure("caption_extract_exit");throw CaptionFailure.process}
         var results:[Int:String]=[:]
         for (track,file) in zip(tracks,files){
             guard let size=try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize,size<=1_048_576 else{

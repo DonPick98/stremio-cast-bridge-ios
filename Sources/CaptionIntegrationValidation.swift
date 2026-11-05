@@ -15,6 +15,19 @@ import Foundation
         let fullPassed=complete.contains("EMBEDDED CAPTION AFTER SEEK") && sparse.contains("01:40") && sparse.contains("LATE CAPTION")
         let batch=try await CaptionExtractor.fullDocuments(input:input,tracks:Array(catalog.tracks.prefix(4)))
         let batchPassed=batch.count==4 && batch[catalog.tracks[0].index]==complete
+        // Match the reported layout: sixteen SSA tracks before video and two
+        // audio streams. Exercise the actual bundled probe and text encoder.
+        let multi=root.appendingPathComponent("caption-sixteen.mkv")
+        var remux=["-hide_banner","-nostdin","-loglevel","error","-y","-i",input.path]
+        for _ in 0..<16{remux += ["-map","0:s:0"]}
+        remux += ["-map","0:v:0","-map","0:a:0","-map","0:a:0","-c","copy",multi.path]
+        let maker=try CaptionProcess(remux);defer{maker.stop();try? FileManager.default.removeItem(at:multi)}
+        try await maker.wait(seconds:20)
+        let multiCatalog=try await CaptionExtractor.catalog(multi)
+        let chosen=try multiCatalog.selected(ordinal:1,vlcID:1,language:"und",codec:"ssa")
+        let singleDocument=try await CaptionExtractor.fullDocument(input:multi,track:chosen)
+        func content(_ document:String)->[String]{document.components(separatedBy:"\n").filter{!$0.contains("-->")}}
+        let multiPassed=multiCatalog.tracks.count==16 && chosen.index==1 && content(singleDocument)==content(complete)
         let standard=StandardCaptionHost();defer{standard.stop()}
         try await standard.prepare(text:sparse,kind:2,identity:"late",delay:0,peer:"127.0.0.1",localIP:"127.0.0.1")
         let standardURLs=standard.urls
@@ -58,7 +71,7 @@ import Foundation
         var bad=URLComponents(url:stateURL,resolvingAgainstBaseURL:false)!;bad.queryItems=[URLQueryItem(name:"epoch",value:"wrong")]
         let(_,denied)=try await URLSession.shared.data(from:bad.url!)
         let gateway=(response as? HTTPURLResponse)?.statusCode==200 && body==Data("WEBVTT\n\n".utf8) && (response as? HTTPURLResponse)?.value(forHTTPHeaderField:"Access-Control-Allow-Origin")=="*" && (denied as? HTTPURLResponse)?.statusCode==410
-        return ["passed":results.count==6&&results.allSatisfy{$0["passed"] as? Bool==true}&&callbacks==0&&gateway&&fontPassed&&fullPassed&&batchPassed&&standardPassed,"windows":results,"cancelledCleanly":callbacks==0,"gateway":gateway,"fontPreserved":fontPassed,"fullDocuments":fullPassed,"batchDocuments":batchPassed,"standardDirectText":standardPassed]
+        return ["passed":results.count==6&&results.allSatisfy{$0["passed"] as? Bool==true}&&callbacks==0&&gateway&&fontPassed&&fullPassed&&batchPassed&&standardPassed&&multiPassed,"windows":results,"cancelledCleanly":callbacks==0,"gateway":gateway,"fontPreserved":fontPassed,"fullDocuments":fullPassed,"batchDocuments":batchPassed,"standardDirectText":standardPassed,"sixteenSSA":multiPassed]
     }
 }
 #endif

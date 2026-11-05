@@ -41,6 +41,7 @@ import BackgroundTasks
     private var registered=false
     private var available=false
     private var attempted=false
+    private var lastProgressAt:TimeInterval?
     func register() {
         guard !registered else{return};registered=true
         guard #available(iOS 26.0,*),let bundle=Bundle.main.bundleIdentifier else{return}
@@ -53,6 +54,7 @@ import BackgroundTasks
         available=true
     }
     func begin(duration:Double,position:Double,onExpiration:@escaping ()->Void) {
+        if state.active {rebase(duration:duration,position:position);return}
         guard !state.active,!attempted else{return}
         // No deferred queue or automatic resubmission after system cancellation.
         guard #available(iOS 26.0,*),UIApplication.shared.applicationState == .active else{return}
@@ -69,8 +71,8 @@ import BackgroundTasks
                     Task { @MainActor [weak self,weak continued] in
                         guard let self,let continued,self.task === continued else{return}
                         let handler=self.onExpiration
+                        self.recordSnapshot(phase:"continued_expired")
                         self.finish(success:false)
-                        PlaybackDiagnostics.record(.app,["phase":"continued_expired"])
                         handler?()
                     }
                 }
@@ -94,7 +96,19 @@ import BackgroundTasks
         }
     }
     func update(position:Double?) {
-        state.update(position:position);applyProgress()
+        let before=state.completed
+        state.update(position:position)
+        if state.completed>before {lastProgressAt=ProcessInfo.processInfo.systemUptime}
+        applyProgress()
+    }
+    func rebase(duration:Double,position:Double) {
+        state.rebase(duration:duration,position:position);applyProgress()
+        recordSnapshot(phase:"continued_rebase")
+    }
+    func recordSnapshot(phase:String="continued_progress") {
+        guard state.active else{return}
+        PlaybackDiagnostics.record(.app,["phase":phase,"completed":String(state.completed),"total":String(state.total),
+            "seconds":lastProgressAt.map{PlaybackDiagnostics.number(max(0,ProcessInfo.processInfo.systemUptime-$0))} ?? "unknown"])
     }
     private func applyProgress() {
         guard #available(iOS 26.0,*),let task=task as? BGContinuedProcessingTask else{return}
@@ -102,7 +116,7 @@ import BackgroundTasks
         task.progress.completedUnitCount=state.completed
     }
     func finish(success:Bool=false) {
-        let current=task;task=nil;onExpiration=nil;state.finish()
+        let current=task;task=nil;onExpiration=nil;state.finish();lastProgressAt=nil
         if let identifier {BGTaskScheduler.shared.cancel(taskRequestWithIdentifier:identifier)}
         identifier=nil
         current?.expirationHandler=nil;current?.setTaskCompleted(success:success)
@@ -322,3 +336,4 @@ import BackgroundTasks
         }
     }
 }
+

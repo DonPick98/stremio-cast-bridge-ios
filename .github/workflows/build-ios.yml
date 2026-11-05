@@ -2,7 +2,7 @@ name: Build unsigned iOS app
 
 on:
   push:
-    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103, feature/episode-picker-20261105, fix/seek-burst-20261105]
+    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103, feature/episode-picker-20261105, fix/seek-burst-20261105, fix/captions-background-20261105]
   workflow_dispatch:
     inputs:
       receiver_app_id:

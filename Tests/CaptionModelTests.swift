@@ -6,6 +6,18 @@ import Foundation
         precondition(catalog.tracks.count==2&&catalog.fonts.first?.index==12)
         let selected=try catalog.selected(ordinal:1,vlcID:7,language:"it",codec:"ssa")
         precondition(selected.index==7)
+        let header=CaptionArguments.catalog(input:URL(fileURLWithPath:"/tmp/synthetic.mkv"),headerOnly:true)
+        precondition(header.contains("-nofind_stream_info") && header.contains("-show_format") && header.contains("-show_streams"))
+        precondition(!CaptionArguments.catalog(input:URL(fileURLWithPath:"/tmp/synthetic.mkv"),headerOnly:false).contains("-nofind_stream_info"))
+        let retry=CaptionArguments.networkInputOptions
+        precondition(!retry.contains("-reconnect_at_eof"),"Clean EOF must stay finite")
+        let statuses=retry[retry.firstIndex(of:"-reconnect_on_http_error")!+1].split(separator:",")
+        precondition(!statuses.contains("401") && !statuses.contains("403") && !statuses.contains("429"))
+        let many:[String:Any]=["streams":(0..<16).map{["index":$0,"codec_type":"subtitle","codec_name":"ass","tags":["language":$0==1 ? "ita":"eng"]] as [String:Any]}]
+        let all=try CaptionCatalog.parse(JSONSerialization.data(withJSONObject:many))
+        precondition(all.tracks.count==16 && all.tracks.allSatisfy(\.isText))
+        let exactASS=try all.selected(ordinal:1,vlcID:1,language:"ita",codec:"ssa")
+        precondition(exactASS.index==1)
         do{_=try catalog.selected(ordinal:0,vlcID:4,language:"ita",codec:"ssa");preconditionFailure("Wrong track accepted")}catch{}
         let window=CaptionWindow(position:100,duration:150)
         precondition(window.start==85&&window.end==150)
@@ -67,3 +79,4 @@ import Foundation
         print("Caption model passed: exact stream mapping, bitmap exclusion, bounded windows, original timestamps, independent coverage heartbeat and complete cue publication")
     }
 }
+

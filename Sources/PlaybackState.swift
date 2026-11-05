@@ -188,24 +188,34 @@ struct LiveActivityUpdatePolicy {
     }
 }
 
-/// Progress is confirmed delivery within a finite video, never an estimated
-/// clock or a seek target. Keep it monotonic across recovery and backward seeks.
+/// Count confirmed delivery per segment, not the furthest absolute media time.
+/// Replaying adds real work; a seek itself never earns completed units.
 struct BackgroundPlaybackWork {
     private(set) var active=false
     private(set) var total:Int64=1
     private(set) var completed:Int64=0
-    private var start:Double=0
+    private var last:Double=0
+    private var duration:Double=0
+    private var delivered:Double=0
     mutating func begin(duration:Double,position:Double)->Bool {
         guard !active,duration.isFinite,duration>0,duration<=7*24*3600,
               position.isFinite,position>=0,position<duration else{return false}
-        start=position;total=max(1,Int64((duration-position)*1000));completed=0;active=true
+        self.duration=duration;last=position;delivered=0
+        total=max(1,Int64((duration-position)*1000));completed=0;active=true
         return true
     }
+    mutating func rebase(duration:Double,position:Double) {
+        guard active,duration.isFinite,duration>0,duration<=7*24*3600,
+              position.isFinite,position>=0,position<duration else{return}
+        self.duration=duration;last=position
+        total=completed+max(1,Int64((duration-position)*1000))
+    }
     mutating func update(position:Double?) {
-        guard active,let position,position.isFinite,position>=start else{return}
+        guard active,let position,position.isFinite,position>=last else{return}
+        let current=min(duration,position)
+        delivered=min(9_000_000_000,delivered+max(0,current-last));last=current
         // Completion is owned by the receiver's natural-end event, not a seek.
-        let value=min(Double(total-1),max(0,(position-start)*1000))
-        completed=max(completed,Int64(value))
+        completed=max(completed,min(total-1,Int64(delivered*1000)))
     }
     mutating func finish(){active=false}
 }
