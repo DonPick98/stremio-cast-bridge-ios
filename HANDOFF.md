@@ -1,3 +1,28 @@
+# Audit batteria CB014 — 2026-11-05, nessuna modifica prodotto
+
+Screenshotprivato: CastBridge12% delconsumo selezionato,10minforeground e58min
+background; non12puntidicarica/ora e nonconfrontoA/B. Non pubblicare screenshot.
+Audit349e37a: H264VTencoder giàpresente, decoderVT nonrichiesto esplicitamente.
+Profilare decodificahardware controsoftware evalidateframe/subtitle/background;
+non assumere accelerazione semprepiùefficiente (copie/formati possono costare).
+Timerstato1s senzataleranza, monitor50/100ms e flushlog300ms: candidati a batching
+prima di abbassare qualità o indebolire recuperi. Packetcopy/fonti compatibili e
+sottotitoli separati giàprioritari. Misurare stesso telefono/sorgente/durata/rete,
+schermobloccato/altreapp/temperatura, A/Benergia e attivitàresidua dopoStop.
+Nessun codice prodotto cambiato o risparmio verificato qui. CB014IN_ANALISI,
+issuecomment6652335647 e relativo dettaglio aggiornati; corpoissue65205char,
+archiviare con verifica prima della prossima append lunga preservando storia.
+
+Nativo45/41916741542 ora conclusoFAIL: compilazione/regressioni passate, poi
+CoreSimulator errore405/NSPOSIX60 aprendoexample.com pertestoffscreen; nessun
+artifactraccolto. Non interpretare comeasserzionefpsfallita, ma sourceCadenceProbe
+/matrice45 nonverificabili daquelrun. Commento6652369269. Serve retryjobfallito e
+raccoltaevidenze anche quando simctlopenurl fallisce. Nativo44resta ultimo report
+completo: controlli/configaudio eH264background PASSATI, distinto seek125msfallito.
+UltimaIPAconsegnata45 noncambiata. Nessuna nuovaIPA o ottimizzazionebatteria.
+
+---
+
 # IPA45 pronta — framerate e player nativo, 2026-11-04
 
 Sorgente349e37ade48e5a71be8f4e0795facbc773e8e1e8, branchfix ePR2 draft.
