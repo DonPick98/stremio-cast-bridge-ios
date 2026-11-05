@@ -1,10 +1,11 @@
 name: Validate background playback lifecycle
 on:
   push:
-    branches: [test/background-processing-20261104, fix/playback-recovery-20261103]
+    branches: [test/background-processing-20261104, fix/playback-recovery-20261103, feature/episode-picker-20261105]
     paths:
       - Sources/LockScreenPlayback.swift
       - Sources/PlaybackPreferences.swift
+      - Tests/PlaybackPreferencesTests.swift
       - Tests/SeriesNavigationTests.swift
       - Sources/PlaybackState.swift
       - Sources/PlaybackDiagnostics.swift
@@ -30,6 +31,8 @@ jobs:
           "$RUNNER_TEMP/playback-tests"
           swiftc -swift-version 5 -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/SeriesNavigationTests.swift -o "$RUNNER_TEMP/series-tests"
           "$RUNNER_TEMP/series-tests"
+          swiftc -swift-version 5 -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/preferences-tests"
+          "$RUNNER_TEMP/preferences-tests"
           swiftc -swift-version 5 -parse-as-library Sources/PlaybackDiagnostics.swift Tests/PlaybackDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostics-tests"
           "$RUNNER_TEMP/diagnostics-tests"
       - name: Typecheck production background adapters against iOS SDK

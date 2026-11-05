@@ -1,3 +1,31 @@
+# Iterazione49 — selezione puntata e attesa autoplay (FT-001/002/003)
+
+Base prodotto 05b8bed / IPA48, branch feature/episode-picker-20261105.
+L'utente conferma ora continuità in background, fps rilevati finora e ritorno
+dei controlli iOS. Non equivale a ogni scenario di interruzione/recupero né
+alla chiusura del probe intermittente CB024. Preservati Now Playing nativo,
+receiver CC1AD845 e pipeline media48. Nessuna nuova ActivityKit personalizzata.
+
+Nuovo: elenco stagioni/puntate dal catalogo validato esistente, selezione diretta
+anche fra stagioni usando la stessa preparazione transazionale della navigazione.
+Nessun episodio inventato; speciali secondo preferenza. Puntata corrente marcata.
+Attesa autoplay facoltativa 0/5/10/15s, default immediato conservato; si attiva solo
+alla fine confermata e per il prossimo episodio già ammesso dalla policy esistente.
+Avvia ora/Annulla, deadline monotona, token invalidato prima dell'avvio e su reset,
+stop, cambio fonte/episodio o ritorno a Stremio. Lease UIKit limitata per l'attesa;
+alla scadenza annulla, nessun rinnovo o garanzia background illimitato.
+Disattivare autoplay annulla l'attesa. Le modifiche alla durata valgono dal
+passaggio successivo. Codec, fps, qualità e preferenze tracce invariati.
+
+Test policy: destinazioni valide/stessa serie, buchi, invalidi, ritardo/default/reset,
+wake tardivo e contesto cambiato. CI regressioni e build iPhone da acquisire;
+non dichiarare IPA49 pronta prima della build. App/estensione impostate49.
+Restano collaudo due episodi e picker su iPhone/TV, contesto origine app/web,
+tema/accessibilità/profili conversione, sync account e updater stabile/in-place.
+Registro canonico issue1. Gli altri checkpoint sotto sono storici.
+
+---
+
 # Candidata48 — gate testo passato; correggere fallback VP8 troncato
 
 18fef57/42017281562/artifact13409969866: gate testo integrato bounded PASSATO
