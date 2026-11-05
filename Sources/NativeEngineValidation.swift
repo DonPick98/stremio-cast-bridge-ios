@@ -19,6 +19,9 @@ import ObjectiveC
     }
     static func run() async {
         let documents = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
+        if ProcessInfo.processInfo.environment["CAST_ENGINE_SEEKTEST"]=="1" {
+            await seekTrials(documents:documents);return
+        }
         let report = documents.appendingPathComponent("engine-validation.json")
         let input = documents.appendingPathComponent("h264-ac3.mkv")
         let output = documents.appendingPathComponent("converted.mp4")
@@ -193,6 +196,32 @@ import ObjectiveC
         }
         return rows
     }
+    /// Isolate decoder preroll from encoder time-base rounding. Production
+    /// flags remain unchanged; the independent frame gate evaluates each file.
+    private static func seekTrials(documents:URL) async {
+        let input=documents.appendingPathComponent("CodecSamples/caption-hevc-eac3.mkv")
+        var rows:[[String:Any]]=[]
+        for (name,software,clock) in [("baseline",false,false),("software",true,false),("clock",false,true),("software-clock",true,true)] {
+            let engine=EmbeddedMediaEngine()
+            engine.testingSoftwareDecoder=software;engine.testingFineEncoderClock=clock
+            var row:[String:Any]=["name":name,"softwareDecoder":software,"fineClock":clock]
+            do {
+                let source=try await EmbeddedMediaEngine.inspect(input)
+                guard source.audio.count>1,let subtitle=source.subtitles.first else {throw EmbeddedMediaError.metadata}
+                let audio=source.audio[1]
+                let url=try await engine.start(input:input,deviceIP:"127.0.0.1",start:3.25,videoMode:.hardwareH264,audioID:Int(audio.key.dropFirst(4)),subtitleID:Int(subtitle.key.dropFirst(4)),style:SubtitleAppearance(),copyAudio:false,audioIndex:1,subtitleIndex:0,video:source.video,selfTest:true,audioCodec:audio.codec)
+                let (body,_,eof)=try await NativeStreamCapture().read(url)
+                try body.write(to:documents.appendingPathComponent("seek-trial-"+name+".mp4"))
+                row["captured"]=eof;row["bytes"]=body.count
+            } catch {row["captured"]=false;row["code"]="conversion"}
+            engine.stop();rows.append(row)
+            let report:[String:Any]=["productionUnchanged":true,"position":3.25,"trials":rows]
+            if let data=try? JSONSerialization.data(withJSONObject:report,options:.prettyPrinted) {
+                try? data.write(to:documents.appendingPathComponent("seek-trials.json"),options:.atomic)
+            }
+        }
+    }
+
     /// Four-second synthetic A/B. These CPU figures describe this process in
     /// the simulator, not phone battery life or proof of hardware use.
     private static func decoderTrial(documents:URL) async -> [String:Any] {

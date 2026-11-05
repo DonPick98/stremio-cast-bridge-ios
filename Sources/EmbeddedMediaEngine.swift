@@ -18,6 +18,10 @@ enum EmbeddedMediaError: LocalizedError {
 }
 
 @MainActor final class EmbeddedMediaEngine: NSObject, VLCMediaPlayerDelegate {
+#if CAST_ENGINE_TESTING
+    var testingSoftwareDecoder=false
+    var testingFineEncoderClock=false
+#endif
     enum VideoMode: Equatable { case copy, ffmpegH264, hardwareH264, softwareVP8 }
     static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false,bitmap:Bool = false) -> [VideoMode] {
         if burn,bitmap,fallbackLevel < 2 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
@@ -129,17 +133,18 @@ enum EmbeddedMediaError: LocalizedError {
         return RDPreparedMedia.native(audio:audio,subtitles:readTracks(VLCMediaTracksInformationTypeText),defaultAudio:selected.key,url:url,contentType:type,direct:direct,videoConversion:format.requiresConversion,description:"\(codec(video).uppercased()) · \(format.label)",duration:duration,video:format)
     }
 
-    static func outputChain(videoMode:VideoMode,copyAudio:Bool = false,burn:Bool = false,video:VideoFormat? = nil,access:String,target:String) -> String {
+    static func outputChain(videoMode:VideoMode,copyAudio:Bool = false,burn:Bool = false,video:VideoFormat? = nil,access:String,target:String,fineEncoderClock:Bool=false) -> String {
         let webm = videoMode == .softwareVP8
         var conversion = webm ? "acodec=vorb,ab=192,channels=2" : copyAudio ? "" : "acodec=mp4a,ab=192,channels=2"
         func append(_ value: String) { conversion += (conversion.isEmpty ? "" : ",") + value }
+        let clockOptions=fineEncoderClock ? ",options={time_base=1/1000000}":""
         switch videoMode {
         case .copy: break
-        case .ffmpegH264, .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=\(video?.conversionBitrate ?? 10000),maxwidth=1920,maxheight=1080")
+        case .ffmpegH264, .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox\(clockOptions)},vb=\(video?.conversionBitrate ?? 10000),maxwidth=1920,maxheight=1080")
         case .softwareVP8: append("vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=\(video?.conversionBitrate ?? 6000),maxwidth=1920,maxheight=1080")
         }
         if videoMode != .copy, let rate = video?.conversionFrameRate { append("fps=\(Int(rate))") }
-        else if videoMode == .hardwareH264,let rate=video?.vlcFrameRate {append("fps=\(rate)")}
+        else if !fineEncoderClock,videoMode == .hardwareH264,let rate=video?.vlcFrameRate {append("fps=\(rate)")}
         if burn { append("soverlay") }
         let mux = webm ? "avformat{mux=webm,options={live=1},reset-ts}" : "avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof},reset-ts}"
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
@@ -227,7 +232,12 @@ enum EmbeddedMediaError: LocalizedError {
         if let video { outputVideo = video }
         else { outputVideo = try await Self.inspect(input).video }
         try Task.checkCancellation()
-        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:outputVideo,access:"fd",target:String(channel.writer))
+        var fineEncoderClock=false
+#if CAST_ENGINE_TESTING
+        fineEncoderClock=testingFineEncoderClock
+        if testingSoftwareDecoder {media.addOption(":avcodec-hw=none")}
+#endif
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:outputVideo,access:"fd",target:String(channel.writer),fineEncoderClock:fineEncoderClock)
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
         media.addOption(":no-sout-keep")

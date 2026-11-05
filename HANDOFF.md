@@ -1,3 +1,17 @@
+# CB009/021 — esperimento seek isolato, prodotto invariato
+
+Da a5f8fb2 / IPA47. Nuovo workflow seek-probe sul branchtest confronta baseline,
+decoder VLC software, clock encoder microsecondi senza filtro fps e combinazione.
+Opzioni attivate esclusivamente CAST_ENGINE_TESTING. Nessuna modifica alla IPA47
+né attivazione di queste opzioni in release. Quattro output sintetici con identità
+di frame; checkOverlaySeek rigoroso esistente senza soglie modificate. Catturare
+seek-trial-checks.json e log; successo job richiede un candidato che superi il gate,
+ma non sostituisce la suite di accettazione produzione e i test audio/sottotitoli.
+Non dichiarare correzione prima di risultati e validazione estesa del vincitore.
+Nativo47/42010715495 ancora in corso alla ripresa. Registro commento6655856545.
+
+---
+
 # IPA47 pronta — episodi Stremio integrati
 
 Commit ccbdc0e1494b09b032c91fa7e1321ec3c59f8722, branchfix e PR2 draft.
