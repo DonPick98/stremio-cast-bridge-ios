@@ -1,3 +1,30 @@
+# IPA50 pronta — CB025/026, 2026-11-05
+
+Sorgente prodotto750ad1d06c8c6e708a21c571e96797931170dc3e; branch fix/seek-burst-20261105, PR8 draft.
+Build iPhone/regressioni42101551169 SUCCESSO, lifecycle/API42101551139 SUCCESSO.
+Nuove regressioni per tempi reali della raffica, intent superati/stop e offset.
+Pipeline codec48 invariata; non rieseguita la matrice nativa completa.
+
+IPA effettiva verificata localmente: app/estensione0.8.1(50), unsigned,
+audio+processing, receiverCC1AD845. 69375547byte,
+SHA256 6d4874d3b3a219318cd3af8bb75aebcad7584384e4b3851e52e1a4a99c2fc8f5.
+ZIPartifact13448728918, digest ZIP sha256:b53471f696e7e8a846d501be21bd1a18b32ec32d446ddcd9dbd08f32d671d02a.
+Download https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/42101551169/artifacts/13448728918
+Artifact fino2026-11-12; IPA estratta e resa disponibile nella chat.
+
+CB025/026 IMPLEMENTATO_DA_VERIFICARE su iPhone/TV: 4tap+30→+120 e cambio
+direzione durante prepare/LOAD, pausa/stop, tracce e ripresa dopo expiry.
+Nessun candidato preparato superato deve inviare LOAD. Un LOAD già inviato al
+ricevitore non può essere retroattivamente annullato con certezza: il nuovo
+target non attende più che quel LOAD raggiunga PLAYING prima di prepararsi.
+L’offset posseduto dal LOAD sopravvive all’encoder; sospensione/nonloaded escludono
+capture e callback tardive. Nessun nuovo job automatico dopo expiry; la causa
+della scadenza di sistema non è dimostrata. Features49 preservate.
+Registro issue1 aggiornato, nessun merge su feature/fix/main compiuto.
+Checkpoint sotto storici; non dichiarare collaudo fisico50 o consumi migliorati.
+
+---
+
 # Candidata50 — seek rapidi e timeline dopo expiry (CB025/026)
 
 Base446ea0d / IPA49, branch fix/seek-burst-20261105. Riscontro hardware49:
