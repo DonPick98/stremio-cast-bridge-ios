@@ -1,0 +1,83 @@
+name: Inspect packaged IPA
+on:
+  push:
+    branches: [test/ipa-audit-20261105]
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: Successful unsigned iPhone build run
+        default: "42021487799"
+        required: true
+      expected_sha:
+        description: Expected source commit
+        default: "05b8bedbdcf61a14558a01264f512b6bb480f792"
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_RUN: ${{ inputs.source_run || '42021487799' }}
+      EXPECTED_SHA: ${{ inputs.expected_sha || '05b8bedbdcf61a14558a01264f512b6bb480f792' }}
+    steps:
+      - name: Verify source run before downloading
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import urllib.request,json,os,time
+          url="https://api.github.com/repos/DonPick98/stremio-cast-bridge-ios/actions/runs/"+os.environ["SOURCE_RUN"]
+          req=urllib.request.Request(url,headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"})
+          for _ in range(30):
+              with urllib.request.urlopen(req) as r:d=json.load(r)
+              assert d["head_sha"]==os.environ["EXPECTED_SHA"],"Unexpected source commit"
+              if d["status"]=="completed":
+                  assert d["conclusion"]=="success","Source build failed"
+                  break
+              time.sleep(10)
+          else:raise RuntimeError("Source build not finished")
+          print("Source build and commit verified")
+          PY
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: CastRemote-unsigned
+          run-id: ${{ env.SOURCE_RUN }}
+          github-token: ${{ github.token }}
+          path: incoming
+      - name: Inspect actual app and extension in IPA
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,plistlib,hashlib,json,shutil,os
+          files=list(Path("incoming").rglob("*.ipa"))
+          assert len(files)==1
+          ipa=files[0]
+          with zipfile.ZipFile(ipa) as z:
+              names=z.namelist()
+              app=plistlib.loads(z.read("Payload/CastRemote.app/Info.plist"))
+              ext=plistlib.loads(z.read("Payload/CastRemote.app/PlugIns/CastLiveActivity.appex/Info.plist"))
+              for item in [app,ext]:
+                  assert item["CFBundleVersion"]=="48" and item["CFBundleShortVersionString"]=="0.8.1"
+              assert app["CFBundleIdentifier"]=="app.example.castbridge"
+              assert ext["CFBundleIdentifier"]=="app.example.castbridge.liveactivity"
+              assert app["CastBridgeReceiverAppID"]=="CC1AD845"
+              assert set(app["UIBackgroundModes"])=={"audio","processing"}
+              assert app["BGTaskSchedulerPermittedIdentifiers"]==["app.example.castbridge.*"]
+              assert "Payload/CastRemote.app/embedded.mobileprovision" not in names
+              assert "Payload/CastRemote.app/_CodeSignature/CodeResources" not in names
+              notice=z.read("Payload/CastRemote.app/Stremio-Core.txt").decode()
+              assert "The MIT License" in notice and "SmartCode" in notice
+          out=Path("audited-ipa");out.mkdir()
+          dest=out/"CastBridge-0.8.1-48-unsigned.ipa";shutil.copyfile(ipa,dest)
+          report={"version":"0.8.1","build":48,"source":os.environ["EXPECTED_SHA"],"sourceRun":os.environ["SOURCE_RUN"],"bytes":dest.stat().st_size,"sha256":hashlib.sha256(dest.read_bytes()).hexdigest(),"appAndExtension":True,"receiver":"CC1AD845","background":["audio","processing"],"unsigned":True,"stremioNotice":True}
+          (out/"inspection.json").write_text(json.dumps(report,indent=2))
+          print(json.dumps(report))
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CastBridge-0.8.1-48-audited
+          path: audited-ipa
+          retention-days: 7
