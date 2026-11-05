@@ -4,6 +4,8 @@ on:
     branches: [test/background-processing-20261104, fix/playback-recovery-20261103]
     paths:
       - Sources/LockScreenPlayback.swift
+      - Sources/PlaybackPreferences.swift
+      - Tests/SeriesNavigationTests.swift
       - Sources/PlaybackState.swift
       - Sources/PlaybackDiagnostics.swift
       - CastRemote/CastController.swift
@@ -26,6 +28,8 @@ jobs:
         run: |
           swiftc -swift-version 5 -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-tests"
           "$RUNNER_TEMP/playback-tests"
+          swiftc -swift-version 5 -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/SeriesNavigationTests.swift -o "$RUNNER_TEMP/series-tests"
+          "$RUNNER_TEMP/series-tests"
           swiftc -swift-version 5 -parse-as-library Sources/PlaybackDiagnostics.swift Tests/PlaybackDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostics-tests"
           "$RUNNER_TEMP/diagnostics-tests"
       - name: Typecheck production background adapters against iOS SDK

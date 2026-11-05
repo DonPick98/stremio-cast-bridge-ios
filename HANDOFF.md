@@ -1,3 +1,19 @@
+# FT-001 — compatibilità Stremio Core, in verifica
+
+Confronto con Stremio/stremio-core 3417c2e7: Video accetta name come alias di
+title e titolo mancante. Il nostro decode sintetizzato richiedeva title per ogni
+voce, invalidando tutto il catalogo anche con un solo episodio senza titolo.
+Parser Swift ora compatibile; ordinamento stagione zero in fondo come upstream.
+Attribuzione/licenza MIT in ThirdPartyNotices/Stremio-Core.txt. Test sintetici per
+alias, assenza titolo e ordine speciali. Da eseguire CI; nessuna prova della fonte
+privata né garanzia che il suo errore di rete/catalogo sia risolto. Stessa bingeGroup
+già usata per la sorgente successiva; non importato l'intero core Rust.
+
+IPA46 resta la candidata energetica già compilata: questa patch successiva va
+verificata prima di incorporarla in una nuova IPA. Mantenere confronto A/B 45/46.
+
+---
+
 # Build 46 pronta — CB-014 implementato, consumo fisico da verificare
 
 Commit prodotto: 9127bddf7f0368761ed6eab6505f4fc1835833af, PR #2 draft.

@@ -84,7 +84,19 @@ struct SeriesEpisode: Decodable, Identifiable, Equatable {
     let season:Int?
     let episode:Int?
     let released:String?
-    var label:String { "S\(season ?? 0) E\(episode ?? 0) · \(title)" }
+    // Stremio Core Video accepts `name` as an alias and defaults a missing
+    // title to empty; one untitled video must not reject the entire catalogue.
+    // MIT attribution: ThirdPartyNotices/Stremio-Core.txt.
+    enum CodingKeys:String,CodingKey {case id,title,name,season,episode,released}
+    init(from decoder:Decoder) throws {
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        id=try c.decode(String.self,forKey:.id)
+        title=try c.decodeIfPresent(String.self,forKey:.title) ?? c.decodeIfPresent(String.self,forKey:.name) ?? ""
+        season=try c.decodeIfPresent(Int.self,forKey:.season)
+        episode=try c.decodeIfPresent(Int.self,forKey:.episode)
+        released=try c.decodeIfPresent(String.self,forKey:.released)
+    }
+    var label:String { "S\(season ?? 0) E\(episode ?? 0)"+(title.isEmpty ? "":" · \(title)") }
     func aired(at now:Date = Date()) -> Bool {
         guard let released else { return false }
         let iso=ISO8601DateFormatter()
@@ -107,7 +119,11 @@ enum SeriesNavigation {
                   season>=0,episode>=0,(includeSpecials || season>0),
                   $0.id=="\(series):\(season):\(episode)" else{return false}
             return seen.insert($0.id).inserted
-        }.sorted { ($0.season!,$0.episode!) < ($1.season!,$1.episode!) }
+        }.sorted {
+            // Stremio Core VideoSortedVecAdapter places season zero last.
+            if ($0.season==0) != ($1.season==0) {return $0.season != 0}
+            return ($0.season!,$0.episode!) < ($1.season!,$1.episode!)
+        }
     }
     static func adjacent(_ videos:[SeriesEpisode],current:String,direction:Int) -> SeriesEpisode? {
         guard [-1,1].contains(direction),let index=videos.firstIndex(where:{$0.id==current}),
