@@ -1,3 +1,38 @@
+# IPA51 pronta — priorità SSA, CB027/028 (2026-11-05)
+
+Prodotto620f7544e840cbeff128b425e650a80d0dd95d5a; branch fix/captions-background-20261105,
+PR9 draft. Build iPhone42106877628 e policy/SDK42106877504 SUCCESSO.
+Suite nativa completa42106360183 su6db6d31 SUCCESSO: sixteenSSA=true,
+independentCaptions.passed=true, documenti completi/font/CORS/cancellazione,
+gate video/audio/caption,35codec/qualità/background passati. CaptionFFmpeg,
+CaptionModel e CaptionIntegrationValidation sono identici tra6db6d31 e620f754.
+Unica differenza prodotto620: prima registrazione job quando l'handoff inizialmente
+inactive diventa foreground. Questa parte compilata/testata SDK sul prodotto.
+La ripetizione della suite completa sulla sorgente esatta42106877735 è IN_CORSO;
+recuperarne esito nella prossima sessione. Non confondere fonti dei risultati.
+
+IPA effettiva verificata: app/estensione0.8.1(51), unsigned, audio+processing,
+receiverCC1AD845,69374568byte. SHA256
+e1809e67f19a7b6017fb6fed0ed60ae8abefe6fb45f58238b74f3c34eecdc3ca.
+ZIPartifact13452947597, digest ZIP sha256:d74fc911feedf4aa8aca8398d3f751363241dae6baefe48779d2a1ad2c035b00.
+Download https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/42106877628/artifacts/13452947597
+Fino2026-11-12; IPA estratta e resa disponibile nella chat.
+
+SSA: header-only prima dell'analisi video, estrazione scelta isolata dalle alternative,
+riconnessione HTTP temporanea bounded, exit code/state senza URL/log grezzi e retry
+della stessa traccia daUI. TestCLI6.1.1 HTTPS503→success e403 senza retry passati,
+distinti dal backend nativo. Originale privato con16SSA/HEVC4K non acquisito:
+CB028 resta IMPLEMENTATO_DA_VERIFICARE, nessuna promessa che quel file sia risolto.
+BG: consegna confermata per segmenti e residuo ricalcolato dopo seekback, clock
+vecchi esclusi, rollback riallineato e diagnostica unità/ultimo progresso.
+CB027 IMPLEMENTATO_DA_VERIFICARE hardware; progresso fermo prima della scadenza
+è provato nel codice50, la causa precisa dell'expiry di iOS resta un'ipotesi.
+Nessun heartbeat fittizio, rinnovo automatico, nuovo receiver o pagamento.
+Fix50 e features49 preservati. Nessun merge su seek/feature/fix/main.
+Registro issue1 aggiornato. Checkpoint seguenti storici.
+
+---
+
 # Candidata51 — priorità SSA e progresso background (CB027/028)
 
 Base db3f114 / IPA50, branch fix/captions-background-20261105. Due riscontri:
