@@ -2,6 +2,64 @@ import Foundation
 
 @main struct PlaybackRegressions {
     static func main() {
+        // Four real tap timings from build49: the old 150ms leading timer
+        // launched at +60s. A trailing debounce must dispatch only +120s.
+        var burst=PlaybackSeekIntent(),seekTimeline=PlaybackTimeline()
+        let taps:[Double]=[0,0.168,0.354,0.535]
+        var destination=2124.859
+        var tokens:[UUID]=[]
+        for time in taps {
+            destination+=30;seekTimeline.queue(at:destination)
+            burst.submit(now:time);tokens.append(burst.generation)
+            precondition(abs((burst.delay(for:burst.generation,now:time) ?? -1)-0.3)<0.00001)
+        }
+        for obsolete in tokens.dropLast(){precondition(burst.delay(for:obsolete,now:1)==nil && !burst.accepts(obsolete))}
+        let latest=tokens.last!
+        precondition((burst.delay(for:latest,now:0.684) ?? 0)>0.14,"Do not launch from the first tap's deadline")
+        precondition(burst.delay(for:latest,now:0.836)==0)
+        let finalTarget=seekTimeline.consumeQueued()!
+        precondition(abs(finalTarget-2244.859)<0.00001)
+        burst.dispatched(latest);seekTimeline.begin(at:finalTarget)
+        precondition(!burst.pending && burst.accepts(latest))
+
+        // A fifth/back tap during prepare or LOAD supersedes the dispatched
+        // operation. Its late acknowledgement cannot consume the newer intent.
+        seekTimeline.queue(at:2214.859);burst.submit(now:1)
+        let duringPrepare=burst.generation
+        precondition(!burst.accepts(latest))
+        burst.dispatched(latest)
+        precondition(burst.pending,"An obsolete completion must not clear the new request")
+        precondition(!seekTimeline.observe(0,ready:true))
+        precondition(seekTimeline.queuedTarget==2214.859)
+        seekTimeline.cancelActive()
+        precondition(seekTimeline.consumeQueued()==2214.859)
+        burst.dispatched(duringPrepare)
+        seekTimeline.begin(at:2214.859)
+        seekTimeline.queue(at:2274.859);burst.submit(now:2)
+        precondition(!burst.accepts(duringPrepare))
+        let beforeStop=burst.generation
+        burst.cancel();seekTimeline.reset()
+        precondition(!burst.accepts(beforeStop) && !burst.pending && seekTimeline.queuedTarget==nil)
+        burst.submit(now:3);let newSource=burst.generation
+        precondition(newSource != beforeStop && burst.delay(for:newSource,now:4)==0)
+
+        var clock=ReceiverPlaybackClock()
+        clock.load(offset:2184.859)
+        precondition(abs(clock.capture(relative:4.255,loaded:true,suspended:false)!-2189.114)<0.00001)
+        // The newest LOAD owns the mapping. Stop/release does not rewrite it.
+        clock.load(offset:2244.859)
+        precondition(clock.capture(relative:0.850,loaded:false,suspended:true)==nil)
+        precondition(clock.capture(relative:0.850,loaded:false,suspended:false)==nil)
+        precondition(clock.capture(relative:0.850,loaded:true,suspended:true)==nil)
+        precondition(clock.offset==2244.859)
+        precondition(clock.capture(relative:.nan,loaded:true,suspended:false)==nil)
+        precondition(clock.capture(relative:-1,loaded:true,suspended:false)==nil)
+        // Resume explicitly from the last confirmed original-media position.
+        clock.load(offset:2123.731)
+        precondition(abs(clock.capture(relative:0.850,loaded:true,suspended:false)!-2124.581)<0.00001)
+        clock.load(offset:0)
+        precondition(clock.capture(relative:2124.581,loaded:true,suspended:false)==2124.581)
+
         func probe(_ fields:String,codec:String="hevc",width:Int=1920,height:Int=1080)->VideoCadenceProbe? {
             VideoCadenceProbe.parse(Data(("{\"streams\":["+fields+"]}").utf8),codec:codec,width:width,height:height)
         }
@@ -204,4 +262,5 @@ import Foundation
         print("Playback generation, seek confirmation and original frame-rate regressions passed")
     }
 }
+
 

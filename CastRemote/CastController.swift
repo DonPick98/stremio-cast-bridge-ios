@@ -335,7 +335,8 @@ import AVFAudio
         let overlayDelay:Double
     }
     private var nativeSelection: NativeSelection?
-    private var streamOffset: Double { nativeEngine?.offset ?? 0 }
+    private var receiverClock=ReceiverPlaybackClock()
+    private var streamOffset: Double { receiverClock.offset }
     private var forceLocalPlayback = false
     private var localFallbackLevel = 0
     private var nativeEngineGeneration:UUID?
@@ -352,6 +353,8 @@ import AVFAudio
     private var trackChangePending = false
     private var trackApplyTask: Task<Void,Never>?
     private var seekDispatchTask: Task<Void,Never>?
+    private var seekIntent=PlaybackSeekIntent()
+    private var seekRebuildPending=false
     private var wantsPlayback = false
     private var lastDiagnosticSnapshot = Date.distantPast
     private var transferCheckpoint:(engine:ObjectIdentifier,time:Date,metrics:LocalTransferMetrics)?
@@ -398,8 +401,7 @@ import AVFAudio
     private func capturePosition() {
         guard timeline.target == nil, timeline.queuedTarget == nil, !checkingStream, ownsCurrentMedia, !loadPending, let client,
               let state = client.mediaStatus?.playerState, state == .playing || state == .paused else { return }
-        let value = client.approximateStreamPosition() + streamOffset
-        guard value.isFinite, value >= 0, state != .buffering || value > 0 else { return }
+        guard let value=receiverClock.capture(relative:client.approximateStreamPosition(),loaded:hasLoaded,suspended:backgroundServiceStopped) else{return}
         lastGoodPosition = value
         if let positionKey { UserDefaults.standard.set(value, forKey: positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated") }
     }
@@ -1040,6 +1042,13 @@ import AVFAudio
                             self.startPlayback(requestedPosition:start,autoplay:self.playWhenReady)
                             return
                         }
+                        // Never publish a candidate for a seek superseded while
+                        // engine.start was suspended. Keep the latest intent.
+                        if let latest=self.timeline.queuedTarget,abs(latest-start)>0.001 {
+                            engine.stop();self.checkingStream=false;self.loading=false
+                            self.timeline.cancelActive();self.seekRebuildPending=true
+                            self.flushQueuedSeek();return
+                        }
                         self.nativeEngine?.stop()
                         self.nativeEngine = engine;self.nativeEngineGeneration=streamToken; self.nativeSelection = selection
                         if burnedSubtitle != "none" { engine.setBurnedSubtitleDelay(self.subtitleDelay) }
@@ -1061,7 +1070,7 @@ import AVFAudio
                             if sameProducer{PlaybackDiagnostics.record(.recovery,["phase":"retry_same_producer","mode":String(describing:engine.diagnosticMode),"attempt":String(self.recovery.attempts)])}
                             if !self.recoverPlayback(allowVideoConversion:allowVideoConversion && !sameProducer) { self.playbackIssue = "Il motore integrato ha interrotto la conversione. La posizione è conservata." }
                         }
-                        self.lastGoodPosition = self.timeline.queuedTarget ?? max(0,start); self.position = self.lastGoodPosition
+                        self.lastGoodPosition = max(0,start); self.position = self.lastGoodPosition
                         self.checkingStream = false; self.loading = false
                         self.sendLoad(preservePosition:false,urlOverride:url,contentTypeOverride:engine.contentType,autoplay:self.playWhenReady)
                         return
@@ -1116,6 +1125,7 @@ import AVFAudio
         // the old engine. Reading it again here would lose the old stream offset.
         do {
             let url = urlOverride ?? prepared.directURL
+            let loadOffset=urlOverride == nil ? 0:(nativeEngine?.offset ?? 0)
             let directURLs = directCaptionReady || selectedSubtitle == "none" ? standardCaptions.urls : [:]
             let captions:[Int:URL] = captionIsIndependent ? [:]:urlOverride != nil ? (nativeEngine?.captionURLs ?? [:]) : directURLs
             let signature = url.absoluteString + (captionIsIndependent ? "|receiver":"|" + captions.sorted(by:{$0.key<$1.key}).map{"\($0.key):\($0.value.absoluteString)"}.joined(separator:"|"))
@@ -1136,7 +1146,7 @@ import AVFAudio
             if hasLoaded && ownsCurrentMedia && loadedSignature == signature && loadedSubtitle == selectedSubtitle { return }
             let info = GCKMediaInformationBuilder(contentURL:url)
             info.contentID = url.absoluteString
-            if prepared.duration > 0 { info.streamDuration = max(1,prepared.duration - (urlOverride == nil ? 0 : streamOffset)) }
+            if prepared.duration > 0 { info.streamDuration = max(1,prepared.duration-loadOffset) }
             info.streamType = .buffered
             info.contentType = contentTypeOverride ?? prepared.directContentType
             let metadata = GCKMediaMetadata(metadataType:.movie)
@@ -1146,7 +1156,7 @@ import AVFAudio
             if independentCaptions.enabled{
                 independentCaptions.attach(castSession)
                 if captionIsIndependent{syncIndependentCaptions()}else{independentCaptions.clearSource()}
-                independentCaptions.bind(epoch:streamRequests.generation.uuidString,offset:urlOverride == nil ? 0:streamOffset)
+                independentCaptions.bind(epoch:streamRequests.generation.uuidString,offset:loadOffset)
                 info.customData=["bridge":independentCaptions.mediaData]
             }
             let load = GCKMediaLoadRequestDataBuilder()
@@ -1167,13 +1177,14 @@ import AVFAudio
             if urlOverride != nil { load.startTime = 0 }
             else if preservePosition || lastGoodPosition > 0 { load.startTime = max(0, lastGoodPosition) }
             loadPending = true
-            loadStartPosition = urlOverride == nil ? max(0,lastGoodPosition) : streamOffset
+            loadStartPosition = urlOverride == nil ? max(0,lastGoodPosition) : loadOffset
             lastAppliedSubtitleDelay = subtitleDelay
             playbackIssue = nil
             loading = true
             hasLoaded = false
             loadAccepted = false
             expectedContentID = url.absoluteString
+            receiverClock.load(offset:loadOffset)
             loadedSignature = signature
             loadedStreamGeneration = streamRequests.generation
             loadedSubtitle = captionKind != nil && activeID == nil ? "none" : selectedSubtitle
@@ -1680,28 +1691,55 @@ import AVFAudio
     func seek(to value: Double) {
         lockScreen.refreshNextUpdate()
         PlaybackDiagnostics.record(.seek,["target":PlaybackDiagnostics.number(value),"position":PlaybackDiagnostics.number(position)])
-        guard hasLoaded || loadPending || loading, value.isFinite else { return }
-        let target = min(duration > 0 ? max(0,duration-(localProcessing ? 1 : 0)) : value,max(0,value))
+        guard !backgroundServiceStopped,hasLoaded || loadPending || loading || seekRebuildPending, value.isFinite else { return }
+        let localSeek=seekRebuildPending || localProcessing || checkingStream
+        let target = min(duration > 0 ? max(0,duration-(localSeek ? 1 : 0)) : value,max(0,value))
         timeline.queue(at:target); position = target; lastGoodPosition = target
+        seekIntent.submit(now:ProcessInfo.processInfo.systemUptime)
+        seekDispatchTask?.cancel();seekDispatchTask=nil
+        seekRebuildPending=localSeek
+        if seekRebuildPending && (checkingStream || loading || loadPending) {
+            // A newer destination owns the next LOAD immediately. Cancellation
+            // may finish later; its generation cannot publish or roll back us.
+            streamRequests.invalidate()
+            streamCheckTask?.cancel();streamCheckTask=nil
+            let obsolete=loadRequest;loadRequest=nil
+            loadTimeout?.cancel();loadTimeout=nil
+            checkingStream=false;loading=false;loadPending=false;loadAccepted=false
+            timeline.cancelActive()
+            obsolete?.cancel()
+            PlaybackDiagnostics.record(.seek,["phase":"superseded","target":PlaybackDiagnostics.number(target)])
+        }
         updateActivity(status:"Caricamento")
         flushQueuedSeek()
     }
     private func flushQueuedSeek() {
-        guard seekDispatchTask == nil, timeline.queuedTarget != nil, timeline.target == nil,
-              !loading, !loadPending, !checkingStream, commandContinuation == nil, subtitleRequest == nil, hasLoaded,
-              connected || !localProcessing else { return }
+        guard !backgroundServiceStopped,seekIntent.pending,seekDispatchTask == nil,timeline.queuedTarget != nil,
+              !loading,!loadPending,!checkingStream,commandContinuation == nil,subtitleRequest == nil,
+              hasLoaded || seekRebuildPending,connected || !seekRebuildPending else{return}
         let sourceToken = sourceRequests.generation
+        let seekToken=seekIntent.generation
         seekDispatchTask = Task {
-            try? await Task.sleep(nanoseconds:150_000_000)
-            guard !Task.isCancelled, sourceRequests.accepts(sourceToken) else { return }
+            if let delay=seekIntent.delay(for:seekToken,now:ProcessInfo.processInfo.systemUptime),delay>0 {
+                do{try await Task.sleep(nanoseconds:UInt64(delay*1_000_000_000))}catch{return}
+            }
+            guard !Task.isCancelled,sourceRequests.accepts(sourceToken),seekIntent.accepts(seekToken) else{return}
             guard !loading, !loadPending, !checkingStream, commandContinuation == nil, subtitleRequest == nil,
                   let target = timeline.consumeQueued() else { seekDispatchTask = nil; return }
+            seekIntent.dispatched(seekToken)
             timeline.begin(at:target)
+            if seekRebuildPending || localProcessing {
+                seekRebuildPending=false;seekDispatchTask=nil
+                startPlayback(requestedPosition:target,autoplay:playWhenReady)
+                return
+            }
             var success = false
             if !connected && !localProcessing { success = await directCommand("seek:\(target)") }
+            guard !Task.isCancelled,sourceRequests.accepts(sourceToken),seekIntent.accepts(seekToken) else{return}
             if !success { success = await performActivityCommand("seek:\(target)") }
+            guard !Task.isCancelled,sourceRequests.accepts(sourceToken),seekIntent.accepts(seekToken) else{return}
             if !success && !localProcessing { success = await directCommand("seek:\(target)") }
-            guard sourceRequests.accepts(sourceToken) else { return }
+            guard !Task.isCancelled,sourceRequests.accepts(sourceToken),seekIntent.accepts(seekToken) else{return}
             if !success { timeline.cancelActive(); message = "La TV non ha confermato lo spostamento. Puoi riprovare." }
             seekDispatchTask = nil
             flushQueuedSeek()
@@ -1731,6 +1769,7 @@ import AVFAudio
         wantsPlayback=false;reconnectTask?.cancel();reconnectTask=nil
         streamCheckTask?.cancel();streamCheckTask=nil;checkingStream=false
         seekDispatchTask?.cancel();seekDispatchTask=nil
+        seekIntent.cancel();seekRebuildPending=false
         loadTimeout?.cancel();loadPending=false;loading=false;loadRequest=nil
         if ownsCurrentMedia {_ = client?.pause()}
         independentCaptions.stop();stopCaptionDelivery();stopLocalProcessing()
@@ -1857,9 +1896,11 @@ import AVFAudio
     }
     private func directCommand(_ command:String) async -> Bool {
         let sourceToken = sourceRequests.generation
+        let streamToken=streamRequests.generation
         let controlToken = controlRequests.generation
         let success = await CastDirectControl.perform(command,offset:streamOffset,originalDuration:localProcessing ? duration : nil) { [weak self] position,duration,playing in
-            guard let self, self.sourceRequests.accepts(sourceToken), !self.checkingStream, !self.loadPending else { return }
+            guard let self,self.sourceRequests.accepts(sourceToken),self.streamRequests.accepts(streamToken),
+                  !self.backgroundServiceStopped,self.hasLoaded,self.ownsCurrentMedia,!self.checkingStream,!self.loadPending else{return}
             if self.timeline.observe(position,ready:true) && self.timeline.queuedTarget == nil { self.position = position; self.lastGoodPosition = position }
             if duration > 0 { self.duration = duration }
             if self.controlRequests.accepts(controlToken), self.playbackIntent.accepts(playing) {
@@ -1876,10 +1917,11 @@ import AVFAudio
         let sourceToken = sourceRequests.generation
         if client == nil || !connected { reconnectControls() }
         for _ in 0..<20 {
+            guard !Task.isCancelled else{return false}
             if client != nil { break }
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
-        guard sourceRequests.accepts(sourceToken) else { return false }
+        guard !Task.isCancelled,sourceRequests.accepts(sourceToken) else { return false }
         if command == "stop" { endPlayback(); return true }
         guard !loadPending, !checkingStream, commandContinuation == nil else { return false }
         guard let client, ownsCurrentMedia else {
@@ -1929,6 +1971,7 @@ import AVFAudio
         commandTimeout?.cancel(); commandTimeout = nil
         continuation.resume(returning: success)
         if success { updateStatus() }
+        flushQueuedSeek()
     }
     private func resetPlayback(preserveAutoplay:Bool=false) {
         clearUpcomingEpisode()
@@ -1950,6 +1993,7 @@ import AVFAudio
         trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear()
         embeddedCaptionTask?.cancel(); embeddedCaptionTask = nil
         seekDispatchTask?.cancel(); seekDispatchTask = nil
+        seekIntent.cancel();seekRebuildPending=false
         streamCheckTask?.cancel(); streamCheckTask = nil; checkingStream = false; playbackIssue = nil
         subtitleStyleWork?.cancel()
         directCaptureTask?.cancel(); directCaptureKey = nil; CastDirectControl.clear()
@@ -1961,6 +2005,7 @@ import AVFAudio
         finishCommand(false)
         loadTimeout?.cancel(); loadPending = false; loading = false; loadAccepted = false; loadRequest = nil; bufferingSince = nil
         expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil; loadedStreamGeneration = nil;loadedMediaSessionID=nil
+        receiverClock.load(offset:0)
         subtitleRequest = nil; pendingSubtitle = nil
         UserDefaults.standard.removeObject(forKey: "cast.session.content")
         UserDefaults.standard.removeObject(forKey: "cast.session.positionKey")
@@ -1974,6 +2019,7 @@ import AVFAudio
         }
     }
 }
+
 
 
 

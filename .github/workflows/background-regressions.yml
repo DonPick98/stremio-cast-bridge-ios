@@ -1,7 +1,7 @@
 name: Validate background playback lifecycle
 on:
   push:
-    branches: [test/background-processing-20261104, fix/playback-recovery-20261103, feature/episode-picker-20261105]
+    branches: [test/background-processing-20261104, fix/playback-recovery-20261103, feature/episode-picker-20261105, fix/seek-burst-20261105]
     paths:
       - Sources/LockScreenPlayback.swift
       - Sources/PlaybackPreferences.swift
@@ -61,3 +61,4 @@ jobs:
           (root/'MediaAttributes.swift').write_text(attributes)
           PY
           swiftc -swift-version 5 -typecheck -target arm64-apple-ios16.1-simulator -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/PlaybackState.swift Sources/PlaybackDiagnostics.swift "$RUNNER_TEMP/MediaAttributes.swift" "$RUNNER_TEMP/MediaControls.swift"
+
