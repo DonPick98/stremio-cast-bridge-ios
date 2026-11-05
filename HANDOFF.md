@@ -1,3 +1,25 @@
+# Candidata50 — seek rapidi e timeline dopo expiry (CB025/026)
+
+Base446ea0d / IPA49, branch fix/seek-burst-20261105. Riscontro hardware49:
+4tapforward2124.859→2244.859, ma LOADintermediooffset2184.859 e solo dopo
+nuova preparazione2244.859; expiry poi salva0.850 relativo al posto di2123.731.
+Non attribuire la causa di continued_expired a RAM o a un fatto non provato.
+
+Patch: debounce trailing300ms con generazione intent, cancellazione prepare/LOAD
+locali superati, guardia prima di installare il candidato e completamenti obsoleti
+esclusi. Il dispatch locale non attende più il primo LOAD/conferma per elaborare
+l'ultimo target. Play/pausa e tracce mantenuti. Offset originale posseduto dal LOAD
+ricevitore, non dall'encoder; capture escluso durante sospensione/nonloaded e
+callback trasporto obsolete escluse. Nessun nuovo job automatico dopo expiry.
+
+Test policy con tempi reali della raffica, cambio direzione e nuove richieste
+mentre prepare/LOAD precedenti sono attivi, invalidazione/stop e mapping originale
+alla ripresa. CI regressioni/API e buildiPhone da acquisire. App/estensione50.
+Pipeline codec e decoder invariati; nuova prova iPhone/TV indispensabile.
+Registro canonico issue1; nuove funzioni49 preservate, nessun merge sufix/main.
+
+---
+
 # IPA49 compilata — selettore episodi e attesa autoplay, 2026-11-05
 
 Sorgente prodotto40dfd8eba5d3e44cd3e8f4efc944849d2e49d1ef.
@@ -459,4 +481,5 @@ Causaoriginaria/backend e rifiutoWebM restano aperti; niente promesse di attivit
 inRAM garantita o esecuzione continua dopo la fine di questo turno.
 
 ---
+
 

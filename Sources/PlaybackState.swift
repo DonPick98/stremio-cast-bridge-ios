@@ -36,6 +36,40 @@ struct PlaybackRequestState {
     func accepts(_ value: UUID) -> Bool { value == generation }
 }
 
+/// A trailing-edge debounce. A newer tap invalidates both the old timer and
+/// its eventual transport/preparation completion, even after dispatch.
+struct PlaybackSeekIntent {
+    private(set) var generation = UUID()
+    private var deadline:TimeInterval = 0
+    private(set) var pending = false
+    mutating func submit(now:TimeInterval) {
+        generation=UUID();deadline=now+0.3;pending=true
+    }
+    func accepts(_ token:UUID)->Bool {token==generation}
+    func delay(for token:UUID,now:TimeInterval)->TimeInterval? {
+        guard accepts(token),pending,now.isFinite else{return nil}
+        return max(0,min(0.3,deadline-now))
+    }
+    mutating func dispatched(_ token:UUID) {
+        guard accepts(token) else{return};pending=false
+    }
+    mutating func cancel() {generation=UUID();pending=false}
+}
+
+/// The receiver's relative clock belongs to its LOAD, not to the lifetime of
+/// the local encoder. Releasing an encoder must not erase this mapping.
+struct ReceiverPlaybackClock {
+    private(set) var offset:Double = 0
+    mutating func load(offset:Double) {
+        self.offset=offset.isFinite ? max(0,offset):0
+    }
+    func capture(relative:Double,loaded:Bool,suspended:Bool)->Double? {
+        guard loaded,!suspended,relative.isFinite,relative>=0 else{return nil}
+        let original=relative+offset
+        return original.isFinite ? original:nil
+    }
+}
+
 struct PlaybackIntent {
     private(set) var pending: Bool?
     mutating func request(_ playing:Bool) { pending = playing }
@@ -202,3 +236,4 @@ struct SystemMediaPublishPolicy {
         previous=next;at=now;self.position=position;return true
     }
 }
+
