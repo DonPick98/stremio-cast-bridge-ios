@@ -1,3 +1,39 @@
+# IPA52 pronta — CB028 implementato, collaudo file privato richiesto
+
+Prodotto74748b2a503188748fe03950e7be7fa7a1f59f83; branch fix/captions-background-20261105,
+PR9 draft. Build iPhone/regressioni42120072427 SUCCESSO. Suite nativa completa
+42118240017 su bdd3f160 SUCCESSO: independentCaptions.passed=true,
+degenerateASS=true, sixteenSSA=true, complete/batch, font/CORS/cancellazione,
+matrice codec/qualità/overlay e background65s con offscreen=true PASSATI.
+Confronto bdd3f160→74748b2 verificato: solo licenza inclusa nel bundle e fixture/test
+unitario (tempi centisecondi per portabilità FFmpegCLI); nessuna differenza nel
+codice prodotto, CaptionFFmpeg/SubtitleDocument/integrazione nativa invariati.
+La ripetizione automatica42120072440 sulla sorgente74748b2 è IN_CORSO e non
+viene dichiarata passata. Non serve attendere una duplicazione per certificare
+nuovamente il codice prodotto identico; recuperare comunque l'esito al prossimo giro.
+
+IPA effettiva0.8.1(52), app/estensione52, unsigned, audio+processing,
+CC1AD845, attribuzione Subtitle Edit presente nel bundle. 69381613byte,
+SHA256 9fffa9d92bc300c51e418bd8457b210efc6c0f33ed81d3283c344c63c7945832.
+ZIPartifact13458581190, digest sha256:9d2d62d16965de52c9f76c6ed3ff230af81262d99d23da85d40ff142d13935f6,
+run42120072427, fino2026-11-12. IPA scaricata, verificata e resa disponibile inchat.
+
+CorrezioneCB028: per ASS/SSA demux originale copy→parser eventi Swift adattato
+Subtitle Edit MIT→WebVTT. Isola durate0/clock invalidi/commenti/disegni,
+conserva dialogo/overlap/virgole, escape del testo e serializzazione dei tempi.
+Nessun VTT incompleto servito come completo. Errori empty/document distinti da
+exitFFmpeg; conteggi conversione senza testo/URL privati. SRT/WebVTT esterni,
+codecvideo, receiver, seek50 e features49 preservati. UI/accountStremio invariati.
+
+Limite: il difetto WebVTT è riprodotto con una fixture; causa esatta del file privato
+utente non provata. CB028 IMPLEMENTATO_DA_VERIFICARE, riaperto dalla prova51.
+Prossimo passo: stessa puntata/traccia su iPhone/TV e diagnostica2min se fallisce;
+nessun risultato hardware52 dichiarato. Primo51 esatto42106877735 rimaneFAILURE
+per offscreen simulatore, distinto dal nuovo successo nativo52. Nessun merge o
+release pubblica. Checkpoint seguenti storici.
+
+---
+
 # Candidata52 — CB028 riaperto dopo prova hardware51
 
 Base df38ad5, branch fix/captions-background-20261105, PR9 draft. IPA51 fallisce
