@@ -3,6 +3,10 @@ import Foundation
 import MobileVLCKit
 import UIKit
 import MediaPlayer
+import AVFAudio
+import Darwin
+import GoogleCast
+import ObjectiveC
 
 /// Exercises the actual iOS binary on synthetic fixtures in CI, without accounts or Cast devices.
 @MainActor enum NativeEngineValidation {
@@ -15,17 +19,43 @@ import MediaPlayer
     }
     static func run() async {
         let documents = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
+        if ProcessInfo.processInfo.environment["CAST_ENGINE_SEEKTEST"]=="1" {
+            await seekTrials(documents:documents);return
+        }
         let report = documents.appendingPathComponent("engine-validation.json")
         let input = documents.appendingPathComponent("h264-ac3.mkv")
         let output = documents.appendingPathComponent("converted.mp4")
         var result: [String:Any] = ["passed":false]
+        // Google Cast imports both the generic GCKSession and GCKCastSession
+        // callbacks under the same Swift name. An untyped protocol #selector
+        // chooses the Cast-only overload, which this controller does not use.
+        // Validate the generic selector against the SDK protocol at runtime.
+        let suspendSelector=NSSelectorFromString("sessionManager:didSuspendSession:withReason:")
+        let advertised=NSProtocolFromString("GCKSessionManagerListener").map {
+            protocol_getMethodDescription($0,suspendSelector,false,true).name != nil
+        } ?? false
+        let suspensionDelegate=advertised && CastController.instancesRespond(to:suspendSelector)
+        result["castSuspendProtocol"]=advertised
+        result["castSuspendDelegate"]=suspensionDelegate
+        result["castSuspendSelector"]=NSStringFromSelector(suspendSelector)
         let controls = LockScreenPlayback()
         controls.update(title:"Playback validation",device:"Synthetic receiver",position:42,duration:240,playing:true,loading:false,local:true)
         let metadata = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        let mediaControls = (metadata[MPMediaItemPropertyPlaybackDuration] as? Double) == 240 && (metadata[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double) == 42 && MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled
+        let nonMixable = AVAudioSession.sharedInstance().category == .playback && !AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers)
+        let mediaControls = nonMixable && (metadata[MPMediaItemPropertyPlaybackDuration] as? Double) == 240 && (metadata[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double) == 42 && MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled
         result["systemMediaControls"] = mediaControls
+        result["systemMediaSessionNonMixable"] = nonMixable
+        CastAudioSession.shared.acquire("validation-preparation")
         controls.clear()
+        let preparationMixes=AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers)
+        result["preparationAudioMixesAfterClear"] = preparationMixes
+        CastAudioSession.shared.release("validation-preparation")
         do {
+            let cadenceInput=documents.appendingPathComponent("CodecSamples/caption-hevc-eac3.mkv")
+            let cadence=try? await CaptionExtractor.videoCadence(input:cadenceInput,codec:"hevc",width:1920,height:1080)
+            let cadencePassed=cadence.map{abs($0.frameRate-24000.0/1001)<0.00001 && $0.fixedCadence} ?? false
+            result["sourceCadenceProbe"]=["passed":cadencePassed,"fps":cadence?.frameRate ?? 0,"fixed":cadence?.fixedCadence ?? false]
+            result["decoderTrial"]=await decoderTrial(documents:documents)
             trace("decoder")
             let repair = AudioRepairPipe()
             let repairedFile = documents.appendingPathComponent("repair-direct.mkv")
@@ -34,7 +64,10 @@ import MediaPlayer
                 _ = try await repair.start(input:documents.appendingPathComponent("CodecSamples/truehd.mkv"),position:0,audioIndex:0,subtitleIndex:nil)
                 for _ in 0..<300 { if repair.finished { break }; try await Task.sleep(nanoseconds:100_000_000) }
                 let checked = try await EmbeddedMediaEngine.inspect(repairedFile)
-                result["decoder"] = ["passed":!repair.failed && repair.finished,"audio":checked.audioCodecsDescription,"video":checked.videoDescription]
+                let metrics=repair.productionMetrics() ?? [:]
+                let measured=(Double(metrics["mediaSeconds"] ?? "") ?? 0)>0 && (Double(metrics["wallSeconds"] ?? "") ?? 0)>0 && (Int(metrics["bytes"] ?? "") ?? 0)>0
+                result["decoder"] = ["passed":!repair.failed && repair.finished && measured,"audio":checked.audioCodecsDescription,"video":checked.videoDescription,"metrics":metrics]
+                trace("producer statistics \(measured ? "passed":"failed")")
             } catch { result["decoder"] = ["passed":false,"error":error.localizedDescription] }
             repair.stop()
             trace("core conversion")
@@ -64,7 +97,8 @@ import MediaPlayer
             }
             result["tracks"] = tracks
             result["bytes"] = (try FileManager.default.attributesOfItem(atPath:output.path)[.size] as? NSNumber)?.intValue ?? 0
-            result["passed"] = mediaControls && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
+            let decoderPassed=(result["decoder"] as? [String:Any])?["passed"] as? Bool == true
+            result["passed"] = decoderPassed && suspensionDelegate && mediaControls && preparationMixes && cadencePassed && tracks.contains { ($0["codec"] as? String) == "h264" } && tracks.contains { ($0["codec"] as? String) == "mp4a" && ($0["channels"] as? Int) == 2 }
             let inspected = try await EmbeddedMediaEngine.inspect(input)
             result["inputAudio"] = inspected.audioCodecsDescription
             result["inputVideoConversion"] = inspected.requiresVideoConversion
@@ -95,6 +129,12 @@ import MediaPlayer
             result["gateway"] = gatewayResults
             result["passed"] = (result["passed"] as? Bool == true) && gatewayResults.allSatisfy{$0["passed"] as? Bool == true}
             let captionSync = try await captionProbe(documents:documents,input:input)
+            let textOverlay=try await textOverlayProbe(documents:documents)
+            result["textOverlay"]=textOverlay
+            let textOverlayVP8=try await textOverlayProbe(documents:documents,mode:.softwareVP8)
+            result["textOverlayVP8"]=textOverlayVP8
+            result["passed"]=(result["passed"] as? Bool == true) && (textOverlayVP8["passed"] as? Bool == true)
+            result["passed"]=(result["passed"] as? Bool == true) && (textOverlay["passed"] as? Bool == true)
             result["captionSync"] = captionSync
             result["passed"] = (result["passed"] as? Bool == true) && (captionSync["passed"] as? Bool == true)
             let independent = try await CaptionIntegrationValidation.run(documents:documents)
@@ -108,7 +148,7 @@ import MediaPlayer
             let matrix = await NativeCodecMatrixValidation.run(documents:documents)
             if !matrix.isEmpty {
                 result["matrix"] = matrix
-                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 33 && matrix.allSatisfy { $0["passed"] as? Bool == true }
+                result["passed"] = (result["passed"] as? Bool == true) && matrix.count == 35 && matrix.allSatisfy { $0["passed"] as? Bool == true }
                 trace("background conversion")
                 let background = try await backgroundProbe(documents:documents)
                 result["background"] = background
@@ -162,10 +202,117 @@ import MediaPlayer
         }
         return rows
     }
+    private static func textOverlayProbe(documents:URL,mode:EmbeddedMediaEngine.VideoMode = .ffmpegH264) async throws -> [String:Any] {
+        let input=documents.appendingPathComponent("CodecSamples/caption-hevc-eac3.mkv")
+        let source=try await EmbeddedMediaEngine.inspect(input)
+        guard source.audio.count>1,let subtitle=source.subtitles.first else{throw EmbeddedMediaError.metadata}
+        let engine=EmbeddedMediaEngine();defer{engine.stop()}
+        let url=try await engine.start(input:input,deviceIP:"127.0.0.1",start:3.25,videoMode:mode,audioID:Int(source.audio[1].key.dropFirst(4)),subtitleID:Int(subtitle.key.dropFirst(4)),style:SubtitleAppearance(),audioIndex:1,subtitleIndex:0,subtitleDelay:0.5,video:source.video,selfTest:true,audioCodec:source.audio[1].codec,subtitleTrack:subtitle)
+        let directory=engine.testingRenderDirectory
+        let audioEncoder=engine.testingSoftwareAudioEncoder ?? "aac"
+        let (body,_,eof)=try await NativeStreamCapture().read(url)
+        try body.write(to:documents.appendingPathComponent(mode == .softwareVP8 ? "text-overlay-delay.webm":"text-overlay-delay.mp4"))
+        engine.stop()
+        for _ in 0..<100 {
+            if engine.testingStopCompleted {break}
+            try await Task.sleep(nanoseconds:50_000_000)
+        }
+        let cleaned=directory.map{!FileManager.default.fileExists(atPath:$0.path)} ?? false
+        return ["passed":eof && cleaned && engine.testingStopCompleted,"cleanup":cleaned,"delay":0.5,"position":3.25,"audioEncoder":audioEncoder]
+    }
+
+    /// Isolate decoder preroll from encoder time-base rounding. Production
+    /// flags remain unchanged; the independent frame gate evaluates each file.
+    private static func seekTrials(documents:URL) async {
+        let input=documents.appendingPathComponent("CodecSamples/caption-hevc-eac3.mkv")
+        var rows:[[String:Any]]=[]
+        for (name,software,clock) in [("baseline",false,false),("software",true,false),("clock",false,true),("software-clock",true,true)] {
+            let engine=EmbeddedMediaEngine()
+            engine.testingSoftwareDecoder=software;engine.testingFineEncoderClock=clock
+            var row:[String:Any]=["name":name,"softwareDecoder":software,"fineClock":clock]
+            do {
+                let source=try await EmbeddedMediaEngine.inspect(input)
+                guard source.audio.count>1,let subtitle=source.subtitles.first else {throw EmbeddedMediaError.metadata}
+                let audio=source.audio[1]
+                let url=try await engine.start(input:input,deviceIP:"127.0.0.1",start:3.25,videoMode:.hardwareH264,audioID:Int(audio.key.dropFirst(4)),subtitleID:Int(subtitle.key.dropFirst(4)),style:SubtitleAppearance(),copyAudio:false,audioIndex:1,subtitleIndex:0,video:source.video,selfTest:true,audioCodec:audio.codec)
+                let (body,_,eof)=try await NativeStreamCapture().read(url)
+                try body.write(to:documents.appendingPathComponent("seek-trial-"+name+".mp4"))
+                row["captured"]=eof;row["bytes"]=body.count
+            } catch {row["captured"]=false;row["code"]="conversion"}
+            engine.stop();rows.append(row)
+            let report:[String:Any]=["productionUnchanged":true,"position":3.25,"trials":rows]
+            if let data=try? JSONSerialization.data(withJSONObject:report,options:.prettyPrinted) {
+                try? data.write(to:documents.appendingPathComponent("seek-trials.json"),options:.atomic)
+            }
+        }
+        let pipe=AudioRepairPipe()
+        let output=documents.appendingPathComponent("seek-trial-libass.mp4")
+        pipe.testingOutput=output;pipe.testingASSInput=input
+        var row:[String:Any]=["name":"libass","localSyntheticOnly":true]
+        do {
+            let source=try await EmbeddedMediaEngine.inspect(input)
+            _=try await pipe.start(input:input,position:3.25,audioIndex:1,subtitleIndex:nil,transcodeVideo:source.video)
+            for _ in 0..<600 {
+                if pipe.finished {break}
+                try await Task.sleep(nanoseconds:100_000_000)
+            }
+            row["captured"]=pipe.finished && !pipe.failed
+            row["exitCode"]=pipe.exitCode ?? -1
+        } catch {row["captured"]=false;row["code"]="conversion"}
+        pipe.stop();rows.append(row)
+        let report:[String:Any]=["productionUnchanged":true,"position":3.25,"trials":rows]
+        if let data=try? JSONSerialization.data(withJSONObject:report,options:.prettyPrinted) {
+            try? data.write(to:documents.appendingPathComponent("seek-trials.json"),options:.atomic)
+        }
+    }
+
+    /// Four-second synthetic A/B. These CPU figures describe this process in
+    /// the simulator, not phone battery life or proof of hardware use.
+    private static func decoderTrial(documents:URL) async -> [String:Any] {
+        func cpu()->Double? {
+            var usage=rusage()
+            guard getrusage(RUSAGE_SELF,&usage)==0 else{return nil}
+            return Double(usage.ru_utime.tv_sec+usage.ru_stime.tv_sec)+Double(usage.ru_utime.tv_usec+usage.ru_stime.tv_usec)/1_000_000
+        }
+        let input=documents.appendingPathComponent("CodecSamples/caption-hevc-eac3.mkv")
+        let format=VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:24000.0/1001)
+        var trials:[[String:Any]]=[]
+        for requested in [false,true] {
+            let name=requested ? "videotoolbox":"baseline"
+            let pipe=AudioRepairPipe()
+            pipe.testingOutput=documents.appendingPathComponent("decoder-trial-"+name+".mkv")
+            pipe.testingVideoToolboxDecoder=requested;pipe.testingDuration=4
+            let began=Date(),before=cpu()
+            var item:[String:Any]=["name":name,"requestedVideoToolbox":requested]
+            do {
+                _=try await pipe.start(input:input,position:0,audioIndex:1,subtitleIndex:nil,transcodeVideo:format)
+                for _ in 0..<600 {
+                    if pipe.finished {break}
+                    try await Task.sleep(nanoseconds:100_000_000)
+                }
+                item["status"]=pipe.finished && !pipe.failed ? "success":"unavailable"
+                item["exitCode"]=pipe.exitCode ?? -1
+                item["metrics"]=pipe.productionMetrics() ?? [:]
+            } catch {
+                item["status"]="unavailable"
+                item["code"]=(error as? EmbeddedMediaError).map{String(describing:$0)} ?? "other"
+            }
+            if let before,let after=cpu() {item["cpuSeconds"]=max(0,after-before)}
+            item["wallSeconds"]=Date().timeIntervalSince(began)
+            pipe.stop();trials.append(item)
+            let report:[String:Any]=["productionDecoderUnchanged":true,"seconds":4,"trials":trials]
+            if let data=try? JSONSerialization.data(withJSONObject:report,options:.prettyPrinted) {
+                try? data.write(to:documents.appendingPathComponent("decoder-trial.json"),options:.atomic)
+            }
+        }
+        return ["productionDecoderUnchanged":true,"seconds":4,"trials":trials]
+    }
+
     private static func backgroundProbe(documents:URL) async throws -> [String:Any] {
         let engine = EmbeddedMediaEngine(); defer { engine.stop() }
         let input = documents.appendingPathComponent("CodecSamples/background-probe.mkv")
-        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.copy,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),selfTest:true)
+        let format=try await EmbeddedMediaEngine.inspect(input).video
+        let url = try await engine.start(input:input,deviceIP:"127.0.0.1",start:0,videoMode:.ffmpegH264,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),video:format,selfTest:true)
         let pauseTest = Task { @MainActor in
             try? await Task.sleep(nanoseconds:12_000_000_000)
             guard !Task.isCancelled else { return (false,false) }
@@ -214,7 +361,7 @@ import MediaPlayer
         engine.stop()
         for _ in 0..<50 { if engine.testingStopCompleted { break }; try await Task.sleep(nanoseconds:100_000_000) }
         let stopped = engine.testingStopCompleted
-        return ["passed":offscreen && helper && stopped && pauseResume && bytes > 4096 && seconds >= 60 && span >= 55 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":producerState,"pauseResume":pauseResume,"pauseAcknowledged":pauseResult.0,"resumeAcknowledged":pauseResult.1,"stoppedCleanly":stopped,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
+        return ["mode":"ffmpegH264","passed":offscreen && helper && stopped && pauseResume && bytes > 4096 && seconds >= 60 && span >= 55 && lateBytes > 4096,"offscreen":offscreen,"audioHelperPlaying":helper,"producerState":producerState,"pauseResume":pauseResume,"pauseAcknowledged":pauseResult.0,"resumeAcknowledged":pauseResult.1,"stoppedCleanly":stopped,"bytesReadExternally":bytes,"seconds":seconds,"dataSpan":span,"lateBytes":lateBytes,"network":metrics]
     }
 }
 
@@ -253,4 +400,5 @@ final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Se
     }
 }
 #endif
+
 

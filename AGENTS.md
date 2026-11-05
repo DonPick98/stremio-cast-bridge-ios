@@ -74,3 +74,11 @@ Non creare liste indipendenti che possano divergere dal registro.
 > Prima di terminare aggiorna stato, commit/PR, controlli eseguiti, risultati e
 > prossimo passo. Non segnare verificato ciò che attende collaudo; conserva la
 > storia e integra gli aggiornamenti delle altre sessioni senza sovrascriverli.
+
+
+## Features
+
+La issue #1 contiene anche il backlog Features FT-xxx, separato dai bug CB-xxx.
+Le stesse regole di aggiornamento, evidenza e verifica si applicano alle features.
+Conservare gli ID FT esistenti e aggiungere i successivi senza confonderli con i bug.
+Le richieste registrate non vanno presentate come funzioni già implementate.

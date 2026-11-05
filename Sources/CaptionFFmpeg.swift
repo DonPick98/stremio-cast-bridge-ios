@@ -59,6 +59,20 @@ import AVFAudio
         try await process.wait(seconds:12)
         return try CaptionCatalog.parse(process.information())
     }
+    /// Bounded metadata fallback for VLC parsers that expose a zero frame rate.
+    /// No whole-file scan, subtitle extraction or guessed 24/30 fps default.
+    static func videoCadence(input:URL,codec:String,width:Int,height:Int) async throws -> VideoCadenceProbe? {
+        guard input.isFileURL || (input.scheme=="https" && input.user==nil && input.password==nil) else{throw CaptionFailure.input}
+        var args=["-v","quiet","-probesize","8388608","-analyzeduration","3000000","-select_streams","V:0","-show_entries","stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate:stream_disposition=attached_pic","-print_format","json"]
+        if !input.isFileURL {args += ["-rw_timeout","5000000","-tls_verify","1"]}
+        args += [input.isFileURL ? input.path:input.absoluteString]
+        let owner="cadence-"+UUID().uuidString
+        CastAudioSession.shared.acquire(owner);defer{CastAudioSession.shared.release(owner)}
+        let process=try CaptionProcess(args,kind:.probe);defer{process.stop()}
+        try await process.wait(seconds:8)
+        try Task.checkCancellation()
+        return VideoCadenceProbe.parse(try process.information(),codec:codec,width:width,height:height)
+    }
     /// A standard Cast text track must be a complete document. Never serve a
     /// ninety-second extraction window as if it covered the whole movie.
     static func fullDocument(input:URL,track:CaptionTrack) async throws -> String {
@@ -78,11 +92,9 @@ import AVFAudio
         if !input.isFileURL{args += ["-rw_timeout","5000000","-tls_verify","1"]}
         args += ["-i",input.isFileURL ? input.path:input.absoluteString]
         for (track,file) in zip(tracks,files){args += ["-map","0:\(track.index)","-an","-vn","-dn","-c:s","webvtt","-fs","1048577","-f","webvtt",file.path]}
-        let helper=VLCMediaPlayer(options:["--demux=rawaud"])
-        helper.media=VLCMedia(path:"/dev/zero")
-        try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        helper.play();defer{helper.stop()}
+        let audioOwner="caption-"+UUID().uuidString
+        CastAudioSession.shared.acquire(audioOwner)
+        defer{CastAudioSession.shared.release(audioOwner)}
         let process=try CaptionProcess(args);cleanupWithProcess=true
         defer{process.stop(afterRelease:{try? FileManager.default.removeItem(at:directory)})}
         let started=Date(),deadline=Date().addingTimeInterval(120)
@@ -167,3 +179,4 @@ import AVFAudio
         process = nil
     }
 }
+

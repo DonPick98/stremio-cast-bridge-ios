@@ -137,7 +137,7 @@ final class CastCommandSocket: @unchecked Sendable {
             var body: [String:Any] = ["mediaSessionId":session]
             if command == "toggle" { body["type"] = mediaStatus["playerState"] as? String == "PLAYING" ? "PAUSE" : "PLAY" }
             else if ["play","pause","stop"].contains(command) { body["type"] = command.uppercased() }
-            else if let target = CastWire.seekTarget(command,current:current,duration:duration) { body["type"] = "SEEK"; body["currentTime"] = target }
+            else if let target = CastWire.seekTarget(command,current:current,duration:duration,step:PlaybackPreferences.seekStep()) { body["type"] = "SEEK"; body["currentTime"] = target }
             else { return false }
             let result = try await socket.request(body,namespace:CastWire.media,destination:transport)
             guard result["type"] as? String == "MEDIA_STATUS", let actual = (result["status"] as? [[String:Any]])?.first else { return false }

@@ -2,7 +2,13 @@ import Foundation
 import Network
 import Darwin
 
-enum LocalStreamError: Error { case address, listener, request, upstream, initialization }
+enum LocalStreamError: Error { case address, listener, request, upstream, initialization, header, endOfStream, unsupported, limit, network, timeout }
+
+struct LocalTransferMetrics:Sendable {
+    let bytes:Int
+    let upstreamWait:TimeInterval
+    let downstreamWait:TimeInterval
+}
 
 /// An anonymous socket pair retains every encoder packet. Unlike VLC's live
 /// HTTP circular buffer, it cannot skip an initial GOP or overwrite a slow reader.
@@ -141,6 +147,8 @@ final class LocalStreamProxy: @unchecked Sendable {
     private var producerEnded = false
     private var paused = false
     private var deliveredBytes = 0
+    private var upstreamWait:TimeInterval = 0
+    private var downstreamWait:TimeInterval = 0
     private func trace(_ message:String) {
 #if CAST_ENGINE_TESTING
         FileHandle.standardOutput.write(Data("Cast proxy \(Date().timeIntervalSince1970): \(message)\n".utf8))
@@ -203,6 +211,11 @@ final class LocalStreamProxy: @unchecked Sendable {
             }
         }
     }
+    func transferMetrics() async -> LocalTransferMetrics {
+        await withCheckedContinuation { c in queue.async {
+            c.resume(returning:LocalTransferMetrics(bytes:self.deliveredBytes,upstreamWait:self.upstreamWait,downstreamWait:self.downstreamWait))
+        } }
+    }
 #if CAST_ENGINE_TESTING
     func testingDeliveredBytes() async -> Int { await withCheckedContinuation { c in queue.async { c.resume(returning:self.deliveredBytes) } } }
     func testingPauseDrained() async -> Bool { await withCheckedContinuation { c in queue.async { c.resume(returning:self.paused && !self.pairs.isEmpty && self.pairs.values.allSatisfy{ !$0.waiting && !$0.sending }) } } }
@@ -227,11 +240,15 @@ final class LocalStreamProxy: @unchecked Sendable {
                     } else if case .failed = state { self.failPreparation(error:.upstream) }
                 }
                 stream.connection.start(queue:self.queue)
-                self.queue.asyncAfter(deadline:.now()+15) { if self.preparing != nil { self.failPreparation() } }
+                self.queue.asyncAfter(deadline:.now()+15) { if self.preparing != nil { self.failPreparation(error:.timeout) } }
             }
         }
     }
     private func failPreparation(error:LocalStreamError = .initialization) {
+        if preparing != nil {
+            let bytes=warm?.body.count ?? 0
+            Task { @MainActor in PlaybackDiagnostics.record(.error,["phase":"proxy_prepare","code":String(describing:error),"bytes":String(bytes)]) }
+        }
         warm?.connection.stateUpdateHandler = nil; warm?.connection.cancel(); warm = nil
         let c = preparing; preparing = nil; c?.resume(throwing:error)
     }
@@ -244,9 +261,9 @@ final class LocalStreamProxy: @unchecked Sendable {
                     stream.header = header; stream.body = body; stream.complete = complete
                     onHeaders?()
                     self.validateWarm(stream)
-                } else if complete || error != nil { self.failPreparation() }
+                } else if complete || error != nil { self.failPreparation(error:error != nil ? .network:.endOfStream) }
                 else { self.readWarmHeader(stream,buffer:received,onHeaders:onHeaders) }
-            } catch { self.failPreparation() }
+            } catch { self.failPreparation(error:.header) }
         }
     }
     private func validateWarm(_ stream:Warm) {
@@ -255,13 +272,19 @@ final class LocalStreamProxy: @unchecked Sendable {
                 stream.ready = true
                 let c = preparing; preparing = nil; c?.resume(); return
             }
-            guard !stream.complete, stream.body.count < 1_048_576 else { failPreparation(); return }
+            guard !stream.complete, stream.body.count < 1_048_576 else { failPreparation(error:stream.complete ? .endOfStream:.limit); return }
             stream.connection.receive(minimumIncompleteLength:1,maximumLength:min(65_536,1_048_576-stream.body.count)) { [weak self] data,_,complete,error in
                 guard let self, self.warm === stream, self.preparing != nil else { return }
                 if let data { stream.body.append(data) }; stream.complete = complete
-                if error != nil { self.failPreparation() } else { self.validateWarm(stream) }
+                if error != nil { self.failPreparation(error:.network) } else { self.validateWarm(stream) }
             }
-        } catch { failPreparation() }
+        } catch StreamHeaderError.rejected(let reason) {
+            let bytes=stream.body.count
+            Task { @MainActor in PlaybackDiagnostics.record(.error,["phase":"header_validation","code":reason.rawValue,"bytes":String(bytes)]) }
+            failPreparation(error:.unsupported)
+        } catch StreamHeaderError.unsupported { failPreparation(error:.unsupported) }
+        catch StreamHeaderError.tooLarge { failPreparation(error:.limit) }
+        catch { failPreparation(error:.header) }
     }
     func producerDidEnd() { queue.async { self.producerEnded = true; self.finishDrainedStreams() } }
     private func finishDrainedStreams() {
@@ -416,11 +439,15 @@ final class LocalStreamProxy: @unchecked Sendable {
         pair.streaming = true
         guard !paused else { return }
         pair.waiting = true
+        let readBegan=Date()
         upstream.receive(minimumIncompleteLength:1,maximumLength:65_536) { [weak self] data,_,complete,error in
             guard let self, let pair = self.pairs[id] else { return }
+            self.upstreamWait += Date().timeIntervalSince(readBegan)
             pair.waiting = false; pair.lastData = Date(); pair.sending = true
             if error != nil { self.close(id); return }
+            let sendBegan=Date()
             pair.client.send(content:data,contentContext:complete ? .finalMessage : .defaultMessage,isComplete:complete,completion:.contentProcessed { error in
+                self.downstreamWait += Date().timeIntervalSince(sendBegan)
                 pair.sending = false
                 if error == nil { self.deliveredBytes += data?.count ?? 0 }
                 if error != nil || complete { self.close(id) } else { self.pipe(id) }
@@ -428,3 +455,4 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
 }
+

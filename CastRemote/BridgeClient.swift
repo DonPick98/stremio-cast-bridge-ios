@@ -126,6 +126,16 @@ final class BridgeClient {
               ["torrentio", "comet"].contains(result.provider), !result.id.isEmpty, result.id.count <= 300 else { throw BridgeError.invalidLink }
         return result
     }
+    func episodes(videoID:String) async throws -> [SeriesEpisode] {
+        guard let id=SeriesNavigation.seriesID(videoID),
+              let url=URL(string:"https://v3-cinemeta.strem.io/meta/series/\(id).json") else { throw BridgeError.invalidLink }
+        let (data,response)=try await session.data(from:url)
+        guard (response as? HTTPURLResponse)?.statusCode==200,data.count<=2_000_000 else{throw BridgeError.network}
+        struct Response:Decodable { struct Meta:Decodable {let id:String;let videos:[SeriesEpisode]?};let meta:Meta }
+        let decoded=try JSONDecoder().decode(Response.self,from:data)
+        guard decoded.meta.id==id else{throw BridgeError.invalidHandoffResponse}
+        return decoded.meta.videos ?? []
+    }
     func sources(_ handoff: BridgeHandoff, manifest: URL) async throws -> [AddonStream] {
         guard var parts = URLComponents(url:manifest, resolvingAgainstBaseURL:false) else { throw BridgeError.invalidLink }
         let allowed = CharacterSet(charactersIn:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
@@ -142,7 +152,12 @@ final class BridgeClient {
             return !s.descriptionText.localizedCaseInsensitiveContains("Comet public rate-limit exceeded")
         }
         guard !sources.isEmpty else { throw BridgeError.noSources }
-        return Array(sources.prefix(150))
+        return Self.orderedSources(Array(sources.prefix(150)))
+    }
+    static func orderedSources(_ sources:[AddonStream])->[AddonStream] {
+        SourcePreferences.ordered(sources){source in
+            (SourcePreferences.resolution(source.filename ?? source.descriptionText),source.behaviorHints?.videoSize)
+        }
     }
     func resolveDirect(_ stream: AddonStream) async throws -> URL {
         guard stream.behaviorHints?.proxyHeaders?.request?.isEmpty != false, let url = URL(string:stream.url), url.scheme == "https" else { throw BridgeError.cannotResolve }
@@ -246,3 +261,4 @@ struct AddonConfigStore {
         guard SecItemAdd(record as CFDictionary,nil) == errSecSuccess else { throw AddonConfigError.keychain }
     }
 }
+

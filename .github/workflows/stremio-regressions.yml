@@ -1,0 +1,26 @@
+name: Validate Stremio library protocol
+on:
+  push:
+    branches: [fix/playback-recovery-20261103]
+    paths:
+      - Sources/StremioLibrary.swift
+      - Sources/StremioZlib.h
+      - Tests/StremioLibraryTests.swift
+      - .github/workflows/stremio-regressions.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  protocol:
+    runs-on: ubuntu-24.04
+    container: swift:6.0.3-noble
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compile production merge, bitfield and API transport
+        run: |
+          swiftc -swift-version 5 -parse-as-library -import-objc-header Sources/StremioZlib.h Sources/StremioLibrary.swift Tests/StremioLibraryTests.swift -lz -o /tmp/library-tests
+          /tmp/library-tests

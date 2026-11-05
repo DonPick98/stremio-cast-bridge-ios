@@ -13,11 +13,19 @@ struct ContentView: View {
     @State private var showSubtitleAppearance = false
     @State private var showOnlineSubtitles = false
     @State private var diagnosticsCopied = false
+    @State private var showPreferences=false
+    @ObservedObject private var updater=AppUpdater.shared
+    @AppStorage("cast.controls.seekStep") private var storedSeekStep=30.0
+    private var configuredSeekStep:Double {PlaybackPreferences.seekSteps.contains(storedSeekStep) ? storedSeekStep:30}
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment:.leading,spacing:20) {
                     header
+                    Button {cast.returnToStremio()} label:{
+                        Label("Torna a Stremio",systemImage:"arrow.uturn.backward")
+                            .font(.subheadline.weight(.medium)).padding(.vertical,6)
+                    }.buttonStyle(.plain).foregroundStyle(CastPalette.accent)
                     HStack(alignment:.top,spacing:10) {
                         if cast.busy || cast.loading { ProgressView().controlSize(.small).padding(.top,2) }
                         Text(cast.message).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
@@ -34,6 +42,7 @@ struct ContentView: View {
                             Label(warning,systemImage:"captions.bubble").font(.subheadline).foregroundStyle(.orange).multilineTextAlignment(.leading).fixedSize(horizontal:false,vertical:true).castCard()
                         }.buttonStyle(.plain)
                     }
+                    if cast.isSeries { episodeControls }
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
                     else { emptyState }
@@ -46,6 +55,8 @@ struct ContentView: View {
                     .frame(maxWidth:600).frame(maxWidth:.infinity)
             }.background(CastPalette.background).toolbar(.hidden,for:.navigationBar)
         }.preferredColorScheme(.dark).tint(CastPalette.accent)
+            .task{await updater.checkIfNeeded()}
+            .sheet(isPresented:$showPreferences) { AppPreferencesView() }
             .sheet(isPresented:$cast.showSetup) { AddonSetupView().environmentObject(cast) }
             .sheet(isPresented:$showTrackOptions) { TrackOptionsView().environmentObject(cast) }
             .sheet(isPresented:$showSubtitleAppearance) { SubtitleAppearanceView().environmentObject(cast) }
@@ -56,8 +67,27 @@ struct ContentView: View {
             .alert("Diagnostica copiata",isPresented:$diagnosticsCopied) {
                 Button("OK",role:.cancel) { }
             } message: {
-                Text("Incollala nella chat con Codex. Contiene gli ultimi 10 minuti, senza link personali o credenziali.")
+                Text("Incollala nella chat con Codex. Contiene gli ultimi 2 minuti, senza link personali o credenziali.")
             }
+    }
+    private var episodeControls:some View {
+        VStack(alignment:.leading,spacing:12) {
+            Text(cast.orderedEpisodes.first(where:{$0.id==cast.currentEpisodeID})?.label ?? "Episodi").font(.headline)
+            HStack {
+                Button {cast.moveEpisode(-1)} label:{Label("Precedente",systemImage:"backward.end")}
+                    .disabled(cast.adjacentEpisode(-1)==nil || cast.episodeBusy || cast.busy || cast.loading)
+                Spacer()
+                if cast.episodeBusy {ProgressView()}
+                Button {cast.moveEpisode(1)} label:{Label("Successivo",systemImage:"forward.end")}
+                    .disabled(cast.adjacentEpisode(1)==nil || cast.episodeBusy || cast.busy || cast.loading)
+            }
+            if cast.episodeIssue==nil,cast.fallbackEpisode != nil,cast.playbackIssue != nil {Button("Continua da Stremio"){cast.openEpisodeInStremio()}}
+            if let issue=cast.episodeIssue {
+                Text(issue).font(.footnote).foregroundStyle(.orange)
+                if cast.fallbackEpisode != nil {Button("Continua da Stremio"){cast.openEpisodeInStremio()}}
+                else {Button("Ricarica episodi"){cast.refreshEpisodes()}}
+            }
+        }.castCard()
     }
     private var header: some View {
         HStack(spacing:12) {
@@ -75,6 +105,7 @@ struct ContentView: View {
                 Image(systemName:"terminal").font(.system(size:17)).frame(width:44,height:44).background(.white.opacity(0.045),in:Circle())
             }.foregroundStyle(.white).accessibilityLabel("Codex: copia diagnostica")
             Menu {
+                Button("Preferenze app") { showPreferences=true }
                 Button { showSubtitleAppearance = true } label: { Label("Aspetto sottotitoli",systemImage:"textformat.size") }
                 Button { cast.showSetup = true } label: { Label("Configura sorgenti",systemImage:"link") }
                 Link("Componenti open source",destination:URL(string:"https://github.com/DonPick98/stremio-cast-bridge-ios/blob/main/THIRD_PARTY_NOTICES.md")!)
@@ -125,12 +156,12 @@ struct ContentView: View {
                 HStack { Text(playbackTime(cast.position)); Spacer(); Text(playbackTime(cast.duration)) }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             HStack(spacing:36) {
-                Button { cast.seek(to:cast.position-30) } label: { Image(systemName:"gobackward.30").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Indietro di 30 secondi")
+                Button { cast.seek(to:cast.position-configuredSeekStep) } label: { VStack(spacing:2){Image(systemName:"gobackward").font(.system(size:24));Text("\(Int(configuredSeekStep))s").font(.caption2)}.frame(width:48,height:48) }.accessibilityLabel("Indietro di \(Int(configuredSeekStep)) secondi")
                 Button { cast.togglePlayback() } label: {
                     Image(systemName:cast.playing ? "pause.fill" : "play.fill").font(.system(size:24,weight:.semibold)).foregroundStyle(CastPalette.background)
                         .frame(width:70,height:70).background(Color.white,in:Circle())
                 }.accessibilityLabel(cast.playing ? "Pausa" : "Riprendi")
-                Button { cast.seek(to:cast.position+30) } label: { Image(systemName:"goforward.30").font(.system(size:24)).frame(width:48,height:48) }.accessibilityLabel("Avanti di 30 secondi")
+                Button { cast.seek(to:cast.position+configuredSeekStep) } label: { VStack(spacing:2){Image(systemName:"goforward").font(.system(size:24));Text("\(Int(configuredSeekStep))s").font(.caption2)}.frame(width:48,height:48) }.accessibilityLabel("Avanti di \(Int(configuredSeekStep)) secondi")
             }.foregroundStyle(.white).buttonStyle(.plain)
             HStack(spacing:12) {
                 Image(systemName:"speaker.fill").font(.caption2).foregroundStyle(.secondary)
@@ -184,7 +215,7 @@ struct ContentView: View {
         Button { cast.load(preservePosition:cast.hasLoaded) } label: {
             HStack(spacing:9) { Image(systemName:"play.rectangle"); Text(cast.loading ? "Attendo la TV…" : "Riproduci sulla TV") }.font(.subheadline.weight(.semibold)).frame(maxWidth:.infinity).padding(.vertical,17)
         }.buttonStyle(.plain).foregroundStyle(CastPalette.background).background(Color.white,in:RoundedRectangle(cornerRadius:18))
-            .opacity(!cast.connected || cast.busy || cast.loading ? 0.45 : 1).disabled(!cast.connected || cast.busy || cast.loading || cast.selectedAudio.isEmpty)
+            .opacity(!cast.connected || cast.busy || cast.loading ? 0.45 : 1).disabled(!cast.connected || cast.busy || cast.loading || cast.episodeBusy || cast.selectedAudio.isEmpty)
     }
     private func quickTrackLabel(_ title:String,selection:String,icon:String) -> some View {
         VStack(alignment:.leading,spacing:7) {
@@ -430,3 +461,183 @@ private func playbackTime(_ seconds: Double) -> String {
 }
 
 
+
+
+private struct AppPreferencesView:View {
+    @EnvironmentObject private var cast:CastController
+    @State private var showAppearance=false
+    @State private var confirmReset=false
+    @State private var confirmControlReset=false
+    @State private var confirmCacheClear=false
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("cast.series.autoplay") private var autoplay=true
+    @AppStorage("cast.series.matchSource") private var matchSource=true
+    @AppStorage("cast.series.specials") private var specials=false
+    @AppStorage("cast.series.webFallback") private var webFallback=false
+    @AppStorage("cast.series.autoReturn") private var autoReturn=true
+    @AppStorage("cast.series.sourceAttempts") private var sourceAttempts=3
+    @AppStorage("cast.preferred.audio") private var audio="auto"
+    @AppStorage("cast.preferred.subtitle") private var subtitle="auto"
+    @AppStorage("cast.preferred.subtitleSource") private var subtitleSource="internal"
+    @AppStorage("cast.controls.seekStep") private var seekStep=30.0
+    @AppStorage("cast.updates.automatic") private var automaticUpdates=false
+    @AppStorage("cast.sources.order") private var sourceOrder="addon"
+    @AppStorage("cast.sources.resolution") private var sourceResolution=0
+    @ObservedObject private var updater=AppUpdater.shared
+    var body:some View {
+        NavigationStack {
+            Form {
+                Section("Serie") {
+                    Toggle("Avvia la puntata successiva",isOn:$autoplay)
+                    Toggle("Riutilizza una sorgente equivalente",isOn:$matchSource)
+                    Picker("Tentativi su sorgenti equivalenti",selection:$sourceAttempts) {
+                        ForEach(1...3,id:\.self){Text("\($0)").tag($0)}
+                    }
+                    Toggle("Includi episodi speciali",isOn:$specials)
+                }
+                Section {
+                    Toggle("Apri Stremio Web",isOn:$webFallback)
+                    Toggle("Apri Stremio se la prossima puntata non parte",isOn:$autoReturn)
+                } header:{Text("Continua da Stremio")} footer:{Text("Torna a Stremio apre il contenuto corrente senza interrompere il Cast. La web app della Home e la scheda originale non possono essere selezionate direttamente. Al termine dei tentativi, Stremio si apre automaticamente solo se questa app è in primo piano. In background rimane il pulsante nel player. Il supporto ai collegamenti varia fra app e dispositivi.")}
+                Section {
+                    Picker("Audio preferito",selection:$audio) {languages(disabled:false)}
+                    Picker("Sottotitoli preferiti",selection:$subtitle) {languages(disabled:true)}
+                } header:{Text("Lingue")} footer:{Text("Le preferenze si applicano alle prossime selezioni. Puoi cambiare traccia per il video corrente dal player.")}
+
+                Section {
+                    Picker("Risoluzione preferita",selection:$sourceResolution) {
+                        Text("Dall’add-on").tag(0)
+                        Text("Fino a 720p").tag(720)
+                        Text("Fino a 1080p").tag(1080)
+                        Text("Fino a 2160p").tag(2160)
+                    }
+                    Picker("Ordine per dimensione",selection:$sourceOrder) {
+                        Text("Dall’add-on").tag("addon")
+                        Text("Più piccole prima").tag("small")
+                        Text("Più grandi prima").tag("large")
+                    }
+                    Button("Ripristina ordine sorgenti"){SourcePreferences.reset()}
+                } header:{Text("Sorgenti")} footer:{Text("Ordina le sorgenti senza nasconderle. Usa risoluzione e dimensione quando riconoscibili; i dati mancanti rimangono visibili. Vale anche per i tentativi automatici equivalenti. Non cambia il video già avviato né la qualità di conversione.")}
+                Section("Stremio") {
+                    NavigationLink("Libreria e punto di ripresa"){StremioSettingsView()}
+                }
+                Section("Controlli") {
+                    Picker("Salto avanti e indietro",selection:$seekStep) {
+                        ForEach(PlaybackPreferences.seekSteps,id:\.self){value in Text("\(Int(value)) secondi").tag(value)}
+                    }
+                    Text("I controlli di riproduzione usano il player nativo di iOS. La trasmissione in background può mostrare una scheda di avanzamento separata gestita dal sistema.").font(.footnote).foregroundStyle(.secondary)
+                    Button("Ripristina controlli") {confirmControlReset=true}
+                }
+                Section("Sottotitoli") {
+                    Picker("Selezione automatica",selection:$subtitleSource) {
+                        Text("Preferisci esterni").tag("external")
+                        Text("Preferisci interni").tag("internal")
+                        Text("Solo esterni").tag("externalOnly")
+                    }
+                    Text("Si applica alle prossime sorgenti, nella lingua scelta. Con Solo esterni, se non ne sono disponibili i sottotitoli restano spenti: puoi cercarli da Stremio e OpenSubtitles nel player. La scelta manuale delle tracce rimane disponibile.").font(.footnote).foregroundStyle(.secondary)
+                    Button { showAppearance=true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
+                    Text("La sincronizzazione si regola per il video corrente dal menu Sottotitoli.").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
+                    LabeledContent("Versione installata",value:updater.currentLabel)
+                    Toggle("Controlla automaticamente",isOn:$automaticUpdates)
+                    Button {Task{await updater.check()}} label:{
+                        HStack{Text("Controlla aggiornamenti");if updater.busy{Spacer();ProgressView()}}
+                    }.disabled(updater.busy)
+                    Text(updater.message).font(.footnote).foregroundStyle(.secondary)
+                    if let update=updater.available {
+                        Text("Versione \(update.version) (\(update.build))").font(.headline)
+                        if !update.notes.isEmpty {DisclosureGroup("Novità"){Text(update.notes).font(.footnote)}}
+                        Button("Aggiorna con SideStore"){updater.install()}
+                    }
+                } header:{Text("Aggiornamenti")} footer:{Text("Il controllo automatico avviene all’apertura dell’app, al massimo una volta al giorno. Firma e installazione si completano in SideStore.")}
+                Section("Memoria locale") {
+                    LabeledContent("Cache sottotitoli",value:ByteCountFormatter.string(fromByteCount:Int64(cast.captionCacheBytes),countStyle:.file))
+                    Button("Svuota cache sottotitoli",role:.destructive){confirmCacheClear=true}
+                    if let notice=cast.captionCacheMessage{Text(notice).font(.footnote).foregroundStyle(.secondary)}
+                }
+                Section {
+                    Button("Ripristina serie e preferenze tracce",role:.destructive) { confirmReset=true }
+                } footer: { Text("Ripristina serie, lingue e priorità dei sottotitoli. Configurazioni delle sorgenti, aspetto dei sottotitoli e progressi di visione restano salvati. Le nuove preferenze si applicano alle prossime selezioni.") }
+            }.navigationTitle("Preferenze").toolbar {ToolbarItem(placement:.confirmationAction){Button("Fine"){dismiss()}}}
+        }
+        .onAppear{cast.refreshCaptionCacheInfo()}
+        .onChange(of:sourceOrder){_ in cast.reorderSources()}
+        .onChange(of:sourceResolution){_ in cast.reorderSources()}
+        .onChange(of:automaticUpdates){_ in Task{await updater.checkIfNeeded()}}
+        .confirmationDialog("Ripristinare i controlli?",isPresented:$confirmControlReset,titleVisibility:.visible){
+            Button("Ripristina"){PlaybackPreferences.resetControls()}
+            Button("Annulla",role:.cancel){}
+        }
+        .confirmationDialog("Svuotare la cache sottotitoli?",isPresented:$confirmCacheClear,titleVisibility:.visible){
+            Button("Svuota cache",role:.destructive){cast.clearCaptionCache()}
+            Button("Annulla",role:.cancel){}
+        } message:{Text("Le prossime tracce verranno preparate di nuovo. Il video e i sottotitoli già attivi continuano.")}
+        .sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
+        .confirmationDialog("Ripristinare serie e preferenze tracce?",isPresented:$confirmReset,titleVisibility:.visible) {
+            Button("Ripristina preferenze",role:.destructive) { PlaybackPreferences.resetAppSettings() }
+            Button("Annulla",role:.cancel) {}
+        }
+    }
+    @ViewBuilder private func languages(disabled:Bool)->some View {
+        Text(disabled ? "Dal collegamento Stremio":"Dalla sorgente").tag("auto")
+        if disabled {Text("Disattivati").tag("none")}
+        ForEach(["en","it","fr","de","es","ja","ko","pt","zh","ru"],id:\.self) {code in
+            Text(Locale(identifier:"it").localizedString(forLanguageCode:code) ?? code).tag(code)
+        }
+        let current=disabled ? subtitle:audio
+        if !["en","it","fr","de","es","ja","ko","pt","zh","ru","none","auto"].contains(current) {Text(current).tag(current)}
+    }
+}
+
+
+private struct StremioSettingsView:View {
+    @ObservedObject private var sync=StremioSync.shared
+    @State private var email=""
+    @State private var password=""
+    @State private var showLogin=false
+    @State private var confirmDisconnect=false
+    @State private var confirmRemote=false
+    @AppStorage("cast.stremio.resume") private var remoteResume=true
+    var body:some View {
+        Form {
+            if sync.connected {
+                Section("Account") {
+                    Text(sync.accountLabel)
+                    Toggle("Sincronizza con Stremio",isOn:Binding(get:{sync.enabled},set:{sync.setEnabled($0)}))
+                    Toggle("Usa il punto di ripresa da Stremio",isOn:$remoteResume).disabled(!sync.enabled)
+                    Button("Ripeti accesso"){showLogin=true}
+                    Button("Disconnetti",role:.destructive){confirmDisconnect=true}
+                }
+            }
+            if !sync.connected || showLogin {
+                Section {
+                    TextField("Email Stremio",text:$email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField("Password Stremio",text:$password).textContentType(.password)
+                    Button {
+                        let address=email,secret=password;password=""
+                        Task{if await sync.connect(email:address,password:secret){showLogin=false}}
+                    } label:{HStack{Text("Collega Stremio");if sync.busy{Spacer();ProgressView()}}}
+                        .disabled(sync.busy || email.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || password.isEmpty)
+                } header:{Text("Accesso Stremio")} footer:{Text("Usa email e password di Stremio. La password non viene salvata. L’accesso viene conservato nel portachiavi di questo iPhone; la sincronizzazione si attiva separatamente.")}
+            }
+            Section {
+                Text(sync.message)
+                if sync.pending>0 {LabeledContent("Aggiornamenti in attesa",value:String(sync.pending))}
+                if sync.enabled {Button("Sincronizza ora"){sync.flush()}}
+                if sync.conflicts>0 {
+                    Button("Mantieni i dati Stremio in conflitto"){confirmRemote=true}
+                }
+            } header:{Text("Stato")} footer:{Text("Per i contenuti IMDb, condivide il punto confermato dalla TV e segna visto alla fine della riproduzione. Le modifiche senza rete restano in coda. I dati remoti più recenti sono conservati. La lettura del punto remoto avviene alla prossima scelta di una sorgente.")}
+        }.navigationTitle("Stremio")
+        .onDisappear{password=""}
+        .confirmationDialog("Disconnettere Stremio?",isPresented:$confirmDisconnect,titleVisibility:.visible){
+            Button("Disconnetti",role:.destructive){sync.disconnect()}
+            Button("Annulla",role:.cancel){}
+        } message:{Text("Rimuove l’accesso e gli aggiornamenti ancora in coda su questo iPhone. La libreria Stremio rimane salvata.")}
+        .confirmationDialog("Mantenere i dati Stremio?",isPresented:$confirmRemote,titleVisibility:.visible){
+            Button("Mantieni Stremio"){sync.discardConflicts()}
+            Button("Annulla",role:.cancel){}
+        } message:{Text("Ignora solo gli aggiornamenti locali in conflitto. Gli altri progressi in attesa rimangono in coda.")}
+    }
+}

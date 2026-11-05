@@ -1,0 +1,25 @@
+name: Validate stream header rejection reasons
+on:
+  push:
+    branches: [test/stream-header-20261104, fix/playback-recovery-20261103]
+    paths:
+      - Sources/PlayableStreamHeader.swift
+      - Tests/PlayableStreamHeaderTests.swift
+      - .github/workflows/header-regressions.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  headers:
+    runs-on: ubuntu-24.04
+    container: swift:6.0.3-noble
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compile production header parser and verify incremental and rejected tracks
+        run: |
+          swiftc -swift-version 5 -parse-as-library Sources/PlayableStreamHeader.swift Tests/PlayableStreamHeaderTests.swift -o /tmp/header-tests
+          /tmp/header-tests

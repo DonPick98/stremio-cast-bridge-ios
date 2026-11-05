@@ -34,6 +34,25 @@ import Foundation
         let decodedASS = try SubtitleDocument.normalize(Data(ass.utf8))
         precondition(decodedASS.contains("Ciao\nmondo"))
         do { _ = try SubtitleDocument.normalize(Data("<html>Error</html>".utf8)); fatalError("HTML accepted") } catch StreamHeaderError.invalid {}
+        let compact="1\n00:00:01,000 --> 00:00:02,000\nFirst\n2\n00:00:03,000 --> 00:00:04,000\nSecond"
+        let fixed=try SubtitleDocument.normalize(Data(compact.utf8))
+        precondition(fixed.contains("First\n\n00:00:03.000") && !fixed.contains("First\n2"))
+        let numeric="00:00:01,000 --> 00:00:02,000\n2024\n00:00:03,000 --> 00:00:04,000\nSecond"
+        let numberText=try SubtitleDocument.normalize(Data(numeric.utf8));precondition(numberText.contains("2024"))
+        for bad in ["WEBVTT","WEBVTTgarbage\n\n00:00:01.000 --> 00:00:02.000\nBad", "WEBVTT\n\nNOTE No captions", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nFirst\n00:00:03.000 --> 00:00:04.000\nSecond"] {
+            do {_ = try SubtitleDocument.normalize(Data(bad.utf8));fatalError("Invalid complete WebVTT accepted")}
+            catch StreamHeaderError.invalid {}
+        }
+        let annotated="WEBVTT\n\nNOTE Comment --> ignored\n\ncue-id\n00:00:01.000 --> 00:00:02.000 align:start\n<i>Valid</i>"
+        let annotationText=try SubtitleDocument.normalize(Data(annotated.utf8));precondition(annotationText.contains("<i>Valid</i>"))
+        let fr=OnlineSubtitle(id:"fr",url:URL(string:"https://example.com/fr.srt")!,lang:"fra")
+        let wrong=OnlineSubtitle(id:"en",url:URL(string:"https://example.com/en.srt")!,lang:"eng")
+        precondition(SubtitleCatalog.sourceURL([wrong,fr],language:"fr-CA",fallback:nil,fallbackLanguage:nil)==fr.url)
+        precondition(SubtitleCatalog.sourceURL([wrong],language:"fr",fallback:wrong.url,fallbackLanguage:"eng")==nil)
+        precondition(SubtitleCatalog.sourceURL([],language:"it",fallback:wrong.url,fallbackLanguage:"ita")==wrong.url)
+        precondition(SubtitleCatalog.sourceURL([fr],language:"off",fallback:fr.url,fallbackLanguage:"fr")==nil)
+        precondition(SubtitleLanguage.code("English")=="en")
+        precondition(SubtitleCatalog.sourceURL([],language:"en",fallback:wrong.url,fallbackLanguage:nil)==wrong.url)
         print("Subtitle catalogue, exact episode ranking, transport, hash, encodings, SRT/ASS and timing-window tests passed")
     }
 }

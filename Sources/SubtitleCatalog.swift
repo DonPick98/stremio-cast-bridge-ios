@@ -3,7 +3,7 @@ import Foundation
 enum SubtitleLanguage {
     static func code(_ value:String) -> String {
         let v = value.lowercased().split(separator:"-").first.map(String.init) ?? value.lowercased()
-        return ["ita":"it","eng":"en","fra":"fr","fre":"fr","spa":"es","deu":"de","ger":"de","jpn":"ja","por":"pt","zho":"zh","chi":"zh","rus":"ru","kor":"ko","nld":"nl","dut":"nl"][v] ?? v
+        return ["italian":"it","english":"en","french":"fr","german":"de","spanish":"es","ita":"it","eng":"en","fra":"fr","fre":"fr","spa":"es","deu":"de","ger":"de","jpn":"ja","por":"pt","zho":"zh","chi":"zh","rus":"ru","kor":"ko","nld":"nl","dut":"nl"][v] ?? v
     }
     static func name(_ value:String) -> String { Locale.current.localizedString(forLanguageCode:code(value))?.capitalized ?? value }
 }
@@ -59,6 +59,15 @@ enum SubtitleCatalogError:LocalizedError {
 }
 
 enum SubtitleCatalog {
+    static func sourceURL(_ subtitles:[OnlineSubtitle],language:String,fallback:URL?,fallbackLanguage:String?) -> URL? {
+        let wanted=SubtitleLanguage.code(language)
+        guard !["none","off","und", ""].contains(wanted) else{return nil}
+        for subtitle in subtitles where SubtitleLanguage.code(subtitle.lang)==wanted {
+            if let url=OnlineSubtitle.safeURL(subtitle.url){return url}
+        }
+        guard let fallback,SubtitleLanguage.code(fallbackLanguage ?? "en")==wanted else{return nil}
+        return OnlineSubtitle.safeURL(fallback)
+    }
     static func requestURL(type:String,id:String,filename:String?,size:Int64?,hash:String?) throws -> URL {
         guard ["movie","series"].contains(type), id.range(of:#"^tt[0-9]+(?::[0-9]+:[0-9]+)?$"#,options:.regularExpression) != nil else { throw SubtitleCatalogError.identity }
         var extra:[URLQueryItem] = []

@@ -1,5 +1,16 @@
 import Foundation
 
+enum SubtitleFetchError:LocalizedError {
+    case http(Int),format,limit
+    var errorDescription:String? {
+        switch self {
+        case .http(let status):return "La sorgente sottotitoli ha risposto con HTTP \(status). Prova un’altra versione o riprova più tardi."
+        case .format:return "Il file ricevuto non contiene sottotitoli SRT, ASS o WebVTT leggibili."
+        case .limit:return "Il file sottotitoli supera il limite supportato di 1 MiB."
+        }
+    }
+}
+
 enum WebVTTTimeline {
     static func rebased(_ text:String, offset:Double, delay:Double = 0) throws -> Data {
         let source = text.hasPrefix("\u{feff}") ? String(text.dropFirst()) : text
@@ -46,24 +57,29 @@ enum WebVTTTimeline {
         let n = Int((seconds*1000).rounded())
         return String(format:"%02d:%02d:%02d.%03d",n/3_600_000,(n/60_000)%60,(n/1000)%60,n%1000)
     }
-    static func fetch(_ url:URL) async throws -> String {
+    #if canImport(Darwin)
+    static func fetch(_ url:URL,configuration:URLSessionConfiguration = .ephemeral) async throws -> String {
         guard url.scheme == "https", url.user == nil, url.password == nil else { throw StreamHeaderError.invalid }
-        let config = URLSessionConfiguration.ephemeral
+        let config = configuration
         config.timeoutIntervalForRequest = 8; config.timeoutIntervalForResource = 10
         config.httpCookieStorage = nil; config.urlCredentialStorage = nil; config.urlCache = nil
         let session = URLSession(configuration:config,delegate:CaptionRedirectGuard(),delegateQueue:nil)
         defer { session.invalidateAndCancel() }
         let (bytes,response) = try await session.bytes(from:url)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw StreamHeaderError.network }
+        guard let http=response as? HTTPURLResponse else { throw StreamHeaderError.network }
+        guard http.statusCode == 200 else { throw SubtitleFetchError.http(http.statusCode) }
         var data = Data()
-        for try await byte in bytes { guard data.count < 1_048_576 else { throw StreamHeaderError.tooLarge }; data.append(byte) }
-        return try SubtitleDocument.normalize(data)
+        for try await byte in bytes { guard data.count < 1_048_576 else { throw SubtitleFetchError.limit }; data.append(byte) }
+        do { return try SubtitleDocument.normalize(data) }
+        catch { throw SubtitleFetchError.format }
     }
+    #endif
 }
+#if canImport(Darwin)
 private final class CaptionRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session:URLSession, task:URLSessionTask, willPerformHTTPRedirection response:HTTPURLResponse, newRequest request:URLRequest, completionHandler:@escaping (URLRequest?)->Void) {
         guard let url = request.url, url.scheme == "https", url.user == nil, url.password == nil else { completionHandler(nil); return }
         completionHandler(request)
     }
 }
-
+#endif

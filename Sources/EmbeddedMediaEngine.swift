@@ -18,8 +18,13 @@ enum EmbeddedMediaError: LocalizedError {
 }
 
 @MainActor final class EmbeddedMediaEngine: NSObject, VLCMediaPlayerDelegate {
+#if CAST_ENGINE_TESTING
+    var testingSoftwareDecoder=false
+    var testingFineEncoderClock=false
+#endif
     enum VideoMode: Equatable { case copy, ffmpegH264, hardwareH264, softwareVP8 }
-    static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false) -> [VideoMode] {
+    static func modes(requiresVideo:Bool,fallbackLevel:Int = 0,video:VideoFormat? = nil,burn:Bool = false,bitmap:Bool = false) -> [VideoMode] {
+        if burn,fallbackLevel < 2 { return [.ffmpegH264,.hardwareH264,.softwareVP8] }
         let legacy = ["mp4v","mpeg4","divx","xvid","dx50","fmp4","mpgv","wmv2"].contains(video?.codec.lowercased() ?? "")
         // The pinned LGPL FFmpeg build lacks a working software AV1 decoder
         // on this platform; VLC's bundled decoder handles this source instead.
@@ -41,7 +46,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var audioRepair: AudioRepairPipe?
     private var rewindInput:RewindableInputStream?
     private var proxy: LocalStreamProxy?
-    private var backgroundPlayer: VLCMediaPlayer?
+    private let audioOwner = "engine-" + UUID().uuidString
     private var observers: [NSObjectProtocol] = []
     private(set) var streamURL: URL?
     private(set) var captionURLs: [Int:URL] = [:]
@@ -55,11 +60,17 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var contentType = "video/mp4"
     private(set) var offset: Double = 0
     private(set) var running = false
+    private(set) var failed = false
+    private(set) var usesBitmapOverlay = false
+    private var usesTextOverlay=false
+    var requiresOverlayRestart:Bool {usesBitmapOverlay || usesTextOverlay}
+    private(set) var diagnosticMode = VideoMode.copy
+    var backendExitCode:Int64? {audioRepair?.exitCode}
     private var startedStream = false
     private var directRemux = false
     private var producerMonitor: Task<Void,Never>?
     private var producerDrain: Task<Void,Never>?
-    var onFailure: (() -> Void)?
+    var onFailure: ((Bool) -> Void)?
 
     static func inspect(_ url: URL) async throws -> RDPreparedMedia {
         let media = VLCMedia(url:url)
@@ -92,11 +103,25 @@ enum EmbeddedMediaError: LocalizedError {
         let h = (video[VLCMediaTracksInformationVideoHeight] as? NSNumber)?.intValue ?? 0
         let rate = (video[VLCMediaTracksInformationFrameRate] as? NSNumber)?.doubleValue ?? 0
         let base = (video[VLCMediaTracksInformationFrameRateDenominator] as? NSNumber)?.doubleValue ?? 1
-        let fps = base > 0 ? rate/base : 0
+        var fps = base > 0 ? rate/base : 0
+        var fixedCadence=true
+        if !fps.isFinite || fps<=0 || fps>1000 {
+            fps=0
+            do {
+                if let detected=try await CaptionExtractor.videoCadence(input:url,codec:codec(video),width:w,height:h) {
+                    fps=detected.frameRate;fixedCadence=detected.fixedCadence
+                    PlaybackDiagnostics.record(.metadata,["phase":"cadence","kind":"ffprobe","fps":PlaybackDiagnostics.number(fps),"status":fixedCadence ? "consistent":"unconfirmed"])
+                } else {PlaybackDiagnostics.record(.metadata,["phase":"cadence","kind":"ffprobe","status":"unknown"])}
+            } catch is CancellationError {throw CancellationError()}
+            catch {
+                try Task.checkCancellation()
+                PlaybackDiagnostics.record(.metadata,["phase":"cadence","kind":"ffprobe","status":"unavailable"])
+            }
+        }
         let rawProfile = (video[VLCMediaTracksInformationCodecProfile] as? NSNumber)?.intValue ?? 0
         let profile = rawProfile >= 0 ? rawProfile & 255 : 0
         let level = (video[VLCMediaTracksInformationCodecLevel] as? NSNumber)?.intValue ?? 0
-        let format = VideoFormat(codec:codec(video),width:w,height:h,frameRate:fps,bitrate:(video[VLCMediaTracksInformationBitrate] as? NSNumber)?.intValue ?? 0,profile:profile,level:level)
+        let format = VideoFormat(codec:codec(video),width:w,height:h,frameRate:fps,bitrate:(video[VLCMediaTracksInformationBitrate] as? NSNumber)?.intValue ?? 0,profile:profile,level:level,fixedCadence:fixedCadence)
         let videoSafe = !format.requiresConversion && w > 0 && h > 0 && fps > 0
         let firstAudio = tracks.first(where:{$0[VLCMediaTracksInformationType] as? String == VLCMediaTracksInformationTypeAudio}) ?? [:]
         let channels = (firstAudio[VLCMediaTracksInformationAudioChannelsNumber] as? NSNumber)?.intValue ?? 0
@@ -110,23 +135,26 @@ enum EmbeddedMediaError: LocalizedError {
         return RDPreparedMedia.native(audio:audio,subtitles:readTracks(VLCMediaTracksInformationTypeText),defaultAudio:selected.key,url:url,contentType:type,direct:direct,videoConversion:format.requiresConversion,description:"\(codec(video).uppercased()) · \(format.label)",duration:duration,video:format)
     }
 
-    static func outputChain(videoMode:VideoMode,copyAudio:Bool = false,burn:Bool = false,video:VideoFormat? = nil,access:String,target:String) -> String {
+    static func outputChain(videoMode:VideoMode,copyAudio:Bool = false,burn:Bool = false,video:VideoFormat? = nil,access:String,target:String,fineEncoderClock:Bool=false) -> String {
         let webm = videoMode == .softwareVP8
         var conversion = webm ? "acodec=vorb,ab=192,channels=2" : copyAudio ? "" : "acodec=mp4a,ab=192,channels=2"
         func append(_ value: String) { conversion += (conversion.isEmpty ? "" : ",") + value }
+        let clockOptions=fineEncoderClock ? ",options={time_base=1/1000000}":""
         switch videoMode {
         case .copy: break
-        case .ffmpegH264, .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox},vb=\(video?.conversionBitrate ?? 10000),maxwidth=1920,maxheight=1080")
+        case .ffmpegH264, .hardwareH264: append("vcodec=h264,venc=avcodec{codec=h264_videotoolbox\(clockOptions)},vb=\(video?.conversionBitrate ?? 10000),maxwidth=1920,maxheight=1080")
         case .softwareVP8: append("vcodec=VP80,venc=vpx{deadline=1,cpu-used=8,threads=4},vb=\(video?.conversionBitrate ?? 6000),maxwidth=1920,maxheight=1080")
         }
         if videoMode != .copy, let rate = video?.conversionFrameRate { append("fps=\(Int(rate))") }
+        else if !fineEncoderClock,videoMode == .hardwareH264,let rate=video?.vlcFrameRate {append("fps=\(rate)")}
         if burn { append("soverlay") }
         let mux = webm ? "avformat{mux=webm,options={live=1},reset-ts}" : "avformat{mux=mp4,options={movflags=frag_keyframe+empty_moov+default_base_moof},reset-ts}"
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false) async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false,audioCodec:String = "",subtitleTrack:RDTrack? = nil) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
+        diagnosticMode = videoMode
         offset = start.isFinite ? max(0,start) : 0
         PlaybackDiagnostics.record(.producer,["phase":"start","mode":String(describing:videoMode),"offset":PlaybackDiagnostics.number(offset),"burn":String(subtitleID != nil),"copyAudio":String(copyAudio)])
         let localIP = selfTest ? "127.0.0.1" : try Self.localAddress(to:deviceIP)
@@ -144,20 +172,48 @@ enum EmbeddedMediaError: LocalizedError {
         try await channel.start(port:port,path:bridge.path,type:contentType)
         captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
         try Task.checkCancellation()
-        if (videoMode == .copy || videoMode == .ffmpegH264) && subtitleID == nil {
+        usesBitmapOverlay = (videoMode == .ffmpegH264 || videoMode == .softwareVP8) && bitmapSubtitle && subtitleID != nil
+        usesTextOverlay = (videoMode == .ffmpegH264 || videoMode == .softwareVP8) && !bitmapSubtitle && subtitleID != nil
+        var textCaption:CaptionBurnDocument?
+        if usesTextOverlay {
+            guard let ordinal=subtitleIndex else{throw EmbeddedMediaError.metadata}
+            let catalog=try await CaptionExtractor.catalog(input)
+            let track:CaptionTrack
+            if let subtitleTrack {track=try catalog.selected(ordinal:ordinal,vlcID:subtitleID,language:subtitleTrack.language,codec:subtitleTrack.codec)}
+            else {
+                guard let found=catalog.tracks.first(where:{$0.ordinal==ordinal}) else{throw EmbeddedMediaError.metadata}
+                track=found
+            }
+            guard track.isText else{throw EmbeddedMediaError.metadata}
+            let cache=CaptionDocumentCache(),key=CaptionDocumentCache.key(input:input,track:"vlc_\(subtitleID!)")
+            let text:String
+            if let cached=cache.get(key){text=cached}
+            else {text=try await CaptionExtractor.fullDocument(input:input,track:track);cache.put(text,key:key)}
+            try Task.checkCancellation()
+            let fonts=try await CaptionExtractor.fonts(input,catalog:catalog)
+            try Task.checkCancellation()
+            textCaption=CaptionBurnDocument(text:text,fonts:fonts,appearance:style,delay:subtitleDelay)
+        }
+        if ((videoMode == .copy || videoMode == .ffmpegH264 || videoMode == .softwareVP8) && subtitleID == nil) || usesBitmapOverlay || usesTextOverlay {
             // VLC's H.264 packetizer can drop/reorder B frames on remux. FFmpeg
             // copies every original packet and normalizes the selected audio.
             directRemux = true; running = true; producerEnded = false
             observeLifecycle(); updateBackground()
+            let format:VideoFormat?
+            if videoMode == .copy {format=nil}
+            else if let video {format=video}
+            else {format=try await Self.inspect(input).video}
+            guard videoMode == .copy || format != nil else{throw EmbeddedMediaError.metadata}
             let repair = AudioRepairPipe(); audioRepair = repair
-            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:videoMode == .ffmpegH264 ? video : nil)
+            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:format,bitmapSubtitleIndex:usesBitmapOverlay ? subtitleIndex:nil,subtitleDelay:subtitleDelay,textCaption:textCaption,softwareVideo:videoMode == .softwareVP8)
             producerMonitor = Task { [weak self] in
                 while !Task.isCancelled {
                     guard let self, self.running else { return }
                     if repair.finished {
                         PlaybackDiagnostics.record(.producer,["phase":"finished","result":repair.failed ? "error" : "success"])
-                        if repair.failed { self.onFailure?() }
-                        self.producerEnded = true; channel.endWriting(); return
+                        self.producerEnded = true; channel.endWriting()
+                        if repair.failed { self.failProducer(allowVideoConversion:repair.exitCode != -32) }
+                        return
                     }
                     try? await Task.sleep(nanoseconds:50_000_000)
                 }
@@ -169,10 +225,14 @@ enum EmbeddedMediaError: LocalizedError {
             return url
         }
         var producerInput = input
-        // Overlays need the same selected-track/AAC input at time zero as
-        // after a seek. Otherwise EAC3/FLAC + ASS starts on an entirely
-        // different decoder path and may fail before a Cast LOAD is sent.
-        let repairInput = repairAudio || offset > 0 || subtitleID != nil
+        // Decode overlays on the original GOP for the validated audio families.
+        // Cast-incompatible audio (e.g. EAC3) still needs output conversion, but
+        // does not itself require packet-copy normalization before decoding.
+        // That normalization discards video preroll after a seek and delays the
+        // first decodable picture until the next keyframe (e.g. +0.79 s).
+        // Codecs that explicitly require repair (e.g. TrueHD) retain that path.
+        let originalOverlay = subtitleID != nil && !repairAudio && (copyAudio || ["eac3","ec-3"].contains(audioCodec.lowercased()))
+        let repairInput = !originalOverlay && (repairAudio || offset > 0 || subtitleID != nil)
         PlaybackDiagnostics.record(.producer,["phase":"input","kind":repairInput ? "normalized" : "original","audio":String(audioIndex),"subtitle":subtitleIndex.map{String($0)} ?? "none"])
         if repairInput {
             let repair = AudioRepairPipe(); audioRepair = repair
@@ -193,7 +253,19 @@ enum EmbeddedMediaError: LocalizedError {
             media.addOption(subtitleID == nil ? ":demux=avformat" : ":demux=mkv")
             media.addOption(":stream-filter=cache_read")
         }
-        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:video,access:"fd",target:String(channel.writer))
+        // The engine is also callable without the app's preflight metadata.
+        // Resolve cadence before configuring VLC rather than falling back to
+        // its imprecise timestamp-derived encoder time base.
+        let outputVideo:VideoFormat?
+        if let video { outputVideo = video }
+        else { outputVideo = try await Self.inspect(input).video }
+        try Task.checkCancellation()
+        var fineEncoderClock=false
+#if CAST_ENGINE_TESTING
+        fineEncoderClock=testingFineEncoderClock
+        if testingSoftwareDecoder {media.addOption(":avcodec-hw=none")}
+#endif
+        let chain = Self.outputChain(videoMode:videoMode,copyAudio:copyAudio || repairInput,burn:subtitleID != nil,video:outputVideo,access:"fd",target:String(channel.writer),fineEncoderClock:fineEncoderClock)
         media.addOption(":sout=\(chain)")
         media.addOption(":no-sout-all")
         media.addOption(":no-sout-keep")
@@ -236,7 +308,7 @@ enum EmbeddedMediaError: LocalizedError {
                 if self.realState(player) == 6 { self.finishProducer(player); return }
                 if self.realState(player) == 7 {
                     PlaybackDiagnostics.record(.error,["phase":"vlc","code":"state7"])
-                    if self.streamURL == nil { self.proxy?.stop() } else { self.onFailure?() }
+                    if self.streamURL == nil { self.proxy?.stop() } else { self.failProducer(allowVideoConversion:true) }
                     return
                 }
                 try? await Task.sleep(nanoseconds:100_000_000)
@@ -269,7 +341,7 @@ enum EmbeddedMediaError: LocalizedError {
         producerDrain?.cancel(); producerDrain = nil
         let channel = outputChannel; outputChannel = nil
         channel?.stop()
-        backgroundPlayer?.stop(); backgroundPlayer = nil
+        CastAudioSession.shared.release(audioOwner)
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
         proxy?.stop(); proxy = nil; streamURL = nil
         rewindInput?.close(); rewindInput = nil
@@ -298,7 +370,7 @@ enum EmbeddedMediaError: LocalizedError {
             guard let self, let origin, self.player === origin else { return }
             if state == .ended || self.realState(origin) == 6 { self.finishProducer(origin) }
             else if self.running && state == .error {
-                if self.streamURL == nil { self.proxy?.stop() } else { self.onFailure?() }
+                if self.streamURL == nil { self.proxy?.stop() } else { self.failProducer(allowVideoConversion:true) }
             }
         }
     }
@@ -310,6 +382,11 @@ enum EmbeddedMediaError: LocalizedError {
         // Pause is asynchronous and may still be queued under backpressure.
         // Always enqueue PLAYING, even if isPlaying has not changed yet.
         else { player.play() }
+    }
+    private func failProducer(allowVideoConversion:Bool) {
+        guard !failed else { return }
+        failed = true; running = false
+        onFailure?(allowVideoConversion)
     }
     private func finishProducer(_ origin:VLCMediaPlayer) {
         guard !producerEnded, player === origin else { return }
@@ -342,40 +419,24 @@ enum EmbeddedMediaError: LocalizedError {
         return function(pointer)
     }
     private func observeLifecycle() {
-        for name in [UIApplication.willResignActiveNotification,UIApplication.didEnterBackgroundNotification,UIApplication.didBecomeActiveNotification] {
-            observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
-                Task { @MainActor in self?.updateBackground() }
-            })
-        }
+        // CastAudioSession owns lifecycle and audio interruption observers.
     }
     private func updateBackground() {
         guard running else { return }
-        do {
-            // Same remote-playback mechanism used by the official VLC iOS app.
-            // Its lifetime is restricted to an active local Cast pipeline.
-            if AVAudioSession.sharedInstance().category != .playback || AVAudioSession.sharedInstance().mode != .moviePlayback {
-                try? AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback)
-            }
-            try? AVAudioSession.sharedInstance().setActive(true)
-            if backgroundPlayer == nil {
-                let helper = VLCMediaPlayer(options:["--demux=rawaud"])
-#if CAST_ENGINE_TESTING
-                let folder = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
-                NativeEngineValidation.log(helper,to:folder.appendingPathComponent("gateway-background-helper.log"))
-#endif
-                helper.media = VLCMedia(path:"/dev/zero"); backgroundPlayer = helper
-            }
-            if backgroundPlayer?.isPlaying != true { backgroundPlayer?.play() }
-        }
+        CastAudioSession.shared.acquire(audioOwner)
     }
     func refreshBackground() { updateBackground() }
+    func productionMetrics()->[String:String]? { audioRepair?.productionMetrics() }
+    func transferMetrics() async -> LocalTransferMetrics? { await proxy?.transferMetrics() }
 #if CAST_ENGINE_TESTING
     private var testingVideoStopped = true
     private var testingStoppedRepair: AudioRepairPipe?
+    var testingSoftwareAudioEncoder:String? {audioRepair?.softwareAudioEncoder}
+    var testingRenderDirectory:URL? {audioRepair?.testingRenderDirectory}
     var testingStopCompleted: Bool { testingVideoStopped && (testingStoppedRepair?.testingStopCompleted ?? true) }
     func testingDeliveredBytes() async -> Int { await proxy?.testingDeliveredBytes() ?? 0 }
     func testingPauseDrained() async -> Bool { await proxy?.testingPauseDrained() ?? false }
-    var testingBackgroundHelperPlaying: Bool { backgroundPlayer?.isPlaying == true }
+    var testingBackgroundHelperPlaying: Bool { CastAudioSession.shared.isPlaying }
     var testingProducerPlaying: Bool { player?.isPlaying == true }
     var testingProducerState: String { player.map { String($0.state.rawValue) } ?? "nil" }
 #endif
@@ -402,4 +463,5 @@ enum EmbeddedMediaError: LocalizedError {
         let ip = String(cString:buffer); guard CastWire.localIPv4(ip) else { throw EmbeddedMediaError.address }; return ip
     }
 }
+
 

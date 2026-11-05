@@ -19,7 +19,7 @@ const rows=files.map(item=>{
  const file=path.join(root,item.file),audio=sound(file);
  const video=run(['-i',file,'-map','0:v:0','-fps_mode','passthrough','-progress','pipe:1','-f','null','-']);
  const frames=Number([...video.stdout.toString().matchAll(/^frame=(\d+)/gm)].at(-1)?.[1]||0);
- return {name:item.name,frames,expectedFrames:item.frames,...audio,videoError:video.status===0?'':video.stderr.toString().slice(-2000),passed:audio.ok&&video.status===0&&audio.samples>=item.samples&&audio.rms>0.01&&Math.abs(audio.frequency-item.tone)<20&&frames>=item.frames*0.9};
+ return {name:item.name,frames,expectedFrames:item.frames,...audio,videoError:video.status===0?'':video.stderr.toString().slice(-2000),passed:audio.ok&&video.status===0&&audio.samples>=item.samples&&audio.rms>0.01&&Math.abs(audio.frequency-item.tone)<20&&frames>=item.frames*(item.name==="caption_ass_seek"||item.name==="caption_srt_seek"?0.98:0.9)};
 });
 const captionRows=files.filter(r=>r.name.startsWith('caption_')).map(item=>{
  const activeTime=item.name.endsWith('_start')?7:4;
@@ -30,8 +30,9 @@ const captionRows=files.filter(r=>r.name.startsWith('caption_')).map(item=>{
  });
  return {name:item.name,checks,passed:checks.every(c=>c.passed)};
 });
-const result={passed:report.passed&&!report.error&&report.background?.passed===true&&report.captionSync?.passed===true&&rows.length===38&&rows.every(r=>r.passed)&&captionRows.length===4&&captionRows.every(r=>r.passed),rows,captionRows};
+const result={passed:report.passed&&!report.error&&report.background?.passed===true&&report.captionSync?.passed===true&&rows.length===40&&rows.every(r=>r.passed)&&captionRows.length===6&&captionRows.every(r=>r.passed),rows,captionRows};
 fs.writeFileSync(path.join(root,'decoded-output-check.json'),JSON.stringify(result,null,2));
 console.log(JSON.stringify(result));
 if(!result.passed)process.exitCode=1;
+
 

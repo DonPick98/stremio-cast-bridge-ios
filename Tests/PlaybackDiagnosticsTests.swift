@@ -1,13 +1,35 @@
 import Foundation
 
 @main struct PlaybackDiagnosticsTests {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         var now = Date(timeIntervalSince1970:1_000_000)
         let log = DiagnosticRecorder(retention:600,limit:3,clock:{now})
         log.record(.source,["phase":"start","url":"https://secret.example/key","code":"https://secret.example/key"])
         let clean = log.report()
         precondition(!clean.contains("secret.example") && !clean.contains("url="))
         precondition(clean.contains("phase=start"))
+        let privateError=NSError(domain:"private-provider-token",code:34,userInfo:[NSLocalizedDescriptionKey:"https://secret.example/token"])
+        let fields=PlaybackDiagnostics.errorFields(privateError,phase:"audio_activate")
+        precondition(fields["domain"]=="other" && fields["code"]=="34")
+        precondition(!fields.values.contains(where:{$0.contains("secret") || $0.contains("token")}))
+        let structured=DiagnosticRecorder(clock:{now})
+        structured.record(.command,["phase":"cast_abort","request":"12","action":"pause","generation":"ABC123","code":"1"])
+        structured.record(.snapshot,["phase":"energy","battery":"72.5","thermal":"0","power":"1","lowPower":"false"])
+        precondition(structured.report().contains("request=12") && structured.report().contains("battery=72.5"))
+        var shortNow=now
+        let short=DiagnosticRecorder(clock:{shortNow})
+        short.record(.app,["phase":"old_marker"])
+        precondition(short.report().contains("ultimi 2 minuti"))
+        shortNow=shortNow.addingTimeInterval(121)
+        precondition(!short.report().contains("old_marker"),"Default diagnostics must expire after two minutes")
+        // A late failure must retain current context after initial prepare expires.
+        short.record(.prepare,["phase":"initial_prepare","mode":"copy"])
+        shortNow=shortNow.addingTimeInterval(121)
+        short.record(.metadata,["phase":"context","mode":"ffmpegH264","codec":"hevc","channels":"6","session":"42","previousSession":"41","url":"https://secret.example/source"])
+        let late=short.report()
+        precondition(!late.contains("initial_prepare") && late.contains("mode=ffmpegH264"))
+        precondition(late.contains("channels=6") && late.contains("session=42") && late.contains("previousSession=41"))
+        precondition(!late.contains("secret.example"))
         log.changed("cast",event:.cast,["status":"playing"])
         log.changed("cast",event:.cast,["status":"playing"])
         precondition(log.report().components(separatedBy:"status=playing").count == 2)
@@ -22,6 +44,26 @@ import Foundation
         saved.record(.prepare,["mode":"ffmpegH264"]); saved.flush()
         let restored = DiagnosticRecorder(file:file,clock:{now})
         precondition(restored.report().contains("mode=ffmpegH264"))
+        let batched=DiagnosticRecorder(file:folder.appendingPathComponent("batched.json"),flushDelayNanoseconds:10_000_000,clock:{now})
+        for i in 0..<100 {batched.record(.snapshot,["position":String(i)])}
+        precondition(batched.persistenceWrites==0,"Ordinary events must stay coalesced")
+        for _ in 0..<200 {
+            if batched.persistenceWrites>0{break}
+            try await Task.sleep(nanoseconds:10_000_000)
+        }
+        precondition(batched.persistenceWrites==1,"A burst should produce one disk write")
+        batched.flush();_=batched.report();batched.flush()
+        precondition(batched.persistenceWrites==1,"Unchanged report/flush must not rewrite the file")
+        batched.record(.snapshot,["position":"100"])
+        batched.record(.error,["code":"CB203"])
+        precondition(batched.persistenceWrites==2,"Errors must flush synchronously")
+        try await Task.sleep(nanoseconds:30_000_000)
+        precondition(batched.persistenceWrites==2,"A cancelled pending flush must not write again")
+        let durable=DiagnosticRecorder(file:folder.appendingPathComponent("batched.json"),clock:{now})
+        precondition(durable.report().contains("code=CB203"))
+        batched.record(.recovery,["phase":"queued"])
+        precondition(batched.persistenceWrites==3,"Recovery evidence must also be durable immediately")
         print("Diagnostics: redaction, deduplication, bounded history, expiry and restoration passed")
     }
 }
+

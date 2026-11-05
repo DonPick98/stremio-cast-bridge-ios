@@ -1,0 +1,59 @@
+name: Isolate native overlay seek timing
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: seek-probe-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  seek:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Boot simulator while building
+        run: |
+          device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid))')
+          xcrun simctl boot "$device" || true
+      - name: Install native engines
+        env:
+          LANG: en_US.UTF-8
+          CAST_ENGINE_ASS_TEST: "1"
+        run: pod install --repo-update
+      - name: Prepare controlled source
+        run: |
+          command -v ffmpeg || brew install ffmpeg
+          node Tests/make-codec-matrix.mjs "$RUNNER_TEMP/codec-matrix"
+      - name: Build native experiment
+        run: xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES CAST_ENGINE_VALIDATION=CAST_ENGINE_TESTING -jobs 1 -derivedDataPath "$RUNNER_TEMP/seek-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Capture timing variants and local libass route and check frame identity
+        run: |
+          set -euo pipefail
+          device=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat().find(d=>d.name.startsWith("iPhone")).udid))')
+          xcrun simctl boot "$device" || true
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" "$RUNNER_TEMP/seek-engine/Build/Products/Release-iphonesimulator/CastRemote.app"
+          data=$(xcrun simctl get_app_container "$device" app.example.castbridge data)
+          mkdir -p "$data/Documents/CodecSamples" seek-evidence
+          cp "$RUNNER_TEMP/codec-matrix/caption-hevc-eac3.mkv" "$data/Documents/CodecSamples/"
+          cp "$RUNNER_TEMP/codec-matrix/caption-hevc-eac3.mkv" seek-evidence/source.mkv
+          collect() { find "$data/Documents" -maxdepth 1 -type f -exec cp '{}' seek-evidence/ \; || true; }
+          trap collect EXIT
+          SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 SIMCTL_CHILD_CAST_ENGINE_SEEKTEST=1 xcrun simctl launch --stdout="$data/Documents/stdio.log" --stderr="$data/Documents/stdio-error.log" "$device" app.example.castbridge
+          for i in $(seq 1 300); do
+            if test -f "$data/Documents/seek-trials.json" && node -e 'process.exit(require(process.argv[1]).trials.length===5?0:1)' "$data/Documents/seek-trials.json"; then
+              collect
+              node Tests/verify-seek-trials.mjs seek-evidence
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Upload timing evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-seek-experiment
+          path: seek-evidence
+          if-no-files-found: ignore

@@ -4,8 +4,157 @@ import SwiftUI
 import ActivityKit
 import CryptoKit
 import UIKit
+import AVFAudio
 
 @MainActor final class CastController: NSObject, ObservableObject, GCKRequestDelegate, GCKSessionManagerListener, GCKRemoteMediaClientListener {
+    @Published private(set) var episodes:[SeriesEpisode]=[]
+    @Published private(set) var episodeIssue:String?
+    @Published private(set) var episodeBusy=false
+    @Published private(set) var fallbackEpisode:SeriesEpisode?
+    private var episodeTask:Task<Void,Never>?
+    private var episodeRequest=UUID()
+    private var requireEpisodeLanguage=false
+    private struct EpisodeAutoplay {
+        let content:String
+        let target:SeriesEpisode
+        let sources:[String:AddonStream]
+        var plan:AutoplayRetryPlan
+    }
+    private var episodeAutoplay:EpisodeAutoplay?
+    private var returnedEpisodes=Set<String>()
+    private func returnToStremioAutomatically() {
+        guard let target=fallbackEpisode,UIApplication.shared.applicationState == .active,
+              UserDefaults.standard.object(forKey:"cast.series.autoReturn") as? Bool ?? true,
+              returnedEpisodes.insert(target.id).inserted else{return}
+        if returnedEpisodes.count>16{returnedEpisodes=[target.id]}
+        openEpisodeInStremio()
+    }
+    @discardableResult private func advanceAutoplaySource(allowRetry:Bool=true)->Bool {
+        guard var context=episodeAutoplay,context.content==currentEpisodeID,!hasLoaded else{return false}
+        if allowRetry,let key=context.plan.next(),let source=context.sources[key] {
+            episodeAutoplay=context
+            choose(source,automaticEpisode:true)
+            message="Provo una sorgente equivalente (\(context.plan.attempt)/\(context.plan.limit))…"
+            PlaybackDiagnostics.record(.source,["phase":"autoplay_candidate","attempt":String(context.plan.attempt)])
+            return true
+        }
+        resetPlayback();hasLoaded=false
+        fallbackEpisode=context.target
+        episodeIssue="Non riesco ad avviare una sorgente equivalente con le lingue richieste. Continua da Stremio o scegli un’altra sorgente."
+        message="La puntata richiede una nuova sorgente."
+        returnToStremioAutomatically();return true
+    }
+    private func autoplayMayRetry(_ error:Error)->Bool {
+        if let rd=error as? RDResolverError {
+            switch rd {
+            case .rateLimited:return false
+            case .http(let status):return AutoplayRetryPlan.permits(status:status)
+            case .apiFailure(let status,_,_):return AutoplayRetryPlan.permits(status:status)
+            default:break
+            }
+        }
+        return true
+    }
+
+    var isSeries:Bool { handoff?.type=="series" }
+    var currentEpisodeID:String { handoff?.id ?? "" }
+    var orderedEpisodes:[SeriesEpisode] {
+        guard let id=SeriesNavigation.seriesID(currentEpisodeID) else{return []}
+        return SeriesNavigation.ordered(episodes,series:id,includeSpecials:UserDefaults.standard.bool(forKey:"cast.series.specials"))
+    }
+    func adjacentEpisode(_ direction:Int) -> SeriesEpisode? { SeriesNavigation.adjacent(orderedEpisodes,current:currentEpisodeID,direction:direction) }
+    func refreshEpisodes() {
+        episodeTask?.cancel();episodes=[];episodeIssue=nil
+        guard isSeries,SeriesNavigation.seriesID(currentEpisodeID) != nil else{return}
+        let id=currentEpisodeID
+        episodeTask=Task { [weak self] in
+            do {
+                let videos=try await BridgeClient.shared.episodes(videoID:id)
+                guard !Task.isCancelled,let self,self.currentEpisodeID==id else{return}
+                self.episodes=videos
+                if self.orderedEpisodes.isEmpty {self.episodeIssue="Nessun elenco episodi disponibile."}
+            } catch {
+                guard !Task.isCancelled,let self,self.currentEpisodeID==id else{return}
+                self.episodeIssue="Elenco episodi non disponibile. Puoi riprovare."
+            }
+        }
+    }
+    func returnToStremio() {
+        // This navigation does not reset or cancel the playing Cast session.
+        openStremio(type:handoff?.type,id:handoff?.id)
+    }
+    private func openStremio(type:String?,id:String?) {
+        let web=UserDefaults.standard.bool(forKey:"cast.series.webFallback")
+        let url=StremioReturnLink.url(type:type,id:id,web:web)
+        UIApplication.shared.open(url,options:[:]) { [weak self] success in
+            guard !success else{return}
+            Task { @MainActor [weak self] in
+                if !web {
+                    let fallback=StremioReturnLink.url(type:type,id:id,web:true)
+                    UIApplication.shared.open(fallback,options:[:]) { [weak self] opened in
+                        if !opened {Task { @MainActor [weak self] in self?.message="Non riesco ad aprire Stremio. Riprova dal pulsante."}}
+                    }
+                } else {self?.message="Non riesco ad aprire Stremio Web. Riprova dal pulsante."}
+            }
+        }
+    }
+    func openEpisodeInStremio() {
+        if episodeAutoplay != nil && !hasLoaded {resetPlayback()}
+        guard let target=fallbackEpisode else{return}
+        openStremio(type:"series",id:target.id)
+    }
+    func moveEpisode(_ direction:Int,automatic:Bool=false) {
+        guard !busy,!loading,!episodeBusy,let current=handoff,let target=adjacentEpisode(direction),
+              !automatic || SeriesNavigation.autoplayNext(orderedEpisodes,current:currentEpisodeID)?.id==target.id else{return}
+        let family=selectedSource?.behaviorHints?.bingeGroup
+        let next=BridgeHandoff(version:current.version,status:current.status,provider:current.provider,type:current.type,id:target.id,selection:nil,subtitleLanguage:current.subtitleLanguage,externalSubtitleURL:nil)
+        guard let config=configuration else{fallbackEpisode=target;episodeIssue="Configura le sorgenti oppure continua da Stremio.";if automatic{returnToStremioAutomatically()};return}
+        episodeRequest=UUID();let token=episodeRequest
+        episodeBusy=true;episodeIssue=nil;fallbackEpisode=nil
+        if automatic{updateActivity(status:"Preparo la prossima puntata")}
+        work=Task { [weak self] in
+            let owner="episode-prepare-"+UUID().uuidString
+            CastAudioSession.shared.acquire(owner)
+            let background=CastBackgroundLease(name:"Choose next episode") { [weak self] in
+                guard let self,self.episodeRequest==token else{return}
+                self.work?.cancel();self.work=nil;self.episodeBusy=false
+                self.episodeIssue="iOS ha interrotto la preparazione della puntata. Puoi riprovare."
+            }
+            defer {
+                CastAudioSession.shared.release(owner)
+                background.end()
+            }
+            do {
+                let found=try await BridgeClient.shared.sources(next,manifest:config.manifest)
+                try Task.checkCancellation()
+                guard let self,self.episodeRequest==token,self.currentEpisodeID==current.id else{return}
+                self.episodeBusy=false
+                let matching=family.flatMap{group in group.isEmpty ? nil:found.first{$0.behaviorHints?.bingeGroup==group}}
+                let useMatch=UserDefaults.standard.object(forKey:"cast.series.matchSource") as? Bool ?? true
+                if automatic && useMatch && matching==nil {
+                    self.fallbackEpisode=target;self.episodeIssue="Nessuna sorgente equivalente scelta automaticamente. Continua da Stremio o scegli l’episodio manualmente.";self.returnToStremioAutomatically();return
+                }
+                self.capturePosition();self.resetPlayback();self.clearSubtitleChoices()
+                self.sourceResume=nil;self.handoff=next;self.sources=found;self.selectedSource=nil;self.prepared=nil
+                self.sourceRevision=UUID();self.position=0;self.duration=0;self.hasLoaded=false;self.busy=false
+                if useMatch,let matching {
+                    if automatic {
+                        let candidates=found.filter{$0.behaviorHints?.bingeGroup==family}
+                        let ids=candidates.map{self.contentDigest($0.url+"|"+($0.torrentHash ?? "")+"|"+$0.identity)}
+                        let lookup=Dictionary(zip(ids,candidates),uniquingKeysWith:{first,_ in first})
+                        self.episodeAutoplay=EpisodeAutoplay(content:target.id,target:target,sources:lookup,plan:AutoplayRetryPlan(ids,limit:PlaybackPreferences.sourceAttempts()))
+                        _ = self.advanceAutoplaySource()
+                    } else {self.choose(matching);self.fallbackEpisode=target}
+                }
+                else {self.fallbackEpisode=target;self.message="\(target.label): scegli una sorgente."}
+            } catch {
+                guard !Task.isCancelled,let self,self.episodeRequest==token else{return}
+                self.episodeBusy=false;self.fallbackEpisode=target
+                self.episodeIssue="Non riesco a trovare la sorgente della puntata. La riproduzione corrente è conservata. Puoi continuare da Stremio."
+                if automatic{self.returnToStremioAutomatically()}
+            }
+        }
+    }
     @Published var showSetup = false
     @Published private(set) var sourceRevision = UUID()
     @Published var setupMessage = "Inserisci i tuoi collegamenti personali una sola volta."
@@ -83,6 +232,10 @@ import UIKit
     private var timeline = PlaybackTimeline()
     private var playWhenReady = true
     private var transportRetries = 0
+    private var recovery = PlaybackRecoveryState()
+    private var progress = PlaybackProgressMonitor()
+    private var lastConfirmedPosition:Double?
+    private var confirmedChoice:(audio:String,subtitle:String,online:OnlineSubtitle?,delay:Double)?
     private var sourceResume: (content:PlaybackContent,position:Double,duration:Double,playing:Bool)?
     private var lastPositionSave = Date.distantPast
     private var positionKey: String?
@@ -90,6 +243,7 @@ import UIKit
     private var expectedContentID: String?
     private var loadedSignature: String?
     private var loadedStreamGeneration: UUID?
+    private var loadedMediaSessionID:Int?
     private var loadedSubtitle: String?
     private var subtitleRequest: GCKRequest?
     private var pendingSubtitle: String?
@@ -113,14 +267,20 @@ import UIKit
         let external: URL?
         let extracted: URL?
         let captionIdentity:String
+        let overlayDelay:Double
     }
     private var nativeSelection: NativeSelection?
     private var streamOffset: Double { nativeEngine?.offset ?? 0 }
     private var forceLocalPlayback = false
     private var localFallbackLevel = 0
+    private var nativeEngineGeneration:UUID?
     private var commandRequest: GCKRequest?
     private var commandContinuation: CheckedContinuation<Bool, Never>?
     private var commandTimeout: Task<Void, Never>?
+    private var commandAction = "none"
+    private var commandGeneration:UUID?
+    private var intentCorrectionRequest:GCKRequest?
+    private var intentCorrection:Bool?
     private let lockScreen = LockScreenPlayback()
     private var lastDevice: GCKDevice?
     private var reconnectTask: Task<Void,Never>?
@@ -129,23 +289,25 @@ import UIKit
     private var seekDispatchTask: Task<Void,Never>?
     private var wantsPlayback = false
     private var lastDiagnosticSnapshot = Date.distantPast
+    private var transferCheckpoint:(engine:ObjectIdentifier,time:Date,metrics:LocalTransferMetrics)?
     var displayTitle: String { MediaDisplayTitle.clean(selectedSource?.filename ?? selectedSource?.descriptionText.components(separatedBy:.newlines).first ?? "Video da Stremio") }
     var deviceName: String { castSession?.device.friendlyName ?? lastDevice?.friendlyName ?? "Chromecast" }
 
+    private var backgroundServiceStopped=false
+    private let backgroundProcessing=CastBackgroundProcessing()
     override init() {
         super.init()
+        backgroundProcessing.register()
+        LegacyPlaybackActivities.retire()
         independentCaptions.onStatus={ [weak self] busy,issue in
             self?.subtitleDownloadBusy=busy
             self?.subtitleIssue=issue
             self?.subtitlePlaybackWarning=issue
         }
         PlaybackDiagnostics.record(.app,["phase":"launch"])
-        // Keep only the system media card, including after an upgrade from 0.6.0.
-        Task {
-            for old in Activity<CastActivityAttributes>.activities {
-                if #available(iOS 16.2, *) { await old.end(nil,dismissalPolicy:.immediate) }
-                else { await old.end(dismissalPolicy:.immediate) }
-            }
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        NotificationCenter.default.addObserver(forName:UIApplication.didReceiveMemoryWarningNotification,object:nil,queue:.main) { _ in
+            Task { @MainActor in PlaybackDiagnostics.record(.app,["phase":"memory_warning"]) }
         }
         positionKey = UserDefaults.standard.string(forKey: "cast.session.positionKey")
         if let positionKey { lastGoodPosition = UserDefaults.standard.double(forKey: positionKey) }
@@ -154,6 +316,7 @@ import UIKit
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.updateStatus() }
         }
+        timer?.tolerance=0.1
     }
     private var castSession: GCKCastSession? { GCKCastContext.sharedInstance().sessionManager.currentCastSession }
     private var client: GCKRemoteMediaClient? { castSession?.remoteMediaClient }
@@ -173,9 +336,58 @@ import UIKit
         let value = client.approximateStreamPosition() + streamOffset
         guard value.isFinite, value >= 0, state != .buffering || value > 0 else { return }
         lastGoodPosition = value
-        if let positionKey { UserDefaults.standard.set(value, forKey: positionKey) }
+        if let positionKey { UserDefaults.standard.set(value, forKey: positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated") }
     }
-    func savePlaybackPosition() { capturePosition(); PlaybackDiagnostics.record(.app,["phase":"background","position":PlaybackDiagnostics.number(lastGoodPosition)]); PlaybackDiagnostics.shared.flush() }
+    func savePlaybackPosition(phase:String = "background") {
+        capturePosition();syncStremioProgress(force:true)
+        PlaybackDiagnostics.record(.app,["phase":phase,"position":PlaybackDiagnostics.number(lastGoodPosition)])
+        recordEnergySnapshot(); PlaybackDiagnostics.shared.flush()
+    }
+    private func syncStremioProgress(completed:Bool=false,force:Bool=false) {
+        guard let handoff,let confirmed=lastConfirmedPosition,confirmed.isFinite,confirmed>=0,duration.isFinite,duration>0 else{return}
+        let ended=completed && confirmed>=duration-max(2,min(30,duration*0.02))
+        let ids=SeriesNavigation.seriesID(handoff.id).map{SeriesNavigation.ordered(episodes,series:$0,includeSpecials:true).map(\.id)} ?? []
+        let title=handoff.type=="series" ? displayTitle.components(separatedBy:" · S").first ?? displayTitle:displayTitle
+        StremioSync.shared.observe(type:handoff.type,videoID:handoff.id,title:title,position:ended ? duration:confirmed,duration:duration,completed:ended,force:force,episodes:ids)
+    }
+    private func recordEnergySnapshot() {
+        if let prepared {
+            let video=prepared.video
+            let audio=prepared.audio.first(where:{$0.key==selectedAudio})
+            let subtitle=prepared.subtitles.first(where:{$0.key==selectedSubtitle})
+            var format:[String:String]=["phase":"context","codec":video?.codec ?? "unknown",
+                "audio":audio?.codec ?? "unknown","channels":String(audio?.channels ?? 0),
+                "subtitle":subtitle?.codec ?? selectedSubtitle,"mode":nativeEngine.map{String(describing:$0.diagnosticMode)} ?? "direct",
+                "local":String(localProcessing),"generation":String((nativeEngineGeneration ?? streamRequests.generation).uuidString.prefix(8)),"requestGeneration":String(streamRequests.generation.uuidString.prefix(8)),
+                "session":String(client?.mediaStatus?.mediaSessionID ?? 0),"previousSession":String(loadedMediaSessionID ?? 0)]
+            if let video {
+                format["width"]=String(video.width);format["height"]=String(video.height)
+                format["fps"]=PlaybackDiagnostics.number(video.frameRate)
+            }
+            PlaybackDiagnostics.record(.metadata,format)
+        }
+        let device=UIDevice.current
+        PlaybackDiagnostics.record(.snapshot,["phase":"energy","writes":String(PlaybackDiagnostics.shared.persistenceWrites),"battery":device.batteryLevel < 0 ? "unknown":PlaybackDiagnostics.number(Double(device.batteryLevel)*100),"power":String(device.batteryState.rawValue),"thermal":String(ProcessInfo.processInfo.thermalState.rawValue),"lowPower":String(ProcessInfo.processInfo.isLowPowerModeEnabled),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
+        guard let engine=nativeEngine else { return }
+        if var metrics=engine.productionMetrics() {
+            metrics["mode"]=String(describing:engine.diagnosticMode)
+            metrics["generation"]=String((nativeEngineGeneration ?? streamRequests.generation).uuidString.prefix(8))
+            metrics["paused"]=String(!playWhenReady)
+            PlaybackDiagnostics.record(.producer,metrics)
+        }
+        let source=sourceRequests.generation
+        Task { [weak self,weak engine] in
+            guard let self,let engine,let metrics=await engine.transferMetrics(),self.nativeEngine === engine,self.sourceRequests.accepts(source) else { return }
+            let now=Date(),identity=ObjectIdentifier(engine)
+            if let old=self.transferCheckpoint,old.engine==identity {
+                let seconds=now.timeIntervalSince(old.time)
+                if seconds>0 {
+                    PlaybackDiagnostics.record(.producer,["phase":"transfer","bytes":String(metrics.bytes),"seconds":PlaybackDiagnostics.number(seconds),"rate":PlaybackDiagnostics.number(Double(max(0,metrics.bytes-old.metrics.bytes))*8/seconds),"upstreamWait":PlaybackDiagnostics.number(max(0,metrics.upstreamWait-old.metrics.upstreamWait)),"downstreamWait":PlaybackDiagnostics.number(max(0,metrics.downstreamWait-old.metrics.downstreamWait)),"paused":String(!self.playWhenReady),"mode":String(describing:engine.diagnosticMode),"generation":String((self.nativeEngineGeneration ?? self.streamRequests.generation).uuidString.prefix(8))])
+                }
+            }
+            self.transferCheckpoint=(identity,now,metrics)
+        }
+    }
     func copyDiagnostics() {
         PlaybackDiagnostics.record(.snapshot,["phase":"copy","connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position),"duration":PlaybackDiagnostics.number(duration),"pending":String(loading || loadPending || checkingStream)])
         UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic:PlaybackDiagnostics.shared.report()]],options:[.localOnly:true,.expirationDate:Date().addingTimeInterval(3600)])
@@ -190,18 +402,29 @@ import UIKit
         client?.requestStatus()
         if let device = castSession?.device { lastDevice = device }
         updateStatus()
-        if connected && wantsPlayback && prepared != nil && !busy && !loading && !hasLoaded && !loadPending { load() }
+        if resumePendingRecovery() { return }
+        if connected && wantsPlayback && prepared != nil && !busy && !loading && !hasLoaded && !loadPending {
+            if recovery.attempts>0 {
+                if !recoverPlayback(allowVideoConversion:false) {
+                    message="Il recupero automatico non è riuscito. Puoi riprovare dal punto conservato."
+                    playbackIssue=message
+                }
+            } else {load()}
+        }
     }
     func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) { refreshConnection() }
     func sessionManager(_ manager: GCKSessionManager, didResumeSession session: GCKSession) { refreshConnection() }
-    func sessionManager(_ manager:GCKSessionManager,didSuspend session:GCKSession,withReason reason:GCKConnectionSuspendReason) {
+    @objc(sessionManager:didSuspendSession:withReason:)
+    func sessionManager(_ manager:GCKSessionManager,didSuspend session:GCKSession,with reason:GCKConnectionSuspendReason) {
         PlaybackDiagnostics.record(.cast,["phase":"suspend","code":String(reason.rawValue)])
         guard wantsPlayback else { return }
         connected = false; message = "Ricollego i controlli alla TV…"
         reconnectControls()
     }
     func sessionManager(_ manager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) {
-        PlaybackDiagnostics.record(.cast,["phase":"end","result":error == nil ? "normal" : "error"])
+        var fields=error.map{PlaybackDiagnostics.errorFields($0,phase:"end")} ?? ["phase":"end"]
+        fields["result"]=error == nil ? "normal":"error"
+        PlaybackDiagnostics.record(.cast,fields)
         if error != nil && wantsPlayback && (hasLoaded || localProcessing) {
             connected = false; finishCommand(false)
             message = "Ricollego i controlli alla TV…"
@@ -217,23 +440,30 @@ import UIKit
         guard UIApplication.shared.applicationState == .active || localProcessing || lockScreen.active else { return }
         connected = GCKCastContext.sharedInstance().sessionManager.hasConnectedCastSession()
         PlaybackDiagnostics.shared.changed("connection",event:.cast,["connected":String(connected)])
+        guard !backgroundServiceStopped else{return}
         guard let session = castSession, let client = session.remoteMediaClient, connected else {
             if wantsPlayback { reconnectControls(); updateActivity(status:"Ricollego i controlli…") }
             return
         }
         reconnectTask?.cancel(); reconnectTask = nil
+        if resumePendingRecovery() { return }
+        backgroundProcessing.update(position:lastConfirmedPosition)
         if !userAdjustingVolume { volume = Double(session.currentDeviceVolume) }
         deviceMuted = session.currentDeviceMuted
         if let status = client.mediaStatus {
-            PlaybackDiagnostics.shared.changed("receiver",event:.cast,["status":String(status.playerState.rawValue),"idle":String(status.idleReason.rawValue),"owned":String(ownsCurrentMedia),"pending":String(loadPending),"local":String(localProcessing)])
+            PlaybackDiagnostics.shared.changed("receiver",event:.cast,["status":String(status.playerState.rawValue),"idle":String(status.idleReason.rawValue),"owned":String(ownsCurrentMedia),"pending":String(loadPending),"local":String(localProcessing),"session":String(status.mediaSessionID),"previousSession":String(loadedMediaSessionID ?? 0)])
             if Date().timeIntervalSince(lastDiagnosticSnapshot) >= 15 {
                 lastDiagnosticSnapshot = Date()
-                PlaybackDiagnostics.record(.snapshot,["position":PlaybackDiagnostics.number(position),"reported":PlaybackDiagnostics.number(client.approximateStreamPosition()+streamOffset),"raw":PlaybackDiagnostics.number(status.streamPosition+streamOffset),"offset":PlaybackDiagnostics.number(streamOffset),"duration":PlaybackDiagnostics.number(duration),"target":PlaybackDiagnostics.number(timeline.target ?? -1)])
+                PlaybackDiagnostics.record(.snapshot,["position":PlaybackDiagnostics.number(position),"reported":PlaybackDiagnostics.number(client.approximateStreamPosition()+streamOffset),"raw":PlaybackDiagnostics.number(status.streamPosition+streamOffset),"confirmed":PlaybackDiagnostics.number(lastConfirmedPosition ?? -1),"offset":PlaybackDiagnostics.number(streamOffset),"duration":PlaybackDiagnostics.number(duration),"target":PlaybackDiagnostics.number(timeline.target ?? -1)])
+                recordEnergySnapshot()
             }
             // This status still belongs to the stream being replaced. Keep the
             // requested position, autoplay intent and any new preparation intact.
             if checkingStream { return }
             if let loadedStreamGeneration, !streamRequests.accepts(loadedStreamGeneration) { return }
+            if PlaybackCompletion.detachedEnd(finished:status.playerState == .idle && status.idleReason == .finished,hasLoaded:hasLoaded,pending:loadPending,informationPresent:status.mediaInformation != nil,currentSession:status.mediaSessionID,lastSession:loadedMediaSessionID) {
+                finishOwnedPlayback();return
+            }
             // Receivers can reuse mediaSessionID across LOAD calls. Match the
             // expected content instead; never copy another video's position.
             guard ownsCurrentMedia else {
@@ -244,9 +474,16 @@ import UIKit
             if loadPending && !loadAccepted { return }
             if loadPending && status.playerState == .idle && status.idleReason != .error { return }
             if (status.playerState == .playing || status.playerState == .paused) && !playbackIntent.accepts(status.playerState == .playing) {
-                _ = playWhenReady ? client.play() : client.pause()
+                if intentCorrection != playWhenReady {
+                    intentCorrection=playWhenReady
+                    PlaybackDiagnostics.record(.command,["phase":"intent_correction","action":playWhenReady ? "play":"pause"])
+                    let request=playWhenReady ? client.play():client.pause()
+                    intentCorrectionRequest=request;request.delegate=self
+                }
                 return
             }
+            if status.playerState == .playing || status.playerState == .paused { intentCorrection=nil }
+            let wasPlaying=playing
             playing = status.playerState == .playing
             if (status.playerState == .playing && (!loadPending || playWhenReady)) || (status.playerState == .paused && (!loadPending || !playWhenReady)) { nativeEngine?.setReceiverPaused(status.playerState == .paused) }
             if loadPending && loadAccepted && playWhenReady && status.playerState == .paused { _ = client.play() }
@@ -261,8 +498,10 @@ import UIKit
             let confirmed = timeline.observe(observed,ready:ready && progressed && (!loadPending || loadAccepted))
             if confirmed && timeline.queuedTarget == nil {
                 lastGoodPosition = observed
+                let actual=status.streamPosition+streamOffset
+                if actual.isFinite,actual >= 0 { lastConfirmedPosition=actual }
                 if let positionKey, observed > 0, Date().timeIntervalSince(lastPositionSave) >= 10 {
-                    UserDefaults.standard.set(observed, forKey: positionKey); lastPositionSave = Date()
+                    UserDefaults.standard.set(observed, forKey: positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated"); lastPositionSave = Date()
                 }
                 if !userSeeking { position = observed }
             }
@@ -271,9 +510,22 @@ import UIKit
             let d = localProcessing ? (known > 0 ? known : (reported > 0 ? reported + streamOffset : duration)) : (reported.isFinite && reported > 0 ? reported : (known > 0 ? known : duration))
             if d.isFinite && d > 0 { duration = d }
             let currentLoad = !loadPending || loadAccepted
-            if ready && confirmed && currentLoad {
+            if localProcessing,!loadPending,!checkingStream,timeline.target == nil,timeline.queuedTarget == nil,
+               progress.observe(position:status.streamPosition+streamOffset,now:Date(),expectedToAdvance:playWhenReady) {
+                progress.reset()
+                PlaybackDiagnostics.record(.recovery,["phase":"clock_stalled","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
+                if recoverPlayback(allowVideoConversion:false) { return }
+            }
+            if progress.stable && (!localProcessing || nativeEngine?.failed != true) { recovery.reset() }
+            if ready && confirmed && currentLoad && (!localProcessing || nativeEngine?.failed != true) {
                 if loadPending || !hasLoaded { playbackIssue = nil }
                 hasLoaded = true; wantsPlayback = true
+                episodeAutoplay=nil;requireEpisodeLanguage=false
+                loadedMediaSessionID=status.mediaSessionID
+                syncStremioProgress(force:wasPlaying && !playing)
+                if loadedAudioKey==selectedAudio,loadedSubtitle==selectedSubtitle {
+                    confirmedChoice=(selectedAudio,selectedSubtitle,selectedOnlineSubtitle,subtitleDelay)
+                }
                 playWhenReady = playing
                 if loadPending { loadPending = false; loading = false; loadTimeout?.cancel(); hasLoaded = true }
                 if !checkingStream { message = playing ? "In riproduzione sulla TV." : "In pausa sulla TV." }
@@ -286,6 +538,7 @@ import UIKit
                 if bufferingSince == nil { bufferingSince = Date() }
                 let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
                 if localProcessing && nativeSelection?.subtitle.hasPrefix("vlc_") == true && Date().timeIntervalSince(bufferingSince!) >= 15 {
+                    if advanceAutoplaySource(){return}
                     disableSubtitlesAndResume(automatic:true); return
                 }
                 if stalled && localProcessing {
@@ -297,20 +550,13 @@ import UIKit
                 updateActivity(status: stalled ? "Buffering: apri l’app per riprovare" : "Caricamento")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .error {
                 loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil
+                hasLoaded=false
+                if advanceAutoplaySource(){return}
                 if recoverPlayback() { return }
                 message = "La riproduzione si è interrotta. Riprova: la posizione è conservata."
                 updateActivity(status: "Errore: apri l’app per riprovare")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .finished {
-                stopCaptionDelivery()
-                wantsPlayback = false; lockScreen.clear()
-                loadPending = false; loading = false; loadTimeout?.cancel()
-                message = "Riproduzione terminata."
-                if let positionKey { UserDefaults.standard.set(0,forKey:positionKey) }
-                sourceResume = nil
-                hasLoaded = false; lastGoodPosition = duration
-                stopLocalProcessing()
-                updateActivity(status: "Riproduzione terminata")
-                lastGoodPosition = 0
+                finishOwnedPlayback()
             } else if status.playerState == .idle && currentLoad && status.idleReason == .cancelled {
                 stopCaptionDelivery()
                 wantsPlayback = false; lockScreen.clear()
@@ -333,6 +579,20 @@ import UIKit
             self?.reconnectTask = nil
         }
     }
+    private func finishOwnedPlayback() {
+        guard wantsPlayback || hasLoaded else{return}
+        PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
+        syncStremioProgress(completed:true,force:true)
+        backgroundProcessing.finish(success:true)
+        let continueSeries=(UserDefaults.standard.object(forKey:"cast.series.autoplay") as? Bool ?? true) && (SeriesNavigation.autoplayNext(orderedEpisodes,current:currentEpisodeID) != nil)
+        stopCaptionDelivery();wantsPlayback=false;lockScreen.clear(reason:"finished")
+        loadPending=false;loading=false;loadTimeout?.cancel();loadRequest=nil
+        if let positionKey { UserDefaults.standard.set(0,forKey:positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated") }
+        sourceResume=nil;hasLoaded=false;lastGoodPosition=0;lastConfirmedPosition=nil
+        loadedMediaSessionID=nil;timeline.reset();recovery.reset();progress.reset()
+        stopLocalProcessing();message="Riproduzione terminata."
+        if continueSeries {moveEpisode(1,automatic:true)}
+    }
     private func prepareDirectControls() {
         guard connected, ownsCurrentMedia, let session = castSession,
               let digest = UserDefaults.standard.string(forKey:"cast.session.content") else { return }
@@ -354,6 +614,7 @@ import UIKit
             if client == nil { message = "Riconnetti Chromecast per usare i controlli." }
             return
         }
+        episodeRequest=UUID();episodeBusy=false;episodeTask?.cancel();episodes=[];fallbackEpisode=nil;episodeIssue=nil
         work?.cancel()
         clearSubtitleChoices()
         sourceResume = nil
@@ -378,6 +639,7 @@ import UIKit
         } catch { busy = false; message = (error as? BridgeError)?.localizedDescription ?? "Collegamento non valido." }
     }
     private func beginSources(_ data: BridgeHandoff) {
+        refreshEpisodes()
         work?.cancel()
         sourceRequests.invalidate()
         let sourceToken = sourceRequests.generation
@@ -429,6 +691,7 @@ import UIKit
             return false
         }
     }
+    func reorderSources(){sources=BridgeClient.orderedSources(sources)}
     func changeSource() {
         clearSubtitleChoices()
         PlaybackDiagnostics.record(.source,["phase":"chooser","position":PlaybackDiagnostics.number(position)])
@@ -437,10 +700,12 @@ import UIKit
         work?.cancel(); work = nil; busy = false; selectedSource = nil; prepared = nil; hasLoaded = false
         message = "Scegli una sorgente."
     }
-    func choose(_ source: AddonStream) {
+    func choose(_ source: AddonStream,automaticEpisode:Bool=false) {
+        if !automaticEpisode{episodeAutoplay=nil}
+        episodeRequest=UUID();episodeBusy=false;fallbackEpisode=automaticEpisode ? episodeAutoplay?.target:nil;episodeIssue=nil;requireEpisodeLanguage=automaticEpisode
         clearSubtitleChoices()
         if selectedSource != nil { captureSourceResume() }
-        resetPlayback()
+        resetPlayback(preserveAutoplay:automaticEpisode)
         wantsPlayback = true
         work?.cancel(); subtitleFile = nil; embeddedSubtitleURL = nil; selectedSource = source; prepared = nil; originalURL = nil; hasLoaded = false; lastGoodPosition = 0
         guard let handoff else { message = "Riapri la sorgente da Stremio."; return }
@@ -458,7 +723,18 @@ import UIKit
         let sourceToken = sourceRequests.generation
         PlaybackDiagnostics.record(.source,["phase":"choose","generation":String(sourceToken.uuidString.prefix(8)),"position":PlaybackDiagnostics.number(lastGoodPosition)])
         busy = true; message = "Leggo audio e sottotitoli del file…"
+        let owner="source-prepare-"+UUID().uuidString
+        CastAudioSession.shared.acquire(owner)
         work = Task {
+            let background=CastBackgroundLease(name:"Prepare episode source") { [weak self] in
+                guard let self,self.sourceRequests.accepts(sourceToken) else{return}
+                self.work?.cancel();self.work=nil;self.busy=false
+                self.message="iOS ha interrotto la preparazione della sorgente. Puoi riprovare."
+            }
+            defer {
+                CastAudioSession.shared.release(owner)
+                background.end()
+            }
             do {
                 guard let key = configuration?.realDebridKey, !key.isEmpty else { throw BridgeError.cannotResolve }
                 let resolver = RDNativeResolver(apiKey:key, session:URLSession(configuration:.ephemeral))
@@ -491,13 +767,24 @@ import UIKit
                 }
                 try validateSource(sourceToken)
                 guard !result.audio.isEmpty else { throw BridgeError.cannotResolve }
+                if resume==nil {
+                    let updated=UserDefaults.standard.object(forKey:content.positionKey+".updated") as? Date ?? (stored>0 ? Date.distantFuture:Date.distantPast)
+                    let remote=await StremioSync.shared.resume(type:handoff.type,videoID:handoff.id,localUpdated:updated)
+                    try validateSource(sourceToken)
+                    if let remote {lastGoodPosition=remote;position=remote;UserDefaults.standard.set(remote,forKey:content.positionKey)}
+                }
+                if requireEpisodeLanguage,let language=UserDefaults.standard.string(forKey:"cast.preferred.audio"),language != "auto",
+                   !result.audio.contains(where:{PlaybackPreferences.language($0.language)==language}) {
+                    busy=false;if advanceAutoplaySource(){return};episodeIssue="La sorgente della prossima puntata non contiene l’audio preferito. Continua da Stremio o scegli un’altra sorgente."
+                    message="Scegli una sorgente con la lingua desiderata.";return
+                }
                 prepared = result; selectedAudio = PlaybackPreferences.audio(result.audio,fallback:result.defaultAudioKey)
                 PlaybackDiagnostics.record(.metadata,["codec":result.video?.codec ?? "unknown","width":String(result.video?.width ?? 0),"height":String(result.video?.height ?? 0),"fps":PlaybackDiagnostics.number(result.video?.frameRate ?? 0),"duration":PlaybackDiagnostics.number(result.duration),"tracks":String(result.audio.count),"subtitle":String(result.subtitles.count)])
                 for track in result.audio { PlaybackDiagnostics.record(.metadata,["kind":"audio","audio":track.key,"codec":track.codec,"tracks":String(track.channels ?? 0)]) }
                 for track in result.subtitles { PlaybackDiagnostics.record(.metadata,["kind":"subtitle","subtitle":track.key,"codec":track.codec]) }
                 selectedQuality = result.availableQualities.contains(.high) ? .high : (result.availableQualities.first ?? .high)
                 compatibilityMode = false
-                selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage)
+                selectedSubtitle = PlaybackPreferences.subtitle(result.subtitles,external:externalSubtitleURL != nil,handoff:handoff.subtitleLanguage,externalLanguage:defaultSubtitleLanguage)
                 restoreSubtitleDelay()
                 busy = false
                 if result.duration > 0 {
@@ -507,6 +794,11 @@ import UIKit
                     lastGoodPosition = restored
                     if let positionKey { UserDefaults.standard.set(restored,forKey:positionKey) }
                     position = lastGoodPosition
+                }
+                if requireEpisodeLanguage,selectedSubtitle=="none",PlaybackPreferences.subtitlesRequested(handoff:handoff.subtitleLanguage) {
+                    if advanceAutoplaySource(){return}
+                    episodeIssue="La prossima puntata non offre i sottotitoli preferiti. Scegli una traccia o continua da Stremio."
+                    message="Conferma i sottotitoli prima di continuare.";return
                 }
                 playbackIssue = nil
                 message = "Video pronto. Collega la TV per iniziare."
@@ -523,6 +815,8 @@ import UIKit
                     }
                 }
                 busy = false
+                if advanceAutoplaySource(allowRetry:autoplayMayRetry(error)){return}
+                if fallbackEpisode != nil {episodeIssue="La sorgente della puntata non si è avviata. Continua da Stremio o scegli un’altra sorgente."}
                 message = (error as? RDResolverError)?.localizedDescription ?? (error as? BridgeError)?.localizedDescription ?? "Non riesco a leggere le tracce di questo file. Scegli un’altra sorgente."
             }
         }
@@ -550,8 +844,10 @@ import UIKit
         }
     }
     func load(preservePosition: Bool = false) {
+        guard !episodeBusy else{return}
+        backgroundServiceStopped=false
         wantsPlayback = true
-        transportRetries = 0
+        transportRetries = 0; recovery.reset()
         startPlayback(requestedPosition:nil,autoplay:playWhenReady)
     }
     private func startPlayback(requestedPosition: Double?, autoplay: Bool) {
@@ -592,9 +888,11 @@ import UIKit
             if embeddedCaptionTask==nil{subtitleDownloadBusy=false}
         }
         let appearance = burnedSubtitle == "none" ? SubtitleAppearance() : SubtitleAppearance.load()
-        let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity)
+        let bitmapSubtitle=prepared.subtitles.first(where:{$0.key==burnedSubtitle})?.codec.lowercased()=="bdpg"
+        let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity,overlayDelay:burnedSubtitle != "none" ? subtitleDelay:0)
         // Burning a subtitle is not a permanent reason to re-encode the movie.
         // Re-evaluate the original-video route when the selected tracks change.
+        let previousFallback=localFallbackLevel
         if selection != nativeSelection { localFallbackLevel = 0 }
         let requiredCaption = separateCaption ? nil:subtitle == "external" ? 1 : subtitle == "embedded" ? 2 : nil
         let delay = subtitleDelay
@@ -604,13 +902,21 @@ import UIKit
         }
         guard let host = castSession?.device.ipAddress, CastWire.localIPv4(host) else { playbackIssue = EmbeddedMediaError.address.localizedDescription; return }
         let start = requested ?? timeline.target ?? lastGoodPosition
+        backgroundProcessing.begin(duration:prepared.duration,position:start) { [weak self] in
+            self?.backgroundProcessingExpired()
+        }
         let sourceToken = sourceRequests.generation
+        let previousRequests=streamRequests,previousTimeline=timeline
+        let previousLoaded=hasLoaded && ownsCurrentMedia
+        let previousDetail=processingDetail
+        let previousChoice=confirmedChoice
+        let previousEngine=nativeEngine
         streamRequests.invalidate()
         let streamToken = streamRequests.generation
-        timeline.begin(at:start); position = start; lastGoodPosition = start
+        timeline.begin(at:start); progress.reset(); position = start; lastGoodPosition = start
         // Freeze the old stream while replacing its audio/subtitle pipeline.
         // Its late statuses must not move the new original-media timeline.
-        if hasLoaded && ownsCurrentMedia {
+        if ownsCurrentMedia {
             nativeEngine?.setReceiverPaused(true)
             _ = client?.pause()
         }
@@ -619,8 +925,11 @@ import UIKit
         message = "Preparo il flusso sull’iPhone…"
         updateActivity(status:"Caricamento")
         streamCheckTask = Task { [weak self] in
-            let background = UIApplication.shared.beginBackgroundTask(withName:"Prepare Cast stream")
-            defer { if background != .invalid { UIApplication.shared.endBackgroundTask(background) } }
+            let background=CastBackgroundLease(name:"Prepare Cast stream") { [weak self] in
+                guard let self,self.streamRequests.accepts(streamToken) else{return}
+                self.backgroundProcessingExpired()
+            }
+            defer {background.end()}
             do {
                 guard let self else { return }
                 var captions: [Int:String] = [:]
@@ -639,7 +948,7 @@ import UIKit
                     return
                 }
                 let convertVideo = prepared.requiresVideoConversion || burnedSubtitle != "none"
-                let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel,video:prepared.video,burn:burnedSubtitle != "none")
+                let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel,video:prepared.video,burn:burnedSubtitle != "none",bitmap:bitmapSubtitle)
                 var lastError: Error = EmbeddedMediaError.encoder
                 for mode in modes {
                     PlaybackDiagnostics.record(.prepare,["phase":"attempt","mode":String(describing:mode),"generation":String(streamToken.uuidString.prefix(8)),"offset":PlaybackDiagnostics.number(start)])
@@ -654,7 +963,7 @@ import UIKit
                         let repairAudio = AudioRepairPipe.required(audioTrack?.codec ?? "")
                         let audioIndex = prepared.audio.firstIndex(where:{$0.key == audio}) ?? 0
                         let subtitleIndex = prepared.subtitles.firstIndex(where:{$0.key == burnedSubtitle})
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video)
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video,bitmapSubtitle:bitmapSubtitle,audioCodec:audioTrack?.codec ?? "",subtitleTrack:prepared.subtitles.first(where:{$0.key==burnedSubtitle}))
                         try self.validateStream(source:sourceToken,stream:streamToken)
                         guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, separateCaption ? self.captionIsIndependent:self.selectedSubtitle == subtitle,
                               separateCaption || (self.externalSubtitleURL == selection.external && self.subtitleIdentity == selection.captionIdentity),
@@ -666,7 +975,7 @@ import UIKit
                             return
                         }
                         self.nativeEngine?.stop()
-                        self.nativeEngine = engine; self.nativeSelection = selection
+                        self.nativeEngine = engine;self.nativeEngineGeneration=streamToken; self.nativeSelection = selection
                         if burnedSubtitle != "none" { engine.setBurnedSubtitleDelay(self.subtitleDelay) }
                         PlaybackDiagnostics.record(.prepare,["phase":"ready","mode":String(describing:mode)])
                         engine.refreshBackground()
@@ -679,9 +988,12 @@ import UIKit
                         let scale = format.map{ min(1,min(1920 / Double(max(1,$0.width)),1080 / Double(max(1,$0.height)))) } ?? 1
                         let dimensions = format.flatMap{ $0.width > 0 && $0.height > 0 ? "\(Int(Double($0.width)*scale)/2*2)×\(Int(Double($0.height)*scale)/2*2)" : nil } ?? "risoluzione non rilevata"
                         self.processingDetail = mode == .copy ? "Video originale · \(prepared.video?.label ?? prepared.videoDescription) · \(copyAudio ? "audio originale" : "audio AAC stereo")" : "Video convertito \(mode == .softwareVP8 ? "VP8" : "H.264") · \(dimensions) · \(rate)"
-                        engine.onFailure = { [weak self, weak engine] in
-                            guard let self, let engine, self.nativeEngine === engine, self.sourceRequests.accepts(sourceToken), self.streamRequests.accepts(streamToken), !self.checkingStream, !self.loadPending else { return }
-                            if !self.recoverPlayback() { self.playbackIssue = "Il motore integrato ha interrotto la conversione. La posizione è conservata." }
+                        engine.onFailure = { [weak self, weak engine] allowVideoConversion in
+                            guard let self, let engine, self.nativeEngine === engine, self.sourceRequests.accepts(sourceToken), self.streamRequests.accepts(streamToken), !self.checkingStream else { return }
+                            self.loadPending=false;self.loading=false;self.loadTimeout?.cancel();self.loadRequest=nil
+                            let sameProducer=self.recovery.retrySameProducer(mode:String(describing:engine.diagnosticMode),code:engine.backendExitCode)
+                            if sameProducer{PlaybackDiagnostics.record(.recovery,["phase":"retry_same_producer","mode":String(describing:engine.diagnosticMode),"attempt":String(self.recovery.attempts)])}
+                            if !self.recoverPlayback(allowVideoConversion:allowVideoConversion && !sameProducer) { self.playbackIssue = "Il motore integrato ha interrotto la conversione. La posizione è conservata." }
                         }
                         self.lastGoodPosition = self.timeline.queuedTarget ?? max(0,start); self.position = self.lastGoodPosition
                         self.checkingStream = false; self.loading = false
@@ -697,7 +1009,29 @@ import UIKit
             } catch {
                 guard !Task.isCancelled, let self, self.sourceRequests.accepts(sourceToken), self.streamRequests.accepts(streamToken) else { return }
                 self.checkingStream = false; self.loading = false
+                // A failed candidate never owns the current receiver session.
+                // Restore the generation and timeline as well as the UI, or
+                // old receiver updates and the next selection remain blocked.
+                if previousLoaded,previousEngine?.failed != true,self.ownsCurrentMedia {
+                    let latestChoiceChanged=self.selectedAudio != audio || self.selectedSubtitle != subtitle
+                    self.streamRequests=previousRequests;self.timeline=self.timeline.restoring(previousTimeline)
+                    self.hasLoaded=true;self.processingDetail=previousDetail;self.localFallbackLevel=previousFallback
+                    if !latestChoiceChanged,let previousChoice {
+                        self.selectedAudio=previousChoice.audio;self.selectedSubtitle=previousChoice.subtitle
+                        self.selectedOnlineSubtitle=previousChoice.online;self.subtitleDelay=previousChoice.delay
+                        self.trackChangePending=false
+                    }
+                    self.nativeEngine?.setReceiverPaused(!self.playWhenReady)
+                    _ = self.playWhenReady ? self.client?.play():self.client?.pause()
+                    self.subtitleIssue="Questa traccia non si è avviata. Ho mantenuto la riproduzione precedente."
+                    self.subtitlePlaybackWarning=self.subtitleIssue;self.playbackIssue=nil
+                    PlaybackDiagnostics.record(.recovery,["phase":"track_rollback","audio":audio,"subtitle":subtitle])
+                    self.flushQueuedSeek();self.applyPendingTrackChange();return
+                }
+                self.timeline.cancelActive();self.loadedStreamGeneration=nil;self.progress.reset()
                 self.hasLoaded = false
+                if self.advanceAutoplaySource(){return}
+                self.backgroundProcessing.finish()
                 self.processingDetail = "Flusso non disponibile"
                 self.playbackIssue = (error as? EmbeddedMediaError)?.localizedDescription ?? "Il motore integrato non ha preparato questa sorgente."
                 self.message = "Preparazione del flusso non riuscita."
@@ -792,6 +1126,7 @@ import UIKit
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
                 guard !Task.isCancelled, let self, self.loadPending else { return }
                 self.loadPending = false; self.loading = false; self.loadRequest = nil
+                if self.advanceAutoplaySource(){return}
                 if self.nativeSelection?.subtitle.hasPrefix("vlc_") == true { self.disableSubtitlesAndResume(automatic:true); return }
                 if self.recoverPlayback(allowVideoConversion:false) { return }
                 self.message = "La TV non ha avviato il video dopo l’adattamento automatico. La posizione è conservata."
@@ -842,9 +1177,16 @@ import UIKit
             _ = try WebVTTTimeline.rebased(text,offset:0)
             if captionCache.count >= 4 { captionCache.removeAll() }
             captionCache[url] = text; return text
-        } catch { if !Task.isCancelled { captionFailures[url] = Date() }; return nil }
+        } catch {
+            if !Task.isCancelled {
+                captionFailures[url] = Date()
+                PlaybackDiagnostics.record(.error,PlaybackDiagnostics.errorFields(error,phase:"caption_read"))
+                if let error=error as? SubtitleFetchError { subtitleIssue=error.localizedDescription }
+            }
+            return nil
+        }
     }
-    var externalSubtitleLanguage:String { selectedOnlineSubtitle?.lang ?? handoff?.subtitleLanguage ?? "en" }
+    var externalSubtitleLanguage:String { selectedOnlineSubtitle?.lang ?? defaultSubtitleLanguage }
     var externalSubtitleLabel:String { SubtitleLanguage.name(externalSubtitleLanguage) }
     var embeddedSubtitleLabel:String { SubtitleLanguage.name(extractedCaptionLanguage) + " · dal file" }
     var hasExtractedCaption:Bool { embeddedSubtitleURL != nil || extractedCaptionText != nil }
@@ -862,14 +1204,9 @@ import UIKit
     }
     var externalSubtitleURL: URL? {
         if let chosen = selectedOnlineSubtitle { return OnlineSubtitle.safeURL(chosen.url) }
-        guard handoff?.subtitleLanguage != "off" else { return nil }
-        let tracks = selectedSource?.subtitles ?? []
-        let languages = handoff?.subtitleLanguage == "ita" ? ["it", "ita", "italian"] : ["en", "eng", "english"]
-        for track in tracks where languages.contains((track.lang ?? "").lowercased()) {
-            if let url = URL(string:track.url), let safe = OnlineSubtitle.safeURL(url) { return safe }
-        }
-        if let url = handoff?.externalSubtitleURL, let safe = OnlineSubtitle.safeURL(url) { return safe }
-        return nil
+        guard PlaybackPreferences.subtitlesRequested(handoff:handoff?.subtitleLanguage) else { return nil }
+        return SubtitleCatalog.sourceURL(sourceSubtitleOptions,language:defaultSubtitleLanguage,
+            fallback:handoff?.externalSubtitleURL,fallbackLanguage:handoff?.subtitleLanguage)
     }
     var sourceSubtitleOptions:[OnlineSubtitle] {
         (selectedSource?.subtitles ?? []).enumerated().compactMap { index,item in
@@ -877,7 +1214,15 @@ import UIKit
             return OnlineSubtitle(id:item.id ?? "source-"+String(contentDigest(url.absoluteString).prefix(16)),url:url,lang:item.lang ?? "und",label:item.label ?? "Sottotitoli Stremio \(index+1)",provider:"Stremio")
         }
     }
-    var defaultSubtitleLanguage:String { SubtitleLanguage.code(UserDefaults.standard.string(forKey:"cast.preferred.subtitle") ?? handoff?.subtitleLanguage ?? "en") }
+    @Published private(set) var captionCacheBytes=0
+    @Published private(set) var captionCacheMessage:String?
+    func refreshCaptionCacheInfo(){captionCacheBytes=completeCaptionCache.diskBytes()}
+    func clearCaptionCache(){
+        let cleared=completeCaptionCache.clear()
+        captionCache.removeAll();captionFailures.removeAll();refreshCaptionCacheInfo()
+        captionCacheMessage=cleared ? "Cache sottotitoli svuotata. La traccia attiva resta disponibile.":"Non riesco a eliminare tutti i file della cache. Puoi riprovare."
+    }
+    var defaultSubtitleLanguage:String { PlaybackPreferences.subtitleLanguage(handoff:handoff?.subtitleLanguage) }
     private func clearSubtitleChoices() {
         independentCaptions.clearSource()
         subtitleChoices.invalidate(); subtitleSearchTask?.cancel(); subtitlePickTask?.cancel()
@@ -933,7 +1278,7 @@ import UIKit
                 let text = try await WebVTTTimeline.fetch(url)
                 try validateSource(source); guard subtitleChoices.accepts(choice) else { throw CancellationError() }
                 if captionCache.count >= 8 { captionCache.removeAll() }
-                captionCache[url] = text; selectedOnlineSubtitle = subtitle; selectedSubtitle = "external"
+                captionFailures[url] = nil; captionCache[url] = text; selectedOnlineSubtitle = subtitle; selectedSubtitle = "external"
                 subtitlePlaybackWarning = nil
                 restoreSubtitleDelay()
                 PlaybackPreferences.remember(audio:nil,subtitle:subtitle.lang)
@@ -941,8 +1286,13 @@ import UIKit
                 if hasLoaded { load(preservePosition:true) }
             } catch {
                 guard !Task.isCancelled, sourceRequests.accepts(source), subtitleChoices.accepts(choice) else { return }
-                subtitleIssue = "Non riesco a leggere questa versione dei sottotitoli. Scegline un’altra."
-                PlaybackDiagnostics.record(.error,["phase":"subtitle_download","kind":String(describing:type(of:error)),"code":String((error as NSError).code)])
+                subtitleIssue = (error as? SubtitleFetchError)?.localizedDescription ?? "Non riesco a scaricare questa versione dei sottotitoli. Controlla la connessione o scegline un’altra."
+                var fields=PlaybackDiagnostics.errorFields(error,phase:"subtitle_download")
+                fields["kind"]=subtitle.provider == "Stremio" ? "stremio":"opensubtitles"
+                if case SubtitleFetchError.http(let status)=error { fields["status"]=String(status) }
+                if case SubtitleFetchError.format=error { fields["result"]="format" }
+                if case SubtitleFetchError.limit=error { fields["result"]="limit" }
+                PlaybackDiagnostics.record(.error,fields)
             }
         }
     }
@@ -973,7 +1323,10 @@ import UIKit
         if let nativeSelection, nativeSelection.external != externalSubtitleURL || nativeSelection.captionIdentity != subtitleIdentity {
             guard subtitleRequest == nil else { return }; load(preservePosition:true); return
         }
-        if selectedSubtitle.hasPrefix("vlc_") { nativeEngine?.setBurnedSubtitleDelay(subtitleDelay); lastAppliedSubtitleDelay = subtitleDelay; return }
+        if selectedSubtitle.hasPrefix("vlc_") {
+            if nativeEngine?.requiresOverlayRestart == true,lastAppliedSubtitleDelay != subtitleDelay { load(preservePosition:true);return }
+            nativeEngine?.setBurnedSubtitleDelay(subtitleDelay); lastAppliedSubtitleDelay = subtitleDelay; return
+        }
         guard subtitleRequest == nil else { return }
         let kind = selectedSubtitle == "embedded" ? 2 : 1
         if let id = nativeEngine?.captionID(kind:kind,delay:subtitleDelay), let client {
@@ -1022,6 +1375,7 @@ import UIKit
             position:timeline.target ?? lastGoodPosition,duration:prepared.duration,delay:subtitleDelay)
     }
     func retryIndependentCaptions(){
+        if let url=externalSubtitleURL { captionFailures[url]=nil;captionCache[url]=nil }
         if independentCaptions.enabled{independentCaptions.retry()}
         else if selectedEmbeddedText{subtitleChoices.invalidate();attemptedEmbeddedCaptions.remove(selectedSubtitle);beginEmbeddedTextPreparation()}
         else if !localProcessing,["external","embedded"].contains(selectedSubtitle){directCaptionAttempt="";subtitleIssue=nil;subtitlePlaybackWarning=nil;prepareDirectCaption()}
@@ -1084,6 +1438,10 @@ import UIKit
     }
     func tracksChanged(audio:Bool) {
         PlaybackDiagnostics.record(.tracks,["kind":audio ? "audio" : "subtitle","audio":selectedAudio,"subtitle":selectedSubtitle,"position":PlaybackDiagnostics.number(position)])
+        if !audio {
+            PlaybackDiagnostics.record(.tracks,["phase":"subtitle_route","subtitle":selectedSubtitle,"codec":prepared?.subtitles.first(where:{$0.key==selectedSubtitle})?.codec ?? "external","kind":selectedEmbeddedText ? "text":selectedSubtitle.hasPrefix("vlc_") ? "overlay":"separate"])
+            if let url=externalSubtitleURL { captionFailures[url]=nil }
+        }
         guard let prepared, !busy else { return }
         trackChangePending = true
         if audio { PlaybackPreferences.remember(audio:prepared.audio.first(where:{$0.key == selectedAudio}),subtitle:nil) }
@@ -1107,9 +1465,14 @@ import UIKit
         // A track selection during LOAD/seek is an intent, not a disposable
         // callback. Use the latest audio and subtitle together after the receiver
         // is ready; a subtitle tap must not erase an earlier queued audio change.
-        guard trackChangePending, trackApplyTask == nil, hasLoaded, ownsCurrentMedia,
+        guard trackChangePending, trackApplyTask == nil,
               !loading, !loadPending, !checkingStream, subtitleRequest == nil,
               timeline.target == nil, timeline.queuedTarget == nil else { return }
+        if !hasLoaded {
+            guard playbackIssue != nil else { return }
+            trackChangePending=false;load(preservePosition:true);return
+        }
+        guard ownsCurrentMedia else { return }
         trackChangePending = false
         if loadedAudioKey != selectedAudio { load(preservePosition:true); return }
         if captionIsIndependent, nativeSelection?.subtitle == nil || nativeSelection?.subtitle == "none" {
@@ -1249,6 +1612,7 @@ import UIKit
         }
     }
     func seek(to value: Double) {
+        lockScreen.refreshNextUpdate()
         PlaybackDiagnostics.record(.seek,["target":PlaybackDiagnostics.number(value),"position":PlaybackDiagnostics.number(position)])
         guard hasLoaded || loadPending || loading, value.isFinite else { return }
         let target = min(duration > 0 ? max(0,duration-(localProcessing ? 1 : 0)) : value,max(0,value))
@@ -1285,8 +1649,31 @@ import UIKit
         if ownsCurrentMedia { client?.stop() }
         resetPlayback(); sourceResume = nil; hasLoaded = false; playing = false; message = "Riproduzione interrotta."
     }
+    private func backgroundProcessingExpired() {
+        // User cancellation or system expiration must not spawn another job.
+        backgroundServiceStopped=true
+        savePlaybackPosition(phase:"background_expired")
+        if let confirmed=lastConfirmedPosition {
+            lastGoodPosition=confirmed;position=confirmed
+            if let positionKey {UserDefaults.standard.set(confirmed,forKey:positionKey);UserDefaults.standard.set(Date(),forKey:positionKey+".updated")}
+        }
+        controlRequests.invalidate();finishCommand(false)
+        intentCorrectionRequest?.cancel();intentCorrectionRequest=nil;intentCorrection=nil;playbackIntent.reset()
+        streamRequests.invalidate();loadedStreamGeneration=nil
+        wantsPlayback=false;reconnectTask?.cancel();reconnectTask=nil
+        streamCheckTask?.cancel();streamCheckTask=nil;checkingStream=false
+        seekDispatchTask?.cancel();seekDispatchTask=nil
+        loadTimeout?.cancel();loadPending=false;loading=false;loadRequest=nil
+        if ownsCurrentMedia {_ = client?.pause()}
+        independentCaptions.stop();stopCaptionDelivery();stopLocalProcessing()
+        hasLoaded=false;playing=false;timeline.reset()
+        lockScreen.clear(reason:"background_expired")
+        playbackIssue="La trasmissione in background è stata interrotta da iOS o dai controlli di sistema. La posizione è conservata."
+        message="Premi Riproduci per riprendere dal punto conservato."
+    }
     private func stopLocalProcessing() {
-        nativeEngine?.stop(); nativeEngine = nil; nativeSelection = nil
+        backgroundProcessing.finish()
+        nativeEngine?.stop(); nativeEngine = nil; nativeEngineGeneration=nil; nativeSelection = nil
         localProcessing = false; CastActivityCommands.usesLocalStream = false
     }
     private func stopCaptionDelivery(){
@@ -1296,27 +1683,41 @@ import UIKit
         subtitleDownloadBusy=false
     }
     @discardableResult private func recoverPlayback(allowVideoConversion:Bool = true) -> Bool {
-        PlaybackDiagnostics.record(.recovery,["attempt":String(transportRetries),"position":PlaybackDiagnostics.number(lastGoodPosition)])
-        guard !checkingStream, let prepared, connected else { return false }
-        if !allowVideoConversion {
-            guard transportRetries < 1 else { return false }
-            transportRetries += 1
-            if !localProcessing { forceLocalPlayback = true }
-        } else if localProcessing {
-            guard localFallbackLevel < 2 else { return false }
-            localFallbackLevel += 1
-        } else { guard !forceLocalPlayback else { return false }; forceLocalPlayback = true }
+        guard prepared != nil,wantsPlayback else { return false }
+        let alreadyPending=recovery.pending
+        guard recovery.request() else {
+            PlaybackDiagnostics.record(.recovery,["phase":"exhausted","attempt":String(recovery.attempts)])
+            return false
+        }
+        if !alreadyPending,allowVideoConversion,localProcessing,localFallbackLevel < 2 { localFallbackLevel += 1 }
+        if !localProcessing { forceLocalPlayback=true }
+        PlaybackDiagnostics.record(.recovery,["phase":"queued","attempt":String(recovery.attempts),"position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition),"connected":String(connected)])
+        if !connected { reconnectControls() }
+        _ = resumePendingRecovery()
+        return true
+    }
+    @discardableResult private func resumePendingRecovery() -> Bool {
+        guard wantsPlayback,prepared != nil,client != nil,
+              recovery.begin(connected:connected,blocked:checkingStream || loading || loadPending || subtitleRequest != nil) else { return false }
+        transportRetries=recovery.attempts
+        PlaybackDiagnostics.record(.recovery,["phase":"restart","attempt":String(recovery.attempts),"kind":timeline.target == nil && timeline.queuedTarget == nil ? "confirmed":"requested"])
         loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; hasLoaded = false
-        lastGoodPosition = timeline.consumeQueued() ?? timeline.target ?? lastGoodPosition
-        message = "Adatto automaticamente il formato per la TV…"
+        lastGoodPosition = timeline.consumeQueued() ?? timeline.target ?? lastConfirmedPosition ?? lastGoodPosition
+        progress.reset()
+        message = "Ripristino il flusso sulla TV…"
         startPlayback(requestedPosition:lastGoodPosition,autoplay:playWhenReady)
-        return prepared.directURL == self.prepared?.directURL
+        return true
     }
     func setVolume(_ value: Double) { castSession?.setDeviceVolume(Float(min(1,max(0,value)))) }
     func unmuteDevice() { castSession?.setDeviceMuted(false) }
     func openControls() { if connected { GCKCastContext.sharedInstance().presentDefaultExpandedMediaControls() } }
+    private func requestFields(_ request:GCKRequest,phase:String) -> [String:String] {
+        let kind=request == loadRequest ? "load":request == subtitleRequest ? "subtitle":request == commandRequest ? "command":request == intentCorrectionRequest ? "intent":"obsolete"
+        return ["phase":phase,"kind":kind,"request":String(request.requestID),"action":request == commandRequest ? commandAction:kind,"generation":String(streamRequests.generation.uuidString.prefix(8))]
+    }
     func requestDidComplete(_ request: GCKRequest) {
-        PlaybackDiagnostics.record(.load,["phase":"ack","kind":request == loadRequest ? "load" : request == subtitleRequest ? "subtitle" : "command"])
+        PlaybackDiagnostics.record(.load,requestFields(request,phase:"ack"))
+        if request == intentCorrectionRequest { intentCorrectionRequest=nil;intentCorrection=nil;return }
         if request == subtitleRequest {
             loadedSubtitle = pendingSubtitle
             if let delay = pendingSubtitleDelay { lastAppliedSubtitleDelay = delay }
@@ -1332,13 +1733,17 @@ import UIKit
         if request == loadRequest { standardCaptions.acknowledge();loadAccepted = true; message = "Attendo l’avvio sulla TV…"; loadRequest = nil }
     }
     func request(_ request: GCKRequest, didFailWithError error: GCKError) {
-        PlaybackDiagnostics.record(.error,["phase":"cast_request","code":String(error.code),"kind":request == loadRequest ? "load" : request == subtitleRequest ? "subtitle" : "command"])
+        var fields=requestFields(request,phase:"cast_request");fields["code"]=String(error.code)
+        PlaybackDiagnostics.record(.error,fields)
+        if request == intentCorrectionRequest { intentCorrectionRequest=nil;intentCorrection=nil;playbackIntent.reset();return }
         if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; pendingSubtitleDelay = nil; subtitleIssue = "La TV non ha applicato il cambio. Puoi riprovare."; flushQueuedSeek(); return }
         if request == commandRequest { finishCommand(false); return }
-        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; if recoverPlayback() { return }; message = "Errore Cast \(error.code): il formato non è stato riprodotto dopo l’adattamento automatico."; playbackIssue = message; updateActivity(status: "Apri l’app per riprovare") }
+        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; if advanceAutoplaySource(){return};if recoverPlayback() { return }; message = "Errore Cast \(error.code): il formato non è stato riprodotto dopo l’adattamento automatico."; playbackIssue = message; updateActivity(status: "Apri l’app per riprovare") }
     }
     func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) {
-        PlaybackDiagnostics.record(.error,["phase":"cast_abort","code":String(abortReason.rawValue)])
+        var fields=requestFields(request,phase:"cast_abort");fields["code"]=String(abortReason.rawValue)
+        PlaybackDiagnostics.record(.command,fields)
+        if request == intentCorrectionRequest { intentCorrectionRequest=nil;intentCorrection=nil;playbackIntent.reset();return }
         if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; pendingSubtitleDelay = nil; message = "Cambio sottotitoli interrotto. Riprova."; flushQueuedSeek(); return }
         if request == commandRequest { finishCommand(false); return }
         if request == loadRequest {
@@ -1348,12 +1753,19 @@ import UIKit
         }
     }
     private func handleCommand(_ command:String) async -> Bool {
+        lockScreen.refreshNextUpdate()
         PlaybackDiagnostics.record(.command,["kind":command,"connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position)])
-        if let target = CastWire.seekTarget(command,current:timeline.queuedTarget ?? lastGoodPosition,duration:duration) {
+        if backgroundServiceStopped {
+            if command == "play" || command == "toggle" {playWhenReady=true;load(preservePosition:true);return true}
+            if command == "stop" {endPlayback();return true}
+            return command == "pause"
+        }
+        if let target = CastWire.seekTarget(command,current:timeline.queuedTarget ?? lastGoodPosition,duration:duration,step:PlaybackPreferences.seekStep()) {
             seek(to:target); return true
         }
         var action = command
         if ["play","pause","toggle"].contains(command) {
+            intentCorrectionRequest?.cancel();intentCorrectionRequest=nil;intentCorrection=nil
             playWhenReady = command == "toggle" ? !playWhenReady : command == "play"
             playbackIntent.request(playWhenReady); controlRequests.invalidate()
             action = playWhenReady ? "play" : "pause"
@@ -1415,7 +1827,7 @@ import UIKit
         case let value where value == "back" || value == "forward" || value.hasPrefix("seek:"):
             let current = timeline.target ?? lastGoodPosition
             guard current.isFinite, current >= 0 else { return false }
-            guard var target = CastWire.seekTarget(command,current:current,duration:duration) else { return false }
+            guard var target = CastWire.seekTarget(command,current:current,duration:duration,step:PlaybackPreferences.seekStep()) else { return false }
             timeline.begin(at:target); position = target; lastGoodPosition = target
             updateActivity(status:"Caricamento")
             if localProcessing {
@@ -1431,7 +1843,9 @@ import UIKit
         default: return false
         }
         return await withCheckedContinuation { continuation in
+            commandAction=command;commandGeneration=controlRequests.generation
             commandContinuation = continuation; commandRequest = request; request.delegate = self
+            PlaybackDiagnostics.record(.command,requestFields(request,phase:"send"))
             commandTimeout = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 8_000_000_000)
                 guard !Task.isCancelled else { return }
@@ -1441,18 +1855,28 @@ import UIKit
     }
     private func finishCommand(_ success: Bool) {
         guard let continuation = commandContinuation else { return }
+        if !success,let generation=commandGeneration,controlRequests.accepts(generation) { playbackIntent.reset();intentCorrection=nil }
+        commandGeneration=nil;commandAction="none"
         commandContinuation = nil; commandRequest = nil
         commandTimeout?.cancel(); commandTimeout = nil
         continuation.resume(returning: success)
         if success { updateStatus() }
     }
-    private func resetPlayback() {
+    private func resetPlayback(preserveAutoplay:Bool=false) {
+        backgroundServiceStopped=false
+        syncStremioProgress(force:true)
+        if !preserveAutoplay{episodeAutoplay=nil}
+        work?.cancel();work=nil;busy=false
+        episodeRequest=UUID();episodeBusy=false
         sourceRevision = UUID()
         trackChangePending = false
         stopCaptionDelivery()
         independentCaptions.clearSource();loadedAudioKey="";loadedSourceInput=nil
         processingDetail = "Automatico"
         sourceRequests.invalidate(); streamRequests.invalidate(); controlRequests.invalidate(); playbackIntent.reset()
+        recovery.reset();progress.reset();lastConfirmedPosition=nil;confirmedChoice=nil;intentCorrection=nil
+        transferCheckpoint=nil
+        intentCorrectionRequest?.cancel();intentCorrectionRequest=nil
         wantsPlayback = false; reconnectTask?.cancel(); reconnectTask = nil
         trackApplyTask?.cancel(); trackApplyTask = nil; lockScreen.clear()
         embeddedCaptionTask?.cancel(); embeddedCaptionTask = nil
@@ -1467,7 +1891,7 @@ import UIKit
         positionKey = nil
         finishCommand(false)
         loadTimeout?.cancel(); loadPending = false; loading = false; loadAccepted = false; loadRequest = nil; bufferingSince = nil
-        expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil; loadedStreamGeneration = nil
+        expectedContentID = nil; loadedSignature = nil; loadedSubtitle = nil; loadedStreamGeneration = nil;loadedMediaSessionID=nil
         subtitleRequest = nil; pendingSubtitle = nil
         UserDefaults.standard.removeObject(forKey: "cast.session.content")
         UserDefaults.standard.removeObject(forKey: "cast.session.positionKey")
@@ -1481,5 +1905,6 @@ import UIKit
         }
     }
 }
+
 
 

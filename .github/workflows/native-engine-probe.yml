@@ -1,10 +1,14 @@
 name: Validate embedded iOS media engine
 on:
   push:
-    branches: [native/embedded-media-engine]
+    branches: [native/embedded-media-engine, fix/playback-recovery-20261103, test/background-processing-20261104]
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Preserve captures already in progress; the latest pending source runs next.
+  cancel-in-progress: false
 jobs:
   probe:
     runs-on: macos-26
@@ -13,7 +17,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Test independent caption model and receiver
         run: |
-          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
           "$RUNNER_TEMP/caption-model-tests"
           cd Receiver
           npm ci --ignore-scripts --no-audit --no-fund
@@ -34,7 +38,10 @@ jobs:
       - name: Prepare synthetic codec matrix
         run: |
           command -v ffmpeg || brew install ffmpeg
+          node Tests/DecoderTrialVerifierTests.mjs
+          node Tests/FrameIdentityTests.mjs
           node Tests/make-codec-matrix.mjs "$RUNNER_TEMP/codec-matrix"
+          node Tests/VideoQualityAuditTests.mjs
       - name: Build simulator application
         run: |
           xcodebuild -workspace CastRemote.xcworkspace -scheme CastRemote -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES CAST_ENGINE_VALIDATION=CAST_ENGINE_TESTING -jobs 1 -derivedDataPath "$RUNNER_TEMP/native-engine" SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
@@ -46,9 +53,9 @@ jobs:
           "$RUNNER_TEMP/subtitle-catalog-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-regressions"
           "$RUNNER_TEMP/playback-regressions"
-          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/PlaybackDiagnostics.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
           "$RUNNER_TEMP/local-stream-tests"
-          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/PlaybackDiagnostics.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
           "$RUNNER_TEMP/output-channel-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
@@ -65,6 +72,11 @@ jobs:
           mkdir -p "$data/Documents"
           cp Tests/CodecSamples/h264-ac3.mkv "$data/Documents/"
           cp -R "$RUNNER_TEMP/codec-matrix" "$data/Documents/CodecSamples"
+          mkdir -p native-engine-report
+          collect_evidence() {
+            find "$data/Documents" -type f \( -name 'engine-validation.json' -o -name 'gateway-*' -o -name 'matrix-*' -o -name 'quality-*' -o -name 'repair-*' -o -name 'stdio*' -o -name 'background-*.json' -o -name 'decoder-trial*' -o -name 'text-overlay-*' \) -exec cp '{}' native-engine-report/ \; || true
+          }
+          trap collect_evidence EXIT
           SIMCTL_CHILD_CAST_ENGINE_SELFTEST=1 xcrun simctl launch --stdout="$data/Documents/stdio.log" --stderr="$data/Documents/stdio-error.log" "$device" app.example.castbridge
           mkdir -p native-engine-report
           background_tested=0
@@ -73,7 +85,14 @@ jobs:
               background_tested=1
               node Tests/read-background-probe.mjs "$data/Documents/background-ready.json" "$data/Documents/background-network.json" &
               probe_reader=$!
-              xcrun simctl openurl "$device" 'https://example.com/'
+              python3 - "$device" <<'PY'
+          import subprocess,sys,json
+          try:
+              subprocess.run(['xcrun','simctl','openurl',sys.argv[1],'https://example.com/'],check=True,timeout=20)
+          except (subprocess.SubprocessError,OSError):
+              print('Offscreen transition command failed; the native background-state assertion remains required.')
+              with open('native-engine-report/background-transition-error.json','w') as f:json.dump({'transitionCommandFailed':True},f)
+          PY
               wait "$probe_reader"
             fi
             if test -f "$data/Documents/engine-validation.json"; then
@@ -87,9 +106,13 @@ jobs:
               find "$data/Documents" -name 'background-*.json' -exec cp '{}' native-engine-report/ \;
               if test -f "$data/Documents/matrix-embedded_text.mp4"; then ffmpeg -hide_banner -loglevel error -ss 0.5 -i "$data/Documents/matrix-embedded_text.mp4" -frames:v 1 native-engine-report/subtitle-frame.png; fi
               find "$data/Documents" -name 'caption-window-*' -exec cp '{}' native-engine-report/ \;
+              collect_evidence
               cat native-engine-report/engine-validation.json
+              node Tests/verify-text-overlay.mjs native-engine-report "$RUNNER_TEMP/codec-matrix/caption-hevc-eac3.mkv"
+              node Tests/verify-decoder-trial.mjs native-engine-report "$RUNNER_TEMP/codec-matrix/caption-hevc-eac3.mkv"
               tail -n 50 "$data/Documents/stdio.log"
               node Tests/verify-decoded-media.mjs native-engine-report Tests/CodecSamples/h264-ac3.mkv
+              node Tests/verify-overlay-seek.mjs native-engine-report "$RUNNER_TEMP/codec-matrix/caption-hevc-eac3.mkv"
               node Tests/verify-video-quality.mjs native-engine-report
               node -e 'const r=require("./native-engine-report/engine-validation.json");console.log(JSON.stringify(r));if(!r.passed)process.exit(1)'
               exit 0
@@ -110,5 +133,6 @@ jobs:
           name: embedded-engine-evidence
           path: native-engine-report
           if-no-files-found: ignore
+
 
 

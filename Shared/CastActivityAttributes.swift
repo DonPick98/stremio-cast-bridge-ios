@@ -12,6 +12,8 @@ struct CastActivityAttributes: ActivityAttributes {
         var position: Double
         var duration: Double
         var updatedAt: Date
+        var title:String? = nil
+        var skipSeconds:Int? = nil
     }
     var title: String
 }
@@ -81,7 +83,7 @@ struct CastToggleIntent: LiveActivityIntent {
 }
 @available(iOS 17.0, *)
 struct CastBackIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Indietro di 30 secondi"
+    static var title: LocalizedStringResource = "Indietro"
     static var openAppWhenRun: Bool = false
     func perform() async throws -> some IntentResult {
         await CastActivityCommands.perform("back")
@@ -90,7 +92,7 @@ struct CastBackIntent: LiveActivityIntent {
 }
 @available(iOS 17.0, *)
 struct CastForwardIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Avanti di 30 secondi"
+    static var title: LocalizedStringResource = "Avanti"
     static var openAppWhenRun: Bool = false
     func perform() async throws -> some IntentResult {
         await CastActivityCommands.perform("forward")

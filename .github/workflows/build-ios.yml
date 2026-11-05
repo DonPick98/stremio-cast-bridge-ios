@@ -2,7 +2,7 @@ name: Build unsigned iOS app
 
 on:
   push:
-    branches: [main, native/embedded-media-engine]
+    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103]
   workflow_dispatch:
     inputs:
       receiver_app_id:
@@ -13,6 +13,9 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: macos-26
@@ -23,7 +26,7 @@ jobs:
 
       - name: Test independent caption model and receiver
         run: |
-          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
           "$RUNNER_TEMP/caption-model-tests"
           cd Receiver
           npm ci --ignore-scripts --no-audit --no-fund
@@ -33,6 +36,32 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/RewindableInputStream.swift Tests/RewindableInputStreamTests.swift -o "$RUNNER_TEMP/rewind-input-tests"
           "$RUNNER_TEMP/rewind-input-tests"
+      - name: Test episode navigation
+        run: |
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/SeriesNavigationTests.swift -o "$RUNNER_TEMP/series-tests"
+          "$RUNNER_TEMP/series-tests"
+      - name: Test Stremio protocol and offline merge
+        run: |
+          swiftc -parse-as-library -import-objc-header Sources/StremioZlib.h Sources/StremioLibrary.swift Tests/StremioLibraryTests.swift -lz -o "$RUNNER_TEMP/library-tests"
+          "$RUNNER_TEMP/library-tests"
+      - name: Test source ranking preferences
+        run: |
+          swiftc -parse-as-library Sources/SubtitleAppearance.swift Tests/SourcePreferencesTests.swift -o "$RUNNER_TEMP/source-preferences-tests"
+          "$RUNNER_TEMP/source-preferences-tests"
+      - name: Test update metadata policy
+        run: |
+          swiftc -parse-as-library Sources/AppUpdate.swift Tests/AppUpdateTests.swift -o "$RUNNER_TEMP/update-tests"
+          "$RUNNER_TEMP/update-tests"
+      - name: Test complete subtitles, transport and language selection
+        run: |
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"
+          "$RUNNER_TEMP/subtitle-catalog-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/OpenSourceSubtitleTests.swift -o "$RUNNER_TEMP/opensource-subtitle-tests"
+          "$RUNNER_TEMP/opensource-subtitle-tests"
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/SubtitleFetchTests.swift -o "$RUNNER_TEMP/subtitle-fetch-tests"
+          "$RUNNER_TEMP/subtitle-fetch-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/playback-preferences-tests"
+          "$RUNNER_TEMP/playback-preferences-tests"
       - name: Install Cast and embedded media engines
         env:
           LANG: en_US.UTF-8
@@ -40,23 +69,21 @@ jobs:
 
       - name: Test resolver without personal credentials
         run: |
-          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"
-          "$RUNNER_TEMP/subtitle-catalog-tests"
+          swiftc -parse-as-library Sources/PlaybackDiagnostics.swift Tests/PlaybackDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostics-tests"
+          "$RUNNER_TEMP/diagnostics-tests"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackState.swift Tests/PlaybackRegressions.swift -o "$RUNNER_TEMP/playback-regressions"
           "$RUNNER_TEMP/playback-regressions"
           swiftc -parse-as-library Sources/RDNativeResolver.swift Tests/ResolverTests.swift -o "$RUNNER_TEMP/resolver-tests"
           "$RUNNER_TEMP/resolver-tests"
-          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Tests/PlaybackPreferencesTests.swift -o "$RUNNER_TEMP/playback-preferences-tests"
-          "$RUNNER_TEMP/playback-preferences-tests"
-          swiftc -parse-as-library Sources/SubtitleAppearance.swift CastRemote/BridgeClient.swift Tests/HandoffTests.swift -o "$RUNNER_TEMP/handoff-tests"
+          swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/SubtitleAppearance.swift CastRemote/BridgeClient.swift Tests/HandoffTests.swift -o "$RUNNER_TEMP/handoff-tests"
           "$RUNNER_TEMP/handoff-tests"
           swiftc -parse-as-library Sources/CastWire.swift Sources/SubtitleAppearance.swift Tests/ControlPreferencesTests.swift -o "$RUNNER_TEMP/control-tests"
           "$RUNNER_TEMP/control-tests"
           swiftc -parse-as-library Sources/RDStreamProbe.swift Tests/StreamProbeTests.swift -o "$RUNNER_TEMP/stream-probe-tests"
           "$RUNNER_TEMP/stream-probe-tests"
-          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/PlaybackDiagnostics.swift Sources/LocalStreamProxy.swift Tests/LocalStreamProxyTests.swift -o "$RUNNER_TEMP/local-stream-tests"
           "$RUNNER_TEMP/local-stream-tests"
-          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
+          swiftc -parse-as-library Sources/CastWire.swift Sources/PlayableStreamHeader.swift Sources/PlaybackDiagnostics.swift Sources/LocalStreamProxy.swift Tests/MediaOutputChannelTests.swift -o "$RUNNER_TEMP/output-channel-tests"
           "$RUNNER_TEMP/output-channel-tests"
           swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/WebVTTTimelineTests.swift -o "$RUNNER_TEMP/caption-timeline-tests"
           "$RUNNER_TEMP/caption-timeline-tests"
@@ -119,3 +146,4 @@ jobs:
           path: Receiver/dist/
           if-no-files-found: error
           retention-days: 7
+
