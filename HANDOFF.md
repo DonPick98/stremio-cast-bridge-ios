@@ -1,3 +1,15 @@
+# Verifica elenco addon — CB-032, 2026-11-06
+
+IPA57 consegnata inchat; audit e build42196047379 passati, CB-031 IMPLEMENTATO_DA_VERIFICARE sul dispositivo. Nuova indagine sul soloComet inStremio: aperta sorgente del sito esistente bcc9ae0648741e55b82068d46994fcab9cc4e225, Siteappgprj_6ae4994e5e088191a83a4d06571ea4e9 versione13 pubblica, URLinvariato. Nessun edit/deploysito necessario eseguito.
+
+Fatto: config.addons è cifrato nel link personale del sito; il Keychain nell’app non cambia quel link installato inStremio. Il codice interroga tutti i provider configurati e aggiunge una voce fallback per provider fallito/vuoto. Testsource-parity6/6 PASSATI (dueprovider, URLcondivisi,190fonti,limiti,risoluzione). Prova sintetica aggiuntiva: linkentrambi conTorrentio503 produceproviders[comet,torrentiofallback]; linkcreato soloComet produce[comet]. Nessuna richiesta upstream reale, nessun link/credenzialeutente acquisito.
+
+Ipotesi piùprobabile: addoninstallato soloComet/vecchia configurazione o vista/cacheStremio; non diagnosticato con certezza senza descrizione del suo addon. Istruzione: sul sito inserire entrambi i linkpersonali, modalitàCastBridgeiPhone; prima installazione controllare «Configurato conTorrentio eComet», sostituire vecchioChromecastBridge inStremio. Entrare nell’app perconfigurareTorrentio nonmodifica l’addon giàinstallato. CB-032 IN_ANALISI fino al riscontro; non dichiarare unfixSite o cheIPA57 cambi elencoStremio.
+
+Limite verifica: tentativo suitebridge+parity 25/26, unico testminificazione noneseguibile per rolldown assente; non è evidenza di bugmotore. Suiteparity isolata6/6 e prova mirata dueconfigurazioni passate. Nessun pacchettoSite, publish, browser o modifica audience/URL eseguiti. Storico sotto.
+
+---
+
 # IPA57 — compatibilità configurazioneComet, 2026-11-06
 
 Prodotto58890dc0c3cfd18d97294b03491fc2d4ffe7cb6c, branchfix/menus-stremio-sync-20261106, PR10 draft. BuildiPhone/regressioni42196047379 SUCCESSO, job127819441095. HandoffTests: Torrentio normale/lite/stremio, Cometlegacy/moderno/base64URL/precedenza/malformed/assenzaRD/hostestraneo PASSATI. Nessun link/chiave personale acquisito, nessuna APIaccountRD usata. Utente conferma pannello nell’app e linkcopiati dagliaddon giàconfigurati inStremio.
