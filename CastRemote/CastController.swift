@@ -415,7 +415,7 @@ import AVFAudio
         let ended=completed && confirmed>=duration-max(2,min(30,duration*0.02))
         let ids=SeriesNavigation.seriesID(handoff.id).map{SeriesNavigation.ordered(episodes,series:$0,includeSpecials:true).map(\.id)} ?? []
         let title=handoff.type=="series" ? displayTitle.components(separatedBy:" · S").first ?? displayTitle:displayTitle
-        StremioSync.shared.observe(type:handoff.type,videoID:handoff.id,title:title,position:ended ? duration:confirmed,duration:duration,completed:ended,force:force,episodes:ids)
+        StremioSync.shared.observe(type:handoff.type,videoID:handoff.id,title:title,position:ended ? duration:confirmed,duration:duration,completed:ended,force:force,episodes:ids,playing:playing && !loadPending && !checkingStream && !loading && timeline.target==nil && timeline.queuedTarget==nil)
     }
     private func recordEnergySnapshot() {
         backgroundProcessing.recordSnapshot()
@@ -928,6 +928,7 @@ import AVFAudio
         guard let prepared, client != nil else { message = "Collega prima il Chromecast e scegli un file."; return }
         guard !loading, !loadPending, subtitleRequest == nil else { return }
         guard embeddedCaptionTask == nil || selectedEmbeddedText else { return }
+        if let handoff {StremioSync.shared.suspendWatchSampling(type:handoff.type,videoID:handoff.id)}
         if !captionIsIndependent{promoteReadyEmbeddedText()}
         if captionIsIndependent, requestedPosition == nil, timeline.target == nil, timeline.queuedTarget == nil,
            hasLoaded, ownsCurrentMedia, loadedSourceInput == prepared.directURL, loadedAudioKey == selectedAudio,
@@ -1722,6 +1723,7 @@ import AVFAudio
         lockScreen.refreshNextUpdate()
         PlaybackDiagnostics.record(.seek,["target":PlaybackDiagnostics.number(value),"position":PlaybackDiagnostics.number(position)])
         guard !backgroundServiceStopped,hasLoaded || loadPending || loading || seekRebuildPending, value.isFinite else { return }
+        if let handoff {StremioSync.shared.suspendWatchSampling(type:handoff.type,videoID:handoff.id)}
         let localSeek=seekRebuildPending || localProcessing || checkingStream
         let target = min(duration > 0 ? max(0,duration-(localSeek ? 1 : 0)) : value,max(0,value))
         timeline.queue(at:target); position = target; lastGoodPosition = target
@@ -2049,6 +2051,7 @@ import AVFAudio
         }
     }
 }
+
 
 
 

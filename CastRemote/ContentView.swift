@@ -46,6 +46,7 @@ struct ContentView: View {
                         }.buttonStyle(.plain)
                     }
                     if cast.canRetryEmbeddedText { Button("Riprova sottotitoli dal file"){cast.retryEmbeddedText()} }
+                    StremioSyncPrompt()
                     if cast.isSeries { episodeControls }
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
@@ -700,6 +701,18 @@ private struct AppPreferencesView:View {
 }
 
 
+private struct StremioSyncPrompt:View {
+    @ObservedObject private var sync=StremioSync.shared
+    var body:some View {
+        if sync.connected && !sync.enabled {
+            Button {sync.setEnabled(true)} label: {
+                Label("Attiva sincronizzazione Stremio",systemImage:"arrow.triangle.2.circlepath")
+                    .font(.subheadline).frame(maxWidth:.infinity,alignment:.leading)
+            }.buttonStyle(.plain).foregroundStyle(CastPalette.accent)
+        }
+    }
+}
+
 private struct StremioSettingsView:View {
     @ObservedObject private var sync=StremioSync.shared
     @State private var email=""
@@ -726,18 +739,19 @@ private struct StremioSettingsView:View {
                     Button {
                         let address=email,secret=password;password=""
                         Task{if await sync.connect(email:address,password:secret){showLogin=false}}
-                    } label:{HStack{Text("Collega Stremio");if sync.busy{Spacer();ProgressView()}}}
+                    } label:{HStack{Text("Collega e sincronizza");if sync.busy{Spacer();ProgressView()}}}
                         .disabled(sync.busy || email.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || password.isEmpty)
-                } header:{Text("Accesso Stremio")} footer:{Text("Usa email e password di Stremio. La password non viene salvata. L’accesso viene conservato nel portachiavi di questo iPhone; la sincronizzazione si attiva separatamente.")}
+                } header:{Text("Accesso Stremio")} footer:{Text("Usa email e password di Stremio. La password non viene salvata. Confermando l’accesso attivi la sincronizzazione di visti e punto di ripresa; puoi disattivarla qui in qualsiasi momento.")}
             }
             Section {
                 Text(sync.message)
+                if let last=sync.lastSynced {LabeledContent("Ultima verifica",value:last.formatted(date:.omitted,time:.shortened))}
                 if sync.pending>0 {LabeledContent("Aggiornamenti in attesa",value:String(sync.pending))}
-                if sync.enabled {Button("Sincronizza ora"){sync.flush()}}
+                if sync.enabled {Button("Sincronizza ora"){sync.flush(force:true)}}
                 if sync.conflicts>0 {
                     Button("Mantieni i dati Stremio in conflitto"){confirmRemote=true}
                 }
-            } header:{Text("Stato")} footer:{Text("Per i contenuti IMDb, condivide il punto confermato dalla TV e segna visto alla fine della riproduzione. Le modifiche senza rete restano in coda. I dati remoti più recenti sono conservati. La lettura del punto remoto avviene alla prossima scelta di una sorgente.")}
+            } header:{Text("Stato")} footer:{Text("Per i contenuti IMDb, salva il punto confermato dalla TV e segna visto dopo il 70% di visione effettiva o alla fine. Salti e pause non contano come tempo guardato. Gli invii vengono riletti da Stremio prima della conferma; senza rete restano in coda. I dati remoti più recenti sono conservati. La lettura del punto remoto avviene alla prossima scelta di una sorgente.")}
         }.navigationTitle("Stremio")
         .onDisappear{password=""}
         .confirmationDialog("Disconnettere Stremio?",isPresented:$confirmDisconnect,titleVisibility:.visible){

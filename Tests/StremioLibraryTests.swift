@@ -87,6 +87,59 @@ private final class LibraryProtocol:URLProtocol,@unchecked Sendable {
         let replay=StremioProgressEvent(type:event.type,videoID:event.videoID,title:event.title,position:10,duration:1200,observedAt:now.addingTimeInterval(5),completed:false)
         try rewatch.enqueue(replay,episodes:ids)
         precondition(rewatch.entries.count==2 && rewatch.entries[0].event.completed)
+        // Actual watch time excludes repeated status ticks, pause and seeks.
+        var tracker=StremioWatchTracker()
+        precondition(tracker.observe(position:100,playing:true,time:0)==0)
+        precondition(tracker.observe(position:100,playing:true,time:3)==0)
+        precondition(tracker.observe(position:105,playing:true,time:5)==5)
+        precondition(tracker.observe(position:108,playing:false,time:8)==8)
+        precondition(tracker.observe(position:108,playing:false,time:100)==8)
+        precondition(tracker.observe(position:108,playing:true,time:101)==8)
+        precondition(tracker.observe(position:113,playing:true,time:106)==13)
+        precondition(tracker.observe(position:900,playing:true,time:107)==13)
+        precondition(tracker.observe(position:904,playing:true,time:111)==17)
+        precondition(tracker.observe(position:100,playing:true,time:112)==17)
+        precondition(tracker.observe(position:103,playing:true,time:115)==20)
+        tracker.suspend()
+        precondition(tracker.observe(position:1000,playing:true,time:500)==20)
+        precondition(tracker.observe(position:1005,playing:true,time:505)==25)
+        let session=UUID()
+        func sample(_ watched:Double,_ position:Double=80)->StremioProgressEvent {
+            StremioProgressEvent(type:"movie",videoID:"tt1234567",title:"Synthetic",position:position,duration:100,observedAt:now,completed:false,watched:watched,sessionID:session)
+        }
+        let threshold=try StremioLibraryMerge.applying(sample(70),to:nil,episodes:[],now:now)
+        precondition(((threshold["state"] as! [String:Any])["timesWatched"] as! NSNumber).intValue==0)
+        let watched=try StremioLibraryMerge.applying(sample(71),to:nil,episodes:[],now:now)
+        let watchedState=watched["state"] as! [String:Any]
+        precondition((watchedState["timesWatched"] as! NSNumber).intValue==1 && (watchedState["timeOffset"] as! NSNumber).intValue==80_000)
+        let skipped=try StremioLibraryMerge.applying(sample(1,99),to:nil,episodes:[],now:now)
+        precondition(((skipped["state"] as! [String:Any])["timesWatched"] as! NSNumber).intValue==0)
+        let seriesWatched=StremioProgressEvent(type:"series",videoID:ids[1],title:"Synthetic",position:80,duration:100,observedAt:now,completed:false,watched:71,sessionID:session)
+        let seriesMarked=try StremioLibraryMerge.applying(seriesWatched,to:nil,episodes:ids,now:now)
+        let bits=try StremioWatchedField.decode((seriesMarked["state"] as! [String:Any])["watched"] as? String,ids:ids)
+        precondition(bits==[false,true,false,false,false])
+        // Journal survives process death; coalescing cannot remove a PUT that
+        // may already have been accepted. Confirming it credits once only.
+        var journal=StremioOutbox()
+        try journal.enqueue(sample(10,20),episodes:[])
+        let inFlight=journal.entries[0]
+        let intended=try StremioLibraryMerge.applying(inFlight.event,to:nil,episodes:[],now:now)
+        let intendedData=try StremioLibraryMerge.stateData(intended)!
+        try journal.prepare(inFlight,item:intended,baseline:nil)
+        try journal.enqueue(sample(20,30),episodes:[])
+        precondition(journal.entries.count==2 && journal.intent(for:inFlight) != nil)
+        journal=try JSONDecoder().decode(StremioOutbox.self,from:JSONEncoder().encode(journal))
+        precondition(StremioLibraryMerge.matches(journal.intent(for:inFlight)!.state,remote:intended))
+        journal.acknowledge(inFlight.id,itemID:"tt1234567",state:try StremioLibraryMerge.stateData(intended)!)
+        precondition(journal.entries.count==1 && journal.intent(for:inFlight)==nil)
+        let next=journal.entries[0]
+        let credited=try StremioLibraryMerge.applying(next.event,to:intended,episodes:[],now:now,acceptedWatch:journal.watchedReceipt(for:next.event))
+        precondition(((credited["state"] as! [String:Any])["timeWatched"] as! NSNumber).intValue==20_000)
+        let legacy=try JSONDecoder().decode(StremioOutbox.self,from:Data(#"{"entries":[],"receipts":{}}"#.utf8))
+        precondition(legacy.entries.isEmpty && legacy.writes==nil)
+        var foreign=intended;var foreignState=intended["state"] as! [String:Any]
+        foreignState["timeOffset"]=99_000;foreign["state"]=foreignState
+        precondition(!StremioLibraryMerge.matches(intendedData,remote:foreign))
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[LibraryProtocol.self]
         let api=StremioLibraryAPI(configuration:config)
         var requests:[String]=[]
@@ -113,8 +166,21 @@ private final class LibraryProtocol:URLProtocol,@unchecked Sendable {
         let empty=try await api.item("tt2934286",account:account);precondition(empty==nil)
         try await api.put(merged,account:account)
         precondition(requests==["login","datastoreGet","datastorePut"])
+        // API success is insufficient: read back the same state before ack.
+        var stored:[String:Any]?,puts=0
+        LibraryProtocol.handler={request in
+            if request.url!.lastPathComponent=="datastorePut" {puts+=1;stored=intended;return (200,#"{"result":{"success":true}}"#)}
+            return (200,String(decoding:try JSONSerialization.data(withJSONObject:["result":stored.map{[$0]} ?? []]),as:UTF8.self))
+        }
+        let verified=try await api.putAndReadBack(intended,account:account)
+        precondition(puts==1 && StremioLibraryMerge.matches(intendedData,remote:verified))
+        LibraryProtocol.handler={request in
+            request.url!.lastPathComponent=="datastorePut" ? (200,#"{"result":{"success":true}}"#):(200,#"{"result":[]}"#)
+        }
+        do{_ = try await api.putAndReadBack(intended,account:account);fatalError("Unverified PUT acknowledged")}catch StremioSyncError.verification{}
         LibraryProtocol.handler={_ in (200,"{\"error\":{\"code\":1,\"message\":\"must never enter logs\"}}")}
         do{_ = try await api.login(email:"synthetic@example.test",password:"x");fatalError("API error accepted")}catch StremioSyncError.authentication{}
-        print("Stremio protocol passed: upstream bitfield sample, roundtrip/shift/idempotence, preserve unknown fields, units/conflicts, resume matching and mocked Login/Get/Put")
+        print("Stremio protocol passed: upstream watched field, actual-watch threshold, pause/seek exclusion, crash journal, single-credit replay, verified readback, conflicts and mocked Login/Get/Put")
     }
 }
+
