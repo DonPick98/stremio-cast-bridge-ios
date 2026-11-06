@@ -1,3 +1,17 @@
+# IPA54 candidata disponibile — CB-028/029, 2026-11-06
+
+Pacchetto efbad5d1d6f6e1dbc1d6e5c84cc8979b439fe52b; runtime 5fb3e1cb358f25b006f697e024135dd6de4f25aa. Branch fix/captions-background-20261105, PR #9 draft. Build iPhone/regressioni finale42178072342 SUCCESSO; precedente42177019998 SUCCESSO. Lifecycle42177019965 SUCCESSO. Suite nativa runtime42177019979 IN_CORSO; replica automatica42178072267 sul commento licenza in coda, non dichiarare passata. 53 nativa42139358480 SUCCESSO confermato.
+
+CB-028 IMPLEMENTATO_DA_VERIFICARE: testo embedded completato durante engine.start incluso nel primo LOAD del candidato. Guardie source/stream/audio/sottotitoli/seek prima della promozione; nessuna sospensione fino alla pubblicazione. Proxy installa documenti su barriera breve della propria coda, preserva produttore caldo/URL/offset/ritardo e rifiuta dopo GET media o stop. HEAD non consuma. Fallimento testo conserva video e fallback esistente. Test HTTP/CORS/HEAD/consumato/stop passati nella build; prova nativa offset1.25/ritardo30.5 aggiunta alla suite in corso.
+
+IPA effettiva0.8.1(54), app+estensione54 unsigned (Mach-O senza LC_CODE_SIGNATURE, nessun profilo/firma propria), audio+processing, receiver CC1AD845, risorsaJS e MIT completo verificati.69438953byte; SHA25640b0f9f0f2153a69fc78ca647a7dc991c08b88f02f6181b933c657f23f29aba5. Artifact13484008030, run42178072342; ZIPdigest c4a2546fc49a1c2496bf4c7946532f1efe37c288fc1091635d2be8fe333db847. Scaricata, auditata e consegnata inchat come candidata.
+
+CB-029 VERIFICATO: audit del primo artifact54 ha trovato solo attribuzione cortaMIT. Ora bundler include LICENSE completo nel commentoJS, riproducibilità byte-per-byte confermata. Il codice eseguito dall’IIFE è identico a5fb3e1cb; nessuna modifica di playback. L’annotazione storica53 «licenzeMIT incluse» era troppo ampia. L’artifact intermedio13482814846 non è quello consegnato. Firma preesistente nel framework ffmpegkit vendorizzato distinta dalla firma app/estensione, entrambe assenti.
+
+Hardware53/54 ancora da misurare: Preferenze→Memoria locale→Svuota cache sottotitoli, RIAPRIRE puntata (per eliminare documento inRAM), scegliere seconda traccia inglese. caption_index_ready distingue fastpath; caption_first_load conferma un solo caricamento iniziale con testo. Nessun tempo TV promesso, nessun merge/release/Sites. Recuperare esito runtime nativo e aggiornare registro/PR/checkpoint. Storico sotto.
+
+---
+
 # IPA53 candidata disponibile — CB028 latenza, 2026-11-06
 
 Prodotto94e2c740bc055c59a5bec925947d694b2a983088, branchfix/captions-background-20261105,
