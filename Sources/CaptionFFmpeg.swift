@@ -98,11 +98,19 @@ import AVFAudio
         if !input.isFileURL,track.isASS {
             return try await withThrowingTaskGroup(of:String.self) { group in
                 group.addTask { @MainActor in
-                    let output=try await IndexedCaptionExtraction.extract(input:input,ordinal:track.ordinal,language:track.language)
-                    try Task.checkCancellation()
-                    let text=try SubtitleDocument.embeddedASS(Data(output.text.utf8)).text
-                    PlaybackDiagnostics.record(.tracks,["phase":"caption_index_ready","bytes":String(output.bytes),"tracks":String(output.frames),"request":String(output.requests)])
-                    return text
+                    let started=Date()
+                    PlaybackDiagnostics.record(.tracks,["phase":"caption_index_attempt","kind":"ass"])
+                    do {
+                        let output=try await IndexedCaptionExtraction.extract(input:input,ordinal:track.ordinal,language:track.language)
+                        try Task.checkCancellation()
+                        let text=try SubtitleDocument.embeddedASS(Data(output.text.utf8)).text
+                        PlaybackDiagnostics.record(.tracks,["phase":"caption_index_ready","bytes":String(output.bytes),"tracks":String(output.frames),"request":String(output.requests),"seconds":PlaybackDiagnostics.number(Date().timeIntervalSince(started))])
+                        return text
+                    }catch {
+                        try Task.checkCancellation()
+                        PlaybackDiagnostics.record(.tracks,["phase":"caption_index_fallback","code":(error as? IndexedCaptionExtraction.Failure).map{String(describing:$0)} ?? "document","seconds":PlaybackDiagnostics.number(Date().timeIntervalSince(started))])
+                        throw error
+                    }
                 }
                 group.addTask { @MainActor in
                     let result=try await fullDocuments(input:input,tracks:[track],progress:progress)
