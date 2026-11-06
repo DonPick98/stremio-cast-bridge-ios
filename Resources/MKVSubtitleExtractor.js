@@ -1133,6 +1133,7 @@ async function readTargetedBlocks(
   timestampScale        ,
   concurrency         ,
   log                        ,
+  clusterHeaderSizes                      ,
 )                           {
   const blocks                  = [];
   const tsMultiplier = timestampScale / 1_000_000;
@@ -1150,8 +1151,7 @@ async function readTargetedBlocks(
   }
 
   // Probe one cluster header to learn the header size.
-  // All clusters in an MKV file use the same VINT width for the data size,
-  // so we can read one and reuse the result for all others.
+  // Cast Bridge supplies verified sizes per cluster: VINT widths may differ.
   const firstClusterPos = cueEntries[0].clusterPosition;
   const probeBuf = await reader.read(segmentDataOffset + firstClusterPos, HEADER_READ_SIZE);
   const clusterHeaderSize = parseElementHeader(probeBuf, 0).dataOffset;
@@ -1165,7 +1165,7 @@ async function readTargetedBlocks(
     if (entries.every(e => e.relativePosition !== undefined)) {
       for (const entry of entries) {
         directTargets.push({
-          absPos: segmentDataOffset + clusterPos + clusterHeaderSize + entry.relativePosition ,
+          absPos: segmentDataOffset + clusterPos + (clusterHeaderSizes?.get(clusterPos) ?? clusterHeaderSize) + entry.relativePosition ,
           entry,
         });
       }
@@ -1638,19 +1638,19 @@ async function indexedASS(url       ,ordinal       ,language       ) {
   // Cap index size before upstream parse allocates entries.
   await element(seek(0x1C53BB6B));
   const cues=(await parseCues(reader,seg.segmentDataOffset,seek(0x1C53BB6B)-seg.segmentDataOffset)).filter(c=>c.track===chosen.trackNumber);
-  if(cues.length!==expected||cues.some(c=>c.relativePosition===undefined)||new Set(cues.map(c=>c.clusterPosition+':'+c.relativePosition)).size!==expected)throw Error('coverage');
+  if(cues.length!==expected||cues.some(c=>c.relativePosition===undefined)||new Set(cues.map(c=>c.clusterPosition+':'+c.relativePosition)).size!==expected)throw Error('frames_'+expected+'_'+cues.length);
   // Upstream targeted reads assume equal cluster header lengths. Verify it.
-  let headerSize=0,next=0;
+  const headerSizes=new Map               ();let next=0;
   const positions=Array.from(new Set(cues.map(c=>c.clusterPosition)));
   async function verifyHeaders(){while(next<positions.length){
     const pos=positions[next++];
     const h=parseElementHeader(await reader.read(seg.segmentDataOffset+pos,12),0);
     if(h.id!==0x1F43B675||h.unknownSize)throw Error('cluster');
-    if(headerSize&&headerSize!==h.dataOffset)throw Error('cluster');headerSize=h.dataOffset;
+    headerSizes.set(pos,h.dataOffset);
   }}
   await Promise.all(Array.from({length:Math.min(4,positions.length)},verifyHeaders));
-  const blocks=await readTargetedBlocks(reader,seg.segmentDataOffset,cues,new Set([chosen.trackNumber]),seg.info.timestampScale,4);
-  if(blocks.length!==expected||blocks.some(b=>!Number.isFinite(b.timestampMs)||b.timestampMs<0))throw Error('coverage');
+  const blocks=await readTargetedBlocks(reader,seg.segmentDataOffset,cues,new Set([chosen.trackNumber]),seg.info.timestampScale,4,undefined,headerSizes);
+  if(blocks.length!==expected||blocks.some(b=>!Number.isFinite(b.timestampMs)||b.timestampMs<0))throw Error('blocks_'+expected+'_'+blocks.length);
   const output=assembleAss(chosen,blocks);
   if(output.length>1048576)throw Error('limit');
   return {text:new TextDecoder().decode(output),frames:expected,bytes:reader.bytesDownloaded,requests:reader.requestCount};

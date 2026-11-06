@@ -8,7 +8,8 @@ Sources preserved under src/. Cast Bridge's bridge.ts accepts only ASS/SSA with
 complete Cues verified against NUMBER_OF_FRAMES for the exact TrackUID. It skips
 fonts (the existing text-only conversion does not need them), rejects content
 encodings and falls back to full FFmpeg demux if unsupported. The upstream batch
-grouper is capped at256KiB spans to bound each read. All native HTTP requests
+grouper is capped at256KiB spans to bound each read; target offsets use the
+actual header size of each cluster, since VINT widths can vary. All native HTTP requests
 validate status206, Content-Range, file size and available validators before body,
 with cancellation, size/request/time budgets. No untrusted script is fetched.
 

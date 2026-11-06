@@ -37,6 +37,9 @@ import Foundation
         try await mux.wait(seconds:20)
         let degenerateCatalog=try await CaptionExtractor.catalog(problematicMKV)
         let repaired=try await CaptionExtractor.fullDocument(input:problematicMKV,track:degenerateCatalog.tracks[0])
+        let nativeFixture=documents.appendingPathComponent("indexed-native-source.mkv")
+        try? FileManager.default.removeItem(at:nativeFixture)
+        try FileManager.default.copyItem(at:problematicMKV,to:nativeFixture)
         let indexed=try await IndexedCaptionExtraction.extract(input:problematicMKV,ordinal:0,language:"und")
         let indexedDocument=try SubtitleDocument.embeddedASS(Data(indexed.text.utf8)).text
         let indexedPassed=content(indexedDocument)==content(repaired)

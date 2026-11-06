@@ -10,13 +10,14 @@ const tag=count=>el(0x1254c367,el(0x7373,concat(el(0x63c0,u(0x63c5,1234)),el(0x6
 const group=(order,time,text)=>el(0xa0,concat(el(0xa1,concat(Buffer.from([0x82,time>>8,time&255,0]),Buffer.from(`${order},0,Default,,0,0,0,,${text}`))),u(0x9b,2000)));
 const first=group(0,1000,'EARLY CAPTION'),last=group(1,9000,'LATE CAPTION');
 const timestamp=u(0xe7,0),padding=el(0xec,Buffer.alloc(8*1024*1024,0x5a));
-const cluster=el(0x1f43b675,concat(timestamp,first,padding,last));
+const cluster=el(0x1f43b675,concat(timestamp,first,padding));
+const finalCluster=el(0x1f43b675,concat(timestamp,last));
 const seek=positions=>el(0x114d9b74,concat(...positions.map(([key,p])=>el(0x4dbb,concat(el(0x53ab,id(key)),u(0x53ac,p))))));
 function fixture(count=2,omit=false){let head=seek([[0x1549a966,0],[0x1654ae6b,0],[0x1254c367,0],[0x1c53bb6b,0]]);const tags=tag(count),clusterPos=head.length+info.length+tracks.length+tags.length;
-const cue=(time,rel)=>el(0xbb,concat(u(0xb3,time),el(0xb7,concat(u(0xf7,2),u(0xf1,clusterPos),u(0xf0,rel)))));
-const cues=el(0x1c53bb6b,concat(cue(1000,timestamp.length),...(omit?[]:[cue(9000,timestamp.length+first.length+padding.length)])));
-head=seek([[0x1549a966,head.length],[0x1654ae6b,head.length+info.length],[0x1254c367,head.length+info.length+tracks.length],[0x1c53bb6b,clusterPos+cluster.length]]);
-return concat(el(0x1a45dfa3,Buffer.alloc(0)),el(0x18538067,concat(head,info,tracks,tags,cluster,cues)));}
+const cue=(time,rel,at=clusterPos)=>el(0xbb,concat(u(0xb3,time),el(0xb7,concat(u(0xf7,2),u(0xf1,at),u(0xf0,rel)))));
+const cues=el(0x1c53bb6b,concat(cue(1000,timestamp.length),...(omit?[]:[cue(9000,timestamp.length,clusterPos+cluster.length)])));
+head=seek([[0x1549a966,head.length],[0x1654ae6b,head.length+info.length],[0x1254c367,head.length+info.length+tracks.length],[0x1c53bb6b,clusterPos+cluster.length+finalCluster.length]]);
+return concat(el(0x1a45dfa3,Buffer.alloc(0)),el(0x18538067,concat(head,info,tracks,tags,cluster,finalCluster,cues)));}
 vm.runInThisContext(fs.readFileSync(new URL('../Resources/MKVSubtitleExtractor.js',import.meta.url),'utf8'));
 let bytes=0,requests=0,current=fixture();
 globalThis.fetch=async(_url,options)=>{const m=/bytes=(\d+)-(\d+)/.exec(options.headers.Range),start=Number(m[1]),end=Math.min(Number(m[2]),current.length-1),body=current.subarray(start,end+1);bytes+=body.length;requests++;return{status:206,headers:{get:()=>`bytes ${start}-${end}/${current.length}`},arrayBuffer:async()=>body.buffer.slice(body.byteOffset,body.byteOffset+body.length)}};

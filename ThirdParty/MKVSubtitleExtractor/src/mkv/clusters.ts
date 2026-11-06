@@ -312,6 +312,7 @@ export async function readTargetedBlocks(
   timestampScale: number,
   concurrency?: number,
   log?: (msg: string) => void,
+  clusterHeaderSizes?: Map<number, number>,
 ): Promise<SubtitleBlock[]> {
   const blocks: SubtitleBlock[] = [];
   const tsMultiplier = timestampScale / 1_000_000;
@@ -329,8 +330,7 @@ export async function readTargetedBlocks(
   }
 
   // Probe one cluster header to learn the header size.
-  // All clusters in an MKV file use the same VINT width for the data size,
-  // so we can read one and reuse the result for all others.
+  // Cast Bridge supplies verified sizes per cluster: VINT widths may differ.
   const firstClusterPos = cueEntries[0].clusterPosition;
   const probeBuf = await reader.read(segmentDataOffset + firstClusterPos, HEADER_READ_SIZE);
   const clusterHeaderSize = parseElementHeader(probeBuf, 0).dataOffset;
@@ -344,7 +344,7 @@ export async function readTargetedBlocks(
     if (entries.every(e => e.relativePosition !== undefined)) {
       for (const entry of entries) {
         directTargets.push({
-          absPos: segmentDataOffset + clusterPos + clusterHeaderSize + entry.relativePosition!,
+          absPos: segmentDataOffset + clusterPos + (clusterHeaderSizes?.get(clusterPos) ?? clusterHeaderSize) + entry.relativePosition!,
           entry,
         });
       }

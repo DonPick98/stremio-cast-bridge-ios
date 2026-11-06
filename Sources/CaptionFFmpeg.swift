@@ -108,7 +108,7 @@ import AVFAudio
                         return text
                     }catch {
                         try Task.checkCancellation()
-                        PlaybackDiagnostics.record(.tracks,["phase":"caption_index_fallback","code":(error as? IndexedCaptionExtraction.Failure).map{String(describing:$0)} ?? "document","seconds":PlaybackDiagnostics.number(Date().timeIntervalSince(started))])
+                        PlaybackDiagnostics.record(.tracks,["phase":"caption_index_fallback","code":IndexedCaptionExtraction.failureCode(error),"seconds":PlaybackDiagnostics.number(Date().timeIntervalSince(started))])
                         throw error
                     }
                 }

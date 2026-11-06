@@ -3,7 +3,21 @@ import JavaScriptCore
 
 /// Complete indexed Matroska extraction. No movie URL or subtitle text is logged.
 @MainActor final class IndexedCaptionExtraction {
-    enum Failure:Error {case unavailable,range,limit,coverage,cancelled}
+    enum Failure:LocalizedError {
+        case unavailable,range,limit,coverage,cancelled,index(String)
+        var errorDescription:String? {"Indexed captions: "+IndexedCaptionExtraction.failureCode(self)}
+    }
+    nonisolated static func failureCode(_ error:Error)->String {
+        guard let failure=error as? Failure else{return "document"}
+        switch failure {
+        case .unavailable:return "unavailable"
+        case .range:return "range"
+        case .limit:return "limit"
+        case .coverage:return "coverage"
+        case .cancelled:return "cancelled"
+        case .index(let code):return code
+        }
+    }
     struct Output {let text:String;let bytes:Int;let requests:Int;let frames:Int}
     private let input:URL
     private let session:URLSession
@@ -65,7 +79,13 @@ import JavaScriptCore
                   let count=object["frames"] as? NSNumber else{self?.finish(.failure(Failure.coverage));return}
             self.finish(.success(Output(text:text,bytes:self.bytes,requests:self.requests,frames:count.intValue)))
         }
-        let failed:@convention(block)()->Void={ [weak self] in self?.finish(.failure(Failure.coverage)) }
+        let failed:@convention(block)(JSValue)->Void={ [weak self] reason in
+            let raw=reason.isString ? reason.toString():reason.forProperty("message")?.toString()
+            let code=raw ?? "coverage"
+            let known=["uid","index","codec","encoding","track","limit","count","coverage","cluster","truncated","range"]
+            let safe=known.contains(code) || (code.count<40 && code.range(of:#"^(frames|blocks)_[0-9]+_[0-9]+$"#,options:.regularExpression) != nil)
+            self?.finish(.failure(safe ? Failure.index(code):Failure.coverage))
+        }
         js.setObject(decode,forKeyedSubscript:"nativeDecode" as NSString)
         js.setObject(encode,forKeyedSubscript:"nativeEncode" as NSString)
         js.setObject(read,forKeyedSubscript:"nativeRead" as NSString)
