@@ -32,7 +32,7 @@ import Foundation
         // emits invalid VTT for zero-duration and blank-paragraph ASS events.
         let problematic=root.appendingPathComponent("caption-degenerate.ass")
         let problematicMKV=root.appendingPathComponent("caption-degenerate.mkv")
-        let mux=try CaptionProcess(["-hide_banner","-nostdin","-loglevel","error","-y","-i",input.path,"-i",problematic.path,"-map","1:0","-map","0:v:0","-c","copy","-metadata:s:s:0","NUMBER_OF_FRAMES=7",problematicMKV.path])
+        let mux=try CaptionProcess(["-hide_banner","-nostdin","-loglevel","error","-y","-i",input.path,"-i",problematic.path,"-map","1:0","-map","0:v:0","-c","copy","-metadata:s:s:0","NUMBER_OF_FRAMES=6",problematicMKV.path])
         defer{mux.stop();try? FileManager.default.removeItem(at:problematicMKV)}
         try await mux.wait(seconds:20)
         let degenerateCatalog=try await CaptionExtractor.catalog(problematicMKV)

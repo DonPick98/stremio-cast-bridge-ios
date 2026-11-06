@@ -17,7 +17,7 @@ function fixture(count=2,omit=false){let head=seek([[0x1549a966,0],[0x1654ae6b,0
 const cue=(time,rel,at=clusterPos)=>el(0xbb,concat(u(0xb3,time),el(0xb7,concat(u(0xf7,2),u(0xf1,at),u(0xf0,rel)))));
 const cues=el(0x1c53bb6b,concat(cue(1000,timestamp.length),...(omit?[]:[cue(9000,timestamp.length,clusterPos+cluster.length)])));
 head=seek([[0x1549a966,head.length],[0x1654ae6b,head.length+info.length],[0x1254c367,head.length+info.length+tracks.length],[0x1c53bb6b,clusterPos+cluster.length+finalCluster.length]]);
-return concat(el(0x1a45dfa3,Buffer.alloc(0)),el(0x18538067,concat(head,info,tracks,tags,cluster,finalCluster,cues)));}
+return concat(Buffer.from('1a45dfa3a34286810142f7810142f2810442f381084282886d6174726f736b614287810442858102','hex'),el(0x18538067,concat(head,info,tracks,tags,cluster,finalCluster,cues)));}
 vm.runInThisContext(fs.readFileSync(new URL('../Resources/MKVSubtitleExtractor.js',import.meta.url),'utf8'));
 let bytes=0,requests=0,current=fixture();
 globalThis.fetch=async(_url,options)=>{const m=/bytes=(\d+)-(\d+)/.exec(options.headers.Range),start=Number(m[1]),end=Math.min(Number(m[2]),current.length-1),body=current.subarray(start,end+1);bytes+=body.length;requests++;return{status:206,headers:{get:()=>`bytes ${start}-${end}/${current.length}`},arrayBuffer:async()=>body.buffer.slice(body.byteOffset,body.byteOffset+body.length)}};
