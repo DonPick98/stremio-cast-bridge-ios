@@ -8,6 +8,6 @@ s=s.replace(/export\s+(async\s+)?(function\s*\*?\s*|class\s+|const\s+|let\s+)(\w
 s=s.replace(/export\s*\{([^}]+)\};?/g,(_,names)=>{exported.push(...names.split(',').map(x=>x.trim()));return '';});
 modules.set(id,s+'\n'+exported.map(n=>`exports.${n}=${n};`).join('\n'));}
 visit('bridge.ts');
-let out='/* mkv-subtitle-extractor: Copyright (c) 2026 Shy, MIT. Bundled notices included. */\n(function(global){const modules={'+[...modules].map(([id,s])=>JSON.stringify(id)+':function(require,exports){\n'+s+'\n}').join(',\n')+'};const cache={};function require(id){if(cache[id])return cache[id];const e={};cache[id]=e;modules[id](require,e);return e;}global.CastMKV=require("bridge.ts");})(globalThis);\n';
+let out=('/* mkv-subtitle-extractor\n'+fs.readFileSync(new URL('LICENSE',root),'utf8').trimEnd()+'\n*/\n')+'(function(global){const modules={'+[...modules].map(([id,s])=>JSON.stringify(id)+':function(require,exports){\n'+s+'\n}').join(',\n')+'};const cache={};function require(id){if(cache[id])return cache[id];const e={};cache[id]=e;modules[id](require,e);return e;}global.CastMKV=require("bridge.ts");})(globalThis);\n';
 fs.writeFileSync(new URL('../Resources/MKVSubtitleExtractor.js',import.meta.url),out);
 console.log('Bundled',modules.size,'modules,',Buffer.byteLength(out),'bytes');
