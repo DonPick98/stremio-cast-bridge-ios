@@ -1,3 +1,53 @@
+# IPA53 candidata disponibile — CB028 latenza, 2026-11-06
+
+Prodotto94e2c740bc055c59a5bec925947d694b2a983088, branchfix/captions-background-20261105,
+PR9draft. BuildiPhone/regressioni42139358470 SUCCESSO. Runtimefunzionale353a9232;
+94e2c740 cambia solo fixture/testbenchmark (numero frame del muxer nativo), non
+il codice prodotto. TestSDK/lifecycle42133853266 SUCCESSO sul ramo latenza.
+
+IPA effettiva0.8.1(53), app/estensione53, unsigned, audio+processing/CC1AD845,
+risorsaMKVSubtitleExtractor.js e licenzeMIT incluse.69432627byte,
+SHA256 38e66e493092fcf00f232ad852a0d842f797e42ef9fde9d524089f258df4dedc.
+Artifact13468280746, ZIPdigest sha256:cd13fd9904c68241d4cf4f6c0f68411a821c02dc0d8a4f66ca593b66d3e1b47b,
+run42139358470. File scaricato/auditato e disponibile inchat come candidata.
+Nativa completa sulla sorgente esatta42139358480 IN_CORSO: recuperare esito e
+non dichiararla passata prima della conferma. Nessun collaudo hardware53.
+
+Utente: seconda traccia inglese visibile su52 dopo56s. Risoluzione53:
+-IndicizzazioneMKV (upstreamMIT cryguy/mkv-subtitle-extractor dbe77e997de9d305d2b45b237352a3dec51b5bb5),
+Cues+blocchi verificati controNUMBER_OF_FRAMES dellaTrackUID, niente documenti
+parziali. Headercluster VINT variabili supportati; batch≤256KiB, limiti perread/byte/
+requests/tempo,206/ContentRange/size/validator e HTTPSredirect prima delbody.
+-URLSessionDataDelegate perblocchi, bridgebinarioBase64 versoJavaScriptCore;
+FFmpeg completo52 parte in parallelo, primo documento valido vince/cancellaaltro.
+-Descrizioni originali conservate, preferenza sulle labelespliciteForced/Signs/Songs
+se esiste alternativa stessa lingua; scelta manuale invariata. Nessuna deduzione
+forced dal numero cue. Codecvideo/receiver/OpenSubtitles/account invariati.
+
+Misure controllate: fixtureMatroskavalida8389226byte,328074byte letti/6requests,
+prime/ultimecue verificate. Throttledserverlocale1655ms intero vs133ms indicizzato.
+CLIJavaScriptCore finale: locale0.054s, HTTP0.034s (prima5.55s), suite0.197s con
+badRange/200/cambiofile/oversize/troncamento e cancellationprima/inflight passati.
+Non sono tempi della puntata privata. TestHTTP anteriore0.1sNode è distinto dal
+percorso nativo; non usare il numero come promessa su iPhone/TV.
+
+Failure intermedie2a192/7dc (42133853361/42136639560): fixture dichiarava7ma
+muxer iOS ha omesso la battuta durata0, lasciando6pacchetti e6Cues. Exportfile
+verificato conFFprobe e parser: con ilsolo tagcorretto6 il fastpath riesce. In94
+gate invariato, statistica fixture corretta; nessun falsoPASSretroattivo.
+Difetto separato upstreamassumeva headerclusteruguali: corretto e provato con
+MKVvero2cluster diversi, stessi testi/tempiFFmpeg. Varianti superate annullate.
+
+CB028 IMPLEMENTATO_DA_VERIFICARE. Per misurare: Preferenze→Memoria locale→Svuota
+cache sottotitoli, riaprire stessa puntata e scegliere seconda traccia; escludere
+anche il documento ancora inRAM durante una sessione giàattiva. Log sicuro
+caption_index_attempt/ready/fallback con secondi/byte/requests/codici distingue
+fastpath dafallback. Se indice mancante/incompleto resta lettura completa52;
+il fallback non attende un timeout sequenziale. Nessun tempo fisso promesso,
+nessun merge o releasepubblica. Checkpoint sotto storici.
+
+---
+
 # Candidata53 — priorità latenza sottotitoli (CB028), 2026-11-06
 
 Utente conferma seconda traccia inglese visibile sulla52 dopo56secondi. Non più
