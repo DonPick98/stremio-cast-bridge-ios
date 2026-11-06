@@ -139,7 +139,8 @@ final class LocalStreamProxy: @unchecked Sendable {
     private let peer: String
     private let producerPort: UInt16
     private let contentType: String
-    private let captions: [Int:Data]
+    private var captions: [Int:Data]
+    private var mediaRequested = false
     private var listener: NWListener?
     private var opening: CheckedContinuation<URL,Error>?
     private var pairs: [UUID:Pair] = [:]
@@ -200,6 +201,16 @@ final class LocalStreamProxy: @unchecked Sendable {
                     self.queue.asyncAfter(deadline:.now()+8) { if self.opening != nil { self.finish() } }
                 } catch { self.opening = nil; continuation.resume(throwing:LocalStreamError.listener) }
             }
+        }
+    }
+    /// Called only before publishing the candidate URL to the receiver. The
+    /// short queue barrier changes the manifest atomically without touching
+    /// the warmed producer connection or permitting late stream reuse.
+    func installCaptionsBeforePlayback(_ documents:[Int:Data]) -> Bool {
+        queue.sync {
+            guard !stopped, !mediaRequested, listener != nil else { return false }
+            captions.merge(documents) { _,new in new }
+            return true
         }
     }
     func stop() { queue.async { self.finish() } }
@@ -386,6 +397,7 @@ final class LocalStreamProxy: @unchecked Sendable {
             pair.client.send(content:header,contentContext:.finalMessage,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.close(id) })
             return
         }
+        mediaRequested = true
         if let stream = warm, stream.ready {
             trace("warm transfer header=\(stream.header.count) body=\(stream.body.count)")
             if method == "HEAD" {
@@ -455,4 +467,5 @@ final class LocalStreamProxy: @unchecked Sendable {
         }
     }
 }
+
 

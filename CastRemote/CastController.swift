@@ -1055,8 +1055,30 @@ import AVFAudio
                             self.timeline.cancelActive();self.seekRebuildPending=true
                             self.flushQueuedSeek();return
                         }
+                        var publishedSelection=selection
+                        // Extraction can finish while engine.start is suspended.
+                        // Attach it before this candidate's first LOAD instead of
+                        // starting a second encoder after the video begins.
+                        if !separateCaption, self.selectedEmbeddedText,
+                           self.extractedCaptionKey == subtitle, let text=self.extractedCaptionText {
+                            let previousDelay=self.subtitleDelay
+                            self.promoteReadyEmbeddedText()
+                            do {
+                                if try engine.attachCaptionsBeforeLoad([2:text],delay:self.subtitleDelay) {
+                                    publishedSelection=NativeSelection(input:selection.input,audio:selection.audio,subtitle:selection.subtitle,appearance:selection.appearance,external:selection.external,extracted:self.embeddedSubtitleURL,captionIdentity:self.subtitleIdentity,overlayDelay:selection.overlayDelay)
+                                    PlaybackDiagnostics.record(.tracks,["phase":"caption_first_load","tracks":"1"])
+                                } else {
+                                    self.selectedSubtitle=subtitle;self.subtitleDelay=previousDelay
+                                }
+                            } catch {
+                                // Caption attachment cannot discard a playable
+                                // candidate. Existing delivery retries after LOAD.
+                                self.selectedSubtitle=subtitle;self.subtitleDelay=previousDelay
+                                PlaybackDiagnostics.record(.tracks,["phase":"caption_first_load_fallback"])
+                            }
+                        }
                         self.nativeEngine?.stop()
-                        self.nativeEngine = engine;self.nativeEngineGeneration=streamToken; self.nativeSelection = selection
+                        self.nativeEngine = engine;self.nativeEngineGeneration=streamToken; self.nativeSelection = publishedSelection
                         if burnedSubtitle != "none" { engine.setBurnedSubtitleDelay(self.subtitleDelay) }
                         PlaybackDiagnostics.record(.prepare,["phase":"ready","mode":String(describing:mode)])
                         engine.refreshBackground()
@@ -2027,6 +2049,7 @@ import AVFAudio
         }
     }
 }
+
 
 
 

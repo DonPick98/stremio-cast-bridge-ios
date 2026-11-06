@@ -334,6 +334,26 @@ enum EmbeddedMediaError: LocalizedError {
         }
         stop(); throw EmbeddedMediaError.timeout
     }
+    /// Enrich a prepared, unpublished candidate without restarting its encoder.
+    /// All engine state and the controller's promotion stay on MainActor with
+    /// no suspension between validation, installation and the first LOAD.
+    func attachCaptionsBeforeLoad(_ captions:[Int:String],delay:Double) throws -> Bool {
+        guard running, !failed, let proxy, let url=streamURL else { return false }
+        let window=SubtitleWindow(center:delay)
+        guard captionURLs.isEmpty || captionWindow.center == window.center else { return false }
+        var documents:[Int:Data]=[:]
+        for (kind,text) in captions {
+            for variant in window.variants(kind:kind) {
+                documents[variant.id]=try WebVTTTimeline.rebased(text,offset:offset,delay:variant.delay)
+            }
+        }
+        guard !documents.isEmpty, proxy.installCaptionsBeforePlayback(documents) else { return false }
+        captionWindow=window
+        for id in documents.keys {
+            captionURLs[id]=url.deletingLastPathComponent().appendingPathComponent("subtitle-\(id).vtt")
+        }
+        return true
+    }
     func stop() {
         PlaybackDiagnostics.record(.producer,["phase":"stop"])
         running = false; startedStream = false; onFailure = nil; producerEnded = true
@@ -463,5 +483,6 @@ enum EmbeddedMediaError: LocalizedError {
         let ip = String(cString:buffer); guard CastWire.localIPv4(ip) else { throw EmbeddedMediaError.address }; return ip
     }
 }
+
 
 

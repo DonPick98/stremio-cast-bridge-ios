@@ -161,6 +161,10 @@ import ObjectiveC
         let engine = EmbeddedMediaEngine(); defer { engine.stop() }
         let caption = "WEBVTT\n\n00:00:04.000 --> 00:00:06.000\nCaption sync sample\n\n"
         let stream = try await engine.start(input:input,deviceIP:"127.0.0.1",start:1.25,videoMode:.copy,audioID:nil,subtitleID:nil,style:SubtitleAppearance(),captions:[1:caption],subtitleDelay:30,selfTest:true)
+        let attached=try engine.attachCaptionsBeforeLoad([2:caption],delay:30)
+        guard attached,let embeddedID=engine.captionID(kind:2,delay:30.5),let embeddedURL=engine.captionURLs[embeddedID] else { throw EmbeddedMediaError.encoder }
+        let (embeddedData,embeddedResponse)=try await URLSession.shared.data(from:embeddedURL)
+        let attachedPassed=String(decoding:embeddedData,as:UTF8.self).contains("00:00:33.250") && (embeddedResponse as? HTTPURLResponse)?.statusCode==200 && engine.streamURL==stream && engine.offset==1.25
         var checks:[[String:Any]] = []
         for (delay,expected) in [(30.0,"00:00:32.750"),(30.5,"00:00:33.250"),(29.5,"00:00:32.250")] {
             guard let id = engine.captionID(kind:1,delay:delay), let url = engine.captionURLs[id] else { throw EmbeddedMediaError.encoder }
@@ -169,8 +173,11 @@ import ObjectiveC
             checks.append(["delay":delay,"id":id,"passed":(response as? HTTPURLResponse)?.statusCode == 200 && text.contains(expected) && text.contains("Caption sync sample")])
         }
         let (body,_,eof) = try await NativeStreamCapture().read(stream)
-        let passed = engine.captionURLs.count == 21 && checks.allSatisfy{$0["passed"] as? Bool == true} && eof && body.count > 4096
-        return ["passed":passed,"variants":engine.captionURLs.count,"checks":checks,"videoPreserved":eof && body.count > 4096]
+        let lateRejected = !(try engine.attachCaptionsBeforeLoad([2:caption],delay:30))
+        engine.stop()
+        let stoppedRejected = !(try engine.attachCaptionsBeforeLoad([2:caption],delay:30))
+        let passed = engine.captionURLs.count == 42 && checks.allSatisfy{$0["passed"] as? Bool == true} && eof && body.count > 4096 && attachedPassed && lateRejected && stoppedRejected
+        return ["passed":passed,"variants":engine.captionURLs.count,"checks":checks,"videoPreserved":eof && body.count > 4096,"beforeFirstLoad":attachedPassed,"consumedRejected":lateRejected,"stoppedRejected":stoppedRejected]
     }
     private static func qualityProbe(documents:URL) async -> [[String:Any]] {
         let cases:[(String,String,EmbeddedMediaEngine.VideoMode,Double,Int)] = [
@@ -400,5 +407,6 @@ final class NativeStreamCapture: NSObject, URLSessionDataDelegate, @unchecked Se
     }
 }
 #endif
+
 
 
