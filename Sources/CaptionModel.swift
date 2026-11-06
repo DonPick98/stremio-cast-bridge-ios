@@ -82,7 +82,7 @@ enum DirectCaptionPolicy {
     }
 }
 
-enum CaptionFailure:Error { case input,probe,track,unsupported,limit,timeout,process,network,cancelled }
+enum CaptionFailure:Error { case input,probe,track,unsupported,limit,timeout,process,empty,document,network,cancelled }
 enum CaptionFormat:String,Codable { case vtt,ass }
 struct CaptionTrack:Equatable {
     let index:Int
@@ -165,6 +165,19 @@ enum CaptionDocument {
     }
 }
 enum CaptionArguments {
+    // Finite files: reconnect only on transient failures, never at clean EOF.
+    // The process owner's deadline/cancellation still bounds the whole job.
+    static let networkInputOptions=["-rw_timeout","5000000","-tls_verify","1",
+        "-reconnect","1","-reconnect_on_network_error","1",
+        "-reconnect_on_http_error","408,500,502,503,504",
+        "-reconnect_streamed","1","-reconnect_delay_max","2"]
+    static func catalog(input:URL,headerOnly:Bool)->[String] {
+        var args=["-v","quiet","-probesize","8388608","-analyzeduration","3000000","-print_format","json","-show_streams","-show_format"]
+        if headerOnly{args.append("-nofind_stream_info")}
+        if !input.isFileURL{args += networkInputOptions}
+        args.append(input.isFileURL ? input.path:input.absoluteString)
+        return args
+    }
     static func extraction(input:String,track:Int,format:CaptionFormat,window:CaptionWindow,file:String) -> [String] {
         var args = ["-hide_banner","-nostdin","-loglevel","error","-nostats","-y"]
         if window.start > 0 { args += ["-ss",String(window.start)] }

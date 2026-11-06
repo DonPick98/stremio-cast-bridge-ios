@@ -1,3 +1,257 @@
+# IPA54 candidata disponibile — CB-028/029, 2026-11-06
+
+Pacchetto efbad5d1d6f6e1dbc1d6e5c84cc8979b439fe52b; runtime 5fb3e1cb358f25b006f697e024135dd6de4f25aa. Branch fix/captions-background-20261105, PR #9 draft. Build iPhone/regressioni finale42178072342 SUCCESSO; precedente42177019998 SUCCESSO. Lifecycle42177019965 SUCCESSO. Suite nativa runtime42177019979 SUCCESSO: beforeFirstLoad/consumedRejected/stoppedRejected/videoPreserved=true,42 varianti corrette con offset1.25 e ritardo30.5; ASS indicizzato/16SSA passati e background offscreen65.043s con pausa/ripresa/stop puliti. Replica automatica42178072267 sul solo commento licenza IN_CORSO, distinta dal test runtime passato. 53 nativa42139358480 SUCCESSO confermato.
+
+CB-028 IMPLEMENTATO_DA_VERIFICARE: testo embedded completato durante engine.start incluso nel primo LOAD del candidato. Guardie source/stream/audio/sottotitoli/seek prima della promozione; nessuna sospensione fino alla pubblicazione. Proxy installa documenti su barriera breve della propria coda, preserva produttore caldo/URL/offset/ritardo e rifiuta dopo GET media o stop. HEAD non consuma. Fallimento testo conserva video e fallback esistente. Test HTTP/CORS/HEAD/consumato/stop passati nella build; prova nativa offset1.25/ritardo30.5 PASSATA nella suite completa42177019979.
+
+IPA effettiva0.8.1(54), app+estensione54 unsigned (Mach-O senza LC_CODE_SIGNATURE, nessun profilo/firma propria), audio+processing, receiver CC1AD845, risorsaJS e MIT completo verificati.69438953byte; SHA25640b0f9f0f2153a69fc78ca647a7dc991c08b88f02f6181b933c657f23f29aba5. Artifact13484008030, run42178072342; ZIPdigest c4a2546fc49a1c2496bf4c7946532f1efe37c288fc1091635d2be8fe333db847. Scaricata, auditata e consegnata inchat come candidata.
+
+CB-029 VERIFICATO: audit del primo artifact54 ha trovato solo attribuzione cortaMIT. Ora bundler include LICENSE completo nel commentoJS, riproducibilità byte-per-byte confermata. Il codice eseguito dall’IIFE è identico a5fb3e1cb; nessuna modifica di playback. L’annotazione storica53 «licenzeMIT incluse» era troppo ampia. L’artifact intermedio13482814846 non è quello consegnato. Firma preesistente nel framework ffmpegkit vendorizzato distinta dalla firma app/estensione, entrambe assenti.
+
+Hardware53/54 ancora da misurare: Preferenze→Memoria locale→Svuota cache sottotitoli, RIAPRIRE puntata (per eliminare documento inRAM), scegliere seconda traccia inglese. caption_index_ready distingue fastpath; caption_first_load conferma un solo caricamento iniziale con testo. Nessun tempo TV promesso, nessun merge/release/Sites. Esito runtime nativo recuperato e PASSATO. Prossimo passo: misura hardware senza cache sulla stessa traccia; preservare i fallback e i vincoli di background. Storico sotto.
+
+---
+
+# IPA53 candidata disponibile — CB028 latenza, 2026-11-06
+
+Prodotto94e2c740bc055c59a5bec925947d694b2a983088, branchfix/captions-background-20261105,
+PR9draft. BuildiPhone/regressioni42139358470 SUCCESSO. Runtimefunzionale353a9232;
+94e2c740 cambia solo fixture/testbenchmark (numero frame del muxer nativo), non
+il codice prodotto. TestSDK/lifecycle42133853266 SUCCESSO sul ramo latenza.
+
+IPA effettiva0.8.1(53), app/estensione53, unsigned, audio+processing/CC1AD845,
+risorsaMKVSubtitleExtractor.js e licenzeMIT incluse.69432627byte,
+SHA256 38e66e493092fcf00f232ad852a0d842f797e42ef9fde9d524089f258df4dedc.
+Artifact13468280746, ZIPdigest sha256:cd13fd9904c68241d4cf4f6c0f68411a821c02dc0d8a4f66ca593b66d3e1b47b,
+run42139358470. File scaricato/auditato e disponibile inchat come candidata.
+Nativa completa sulla sorgente esatta42139358480 IN_CORSO: recuperare esito e
+non dichiararla passata prima della conferma. Nessun collaudo hardware53.
+
+Utente: seconda traccia inglese visibile su52 dopo56s. Risoluzione53:
+-IndicizzazioneMKV (upstreamMIT cryguy/mkv-subtitle-extractor dbe77e997de9d305d2b45b237352a3dec51b5bb5),
+Cues+blocchi verificati controNUMBER_OF_FRAMES dellaTrackUID, niente documenti
+parziali. Headercluster VINT variabili supportati; batch≤256KiB, limiti perread/byte/
+requests/tempo,206/ContentRange/size/validator e HTTPSredirect prima delbody.
+-URLSessionDataDelegate perblocchi, bridgebinarioBase64 versoJavaScriptCore;
+FFmpeg completo52 parte in parallelo, primo documento valido vince/cancellaaltro.
+-Descrizioni originali conservate, preferenza sulle labelespliciteForced/Signs/Songs
+se esiste alternativa stessa lingua; scelta manuale invariata. Nessuna deduzione
+forced dal numero cue. Codecvideo/receiver/OpenSubtitles/account invariati.
+
+Misure controllate: fixtureMatroskavalida8389226byte,328074byte letti/6requests,
+prime/ultimecue verificate. Throttledserverlocale1655ms intero vs133ms indicizzato.
+CLIJavaScriptCore finale: locale0.054s, HTTP0.034s (prima5.55s), suite0.197s con
+badRange/200/cambiofile/oversize/troncamento e cancellationprima/inflight passati.
+Non sono tempi della puntata privata. TestHTTP anteriore0.1sNode è distinto dal
+percorso nativo; non usare il numero come promessa su iPhone/TV.
+
+Failure intermedie2a192/7dc (42133853361/42136639560): fixture dichiarava7ma
+muxer iOS ha omesso la battuta durata0, lasciando6pacchetti e6Cues. Exportfile
+verificato conFFprobe e parser: con ilsolo tagcorretto6 il fastpath riesce. In94
+gate invariato, statistica fixture corretta; nessun falsoPASSretroattivo.
+Difetto separato upstreamassumeva headerclusteruguali: corretto e provato con
+MKVvero2cluster diversi, stessi testi/tempiFFmpeg. Varianti superate annullate.
+
+CB028 IMPLEMENTATO_DA_VERIFICARE. Per misurare: Preferenze→Memoria locale→Svuota
+cache sottotitoli, riaprire stessa puntata e scegliere seconda traccia; escludere
+anche il documento ancora inRAM durante una sessione giàattiva. Log sicuro
+caption_index_attempt/ready/fallback con secondi/byte/requests/codici distingue
+fastpath dafallback. Se indice mancante/incompleto resta lettura completa52;
+il fallback non attende un timeout sequenziale. Nessun tempo fisso promesso,
+nessun merge o releasepubblica. Checkpoint sotto storici.
+
+---
+
+# Candidata53 — priorità latenza sottotitoli (CB028), 2026-11-06
+
+Utente conferma seconda traccia inglese visibile sulla52 dopo56secondi. Non più
+un fallimento generale di conversione/consegna; prima traccia ancora non identificata.
+Base28aa3b2 (checkpoint recuperato), codice52 preservato come fallback.
+
+Nuovo estrattore indicizzato MKV: upstream cryguy/mkv-subtitle-extractor MIT,
+commitdbe77e997de9d305d2b45b237352a3dec51b5bb5, sorgenti+bundler offline conservati.
+AdapterJavaScriptCore/URLSession bounded; accettaASS/SSA connumeroCues/blocks uguale
+alla statistica NUMBER_OF_FRAMES della TrackUID corretta; noContentEncodings,
+noindiceparziale come documento completo. Richieste206/ContentRange/size/validator
+verificate prima delbody, HTTPSredirectguard, max1MiB/range32MiB/2048requests/12s.
+Il demuxFFmpeg completo parte in parallelo: vince il primo documento validato,
+perdente cancellato; fallback non aspetta la scadenza del percorso rapido.
+ConversioneASS52 invariata. Nessuna modifica video/receiver/account.
+
+TestNode fixture8.389.176byte:295.148byte letti/4richieste, cue iniziale e finale,
+indiceincompleto/statisticaerrata/range200 rifiutati. Serverlocale throttled:
+1.613ms lettura intera vs103ms indicizzata; misura sintetica, non puntata privata.
+TestJSC nativoCLI+URLProtocol e MKV reale con motoreapp aggiunti; CI da acquisire.
+App/estensione53. Nome originale tracce visibile anche dopo promozione;
+preferenza automatica evita labelespliciteForced/Signs/Songs se esiste alternativa
+stessalingua; selezionemanuale e unicaForced conservate. Non dedurre forced da5cue.
+
+Nessuna IPA53 ancora dichiarata pronta. Resta necessario collaudo stessa puntata
+secondatraccia con tempo reale, seek, blocco/cambioapp. Non promettere tempi fissi.
+CB028 IN_CORSO. Nessun merge/main o releasepubblica. Checkpoint sotto storici.
+
+---
+
+# IPA52: sottotitoli ancora assenti su TV — CB028 RIAPERTO (2026-11-06)
+
+Nessuna nuova IPA o correzione hardware dichiarata. Prodotto52 resta74748b2;
+HEAD documentazione4a0a598 prima di questo checkpoint. Suite esatta52
+42120072440 ora SUCCESSO, distinta dalla prova hardware ancora fallita.
+
+Nuovo log utente23:05:51→23:07:38UTC: catalogo16SSA, conversione completata
+23:07:00.386 con3720byteASS/5eventi/dropped0 e454byteVTT. Promozioneembedded,
+secondoLOAD daoffset265.600, clockvideo procede. Nessun erroreconversione.
+Questo non dimostra completezza né visibilità della traccia suTV. Cinquecue
+potrebbero essere forced/signs, una traccia sparsa corretta o estrazione interrotta.
+Non scegliere una causa senza prova; nessun HTTPfetch/ack di attivazione texttrack
+né intervallo cue nel log attuale.
+
+Risposta utente al tipo traccia: Inglese-nelfile. Difetti accertati nel codice:
+PlaybackPreferences.subtitle sceglie tracks.first per lingua senza distinguere
+forced/full; trackLabel omette RDTrack.label e mostra lingua/numero soltanto;
+embeddedSubtitleLabel perde anche il numero e descrizione originale dopo
+promoteReadyEmbeddedText. CaptionCatalog ignora disposition.forced/default.
+Questi difetti possono scegliere/nascondere una traccia sparse, ma non provano
+che questa sia la causa del file privato. OffsetVTT viene correttamente ribasato
+inEmbeddedMediaEngine.start; selectedembedded attiva kind2 conIDpresente.
+Proxy serveVTT conCORS; manca evidenza del fetch effettivo in questo caso.
+
+Prossimo passo hardware minimo: scegliere un'altra voce Inglese-Traccia…-nelfile,
+diversa dalla prima e dall'alias estratto, attendere preparazione; verificare
+visibilità. Evitare un'altra build a tentativi senza questo riscontro. Se fallisce
+servono metadati sanitizzati forced/default+intervallo/countcue, stato GET VTT e
+activeTrackIDs sul ricevitore; eventualmente sample originale autorizzato senza
+credenziali. Poi correggere scelta automatica e nomi preservando selezione manuale,
+lingua e OpenSubtitles. Nessuna scelta silenziosa basata solo sul numero5cue.
+Issue1 riaperta con evidenze; nessun codice prodotto cambiato in questa analisi.
+
+---
+
+# IPA52 pronta — CB028 implementato, collaudo file privato richiesto
+
+Prodotto74748b2a503188748fe03950e7be7fa7a1f59f83; branch fix/captions-background-20261105,
+PR9 draft. Build iPhone/regressioni42120072427 SUCCESSO. Suite nativa completa
+42118240017 su bdd3f160 SUCCESSO: independentCaptions.passed=true,
+degenerateASS=true, sixteenSSA=true, complete/batch, font/CORS/cancellazione,
+matrice codec/qualità/overlay e background65s con offscreen=true PASSATI.
+Confronto bdd3f160→74748b2 verificato: solo licenza inclusa nel bundle e fixture/test
+unitario (tempi centisecondi per portabilità FFmpegCLI); nessuna differenza nel
+codice prodotto, CaptionFFmpeg/SubtitleDocument/integrazione nativa invariati.
+La ripetizione automatica42120072440 sulla sorgente74748b2 è IN_CORSO e non
+viene dichiarata passata. Non serve attendere una duplicazione per certificare
+nuovamente il codice prodotto identico; recuperare comunque l'esito al prossimo giro.
+
+IPA effettiva0.8.1(52), app/estensione52, unsigned, audio+processing,
+CC1AD845, attribuzione Subtitle Edit presente nel bundle. 69381613byte,
+SHA256 9fffa9d92bc300c51e418bd8457b210efc6c0f33ed81d3283c344c63c7945832.
+ZIPartifact13458581190, digest sha256:9d2d62d16965de52c9f76c6ed3ff230af81262d99d23da85d40ff142d13935f6,
+run42120072427, fino2026-11-12. IPA scaricata, verificata e resa disponibile inchat.
+
+CorrezioneCB028: per ASS/SSA demux originale copy→parser eventi Swift adattato
+Subtitle Edit MIT→WebVTT. Isola durate0/clock invalidi/commenti/disegni,
+conserva dialogo/overlap/virgole, escape del testo e serializzazione dei tempi.
+Nessun VTT incompleto servito come completo. Errori empty/document distinti da
+exitFFmpeg; conteggi conversione senza testo/URL privati. SRT/WebVTT esterni,
+codecvideo, receiver, seek50 e features49 preservati. UI/accountStremio invariati.
+
+Limite: il difetto WebVTT è riprodotto con una fixture; causa esatta del file privato
+utente non provata. CB028 IMPLEMENTATO_DA_VERIFICARE, riaperto dalla prova51.
+Prossimo passo: stessa puntata/traccia su iPhone/TV e diagnostica2min se fallisce;
+nessun risultato hardware52 dichiarato. Primo51 esatto42106877735 rimaneFAILURE
+per offscreen simulatore, distinto dal nuovo successo nativo52. Nessun merge o
+release pubblica. Checkpoint seguenti storici.
+
+---
+
+# Candidata52 — CB028 riaperto dopo prova hardware51
+
+Base df38ad5, branch fix/captions-background-20261105, PR9 draft. IPA51 fallisce
+ancora: catalogo16tracce riuscito, errore process successivo senza exit-code.
+Non attribuire il caso originale a una causa non ancora provata.
+
+Riproduzione concreta locale FFmpeg6.1.1: ASS con evento durata0 e \\N\\N
+produce WebVTT non valido pur con exit0. Validazione51 scarta l'intera traccia.
+Nuovo percorso: demux ASS/SSA originale (-c:s copy, -f ass), parser Swift
+text-only adattato dal trattamento eventi Subtitle Edit (MIT, licenza inDocs),
+poi WebVTT. Scarta commenti/disegni/durate0 ed eventi non interpretabili, isola
+le anomalie per evento, conserva overlap/virgole, ordina i tempi, escapeHTML e
+linee non vuote per evitare delimitatori VTT nel payload. Nessun parser generico
+VTT reso permissivo; altri codec/media/receiver/OpenSubtitles invariati.
+Diagnostica distingue exit FFmpeg, output vuoto, documento invalido e conteggi
+conversione; nessun testo/URL privato. Dimensione/timeout/cancellazione conservati.
+Test unitari e demux nativo suMKV con ASS problematico aggiunti. App/estensione52.
+
+Prima suite esatta51 42106877735: caption indipendenti/sixteenSSA PASSATI,
+righe audio/video decoder PASSATE; workflow FAILURE perché simulatore non entra
+in offscreen (comando openurl fallito, background.offscreen=false). Non è un
+passaggio della prova background né una regressione caption dimostrata.
+Parent51 42106360183 resta SUCCESSO distinto. Non indebolire le asserzioni.
+
+CI52 da acquisire; nessuna IPA52 dichiarata pronta. File privato originale
+non disponibile: prova iPhone/TV specifica necessaria, CB028 IN_CORSO. Non toccati
+accountStremio/altrefeatures. Non fare merge/main o pubblicazione release.
+
+---
+
+# IPA51 pronta — priorità SSA, CB027/028 (2026-11-05)
+
+Prodotto620f7544e840cbeff128b425e650a80d0dd95d5a; branch fix/captions-background-20261105,
+PR9 draft. Build iPhone42106877628 e policy/SDK42106877504 SUCCESSO.
+Suite nativa completa42106360183 su6db6d31 SUCCESSO: sixteenSSA=true,
+independentCaptions.passed=true, documenti completi/font/CORS/cancellazione,
+gate video/audio/caption,35codec/qualità/background passati. CaptionFFmpeg,
+CaptionModel e CaptionIntegrationValidation sono identici tra6db6d31 e620f754.
+Unica differenza prodotto620: prima registrazione job quando l'handoff inizialmente
+inactive diventa foreground. Questa parte compilata/testata SDK sul prodotto.
+La ripetizione della suite completa sulla sorgente esatta42106877735 è IN_CORSO;
+recuperarne esito nella prossima sessione. Non confondere fonti dei risultati.
+
+IPA effettiva verificata: app/estensione0.8.1(51), unsigned, audio+processing,
+receiverCC1AD845,69374568byte. SHA256
+e1809e67f19a7b6017fb6fed0ed60ae8abefe6fb45f58238b74f3c34eecdc3ca.
+ZIPartifact13452947597, digest ZIP sha256:d74fc911feedf4aa8aca8398d3f751363241dae6baefe48779d2a1ad2c035b00.
+Download https://github.com/DonPick98/stremio-cast-bridge-ios/actions/runs/42106877628/artifacts/13452947597
+Fino2026-11-12; IPA estratta e resa disponibile nella chat.
+
+SSA: header-only prima dell'analisi video, estrazione scelta isolata dalle alternative,
+riconnessione HTTP temporanea bounded, exit code/state senza URL/log grezzi e retry
+della stessa traccia daUI. TestCLI6.1.1 HTTPS503→success e403 senza retry passati,
+distinti dal backend nativo. Originale privato con16SSA/HEVC4K non acquisito:
+CB028 resta IMPLEMENTATO_DA_VERIFICARE, nessuna promessa che quel file sia risolto.
+BG: consegna confermata per segmenti e residuo ricalcolato dopo seekback, clock
+vecchi esclusi, rollback riallineato e diagnostica unità/ultimo progresso.
+CB027 IMPLEMENTATO_DA_VERIFICARE hardware; progresso fermo prima della scadenza
+è provato nel codice50, la causa precisa dell'expiry di iOS resta un'ipotesi.
+Nessun heartbeat fittizio, rinnovo automatico, nuovo receiver o pagamento.
+Fix50 e features49 preservati. Nessun merge su seek/feature/fix/main.
+Registro issue1 aggiornato. Checkpoint seguenti storici.
+
+---
+
+# Candidata51 — priorità SSA e progresso background (CB027/028)
+
+Base db3f114 / IPA50, branch fix/captions-background-20261105. Due riscontri:
+-16SSA/HEVC2160: fallimenti probe/proccess prima del testo; causa originale non
+ancora provata. Catalogo header-only con fallback analizzato, scelta singola
+anziché batch alternativo, recupero HTTP temporaneo bounded, codici d'uscita
+sanitizzati e retry della stessa traccia visibile senza cambiare sorgente.
+-Seek2061→556: BackgroundPlaybackWork ignorava le posizioni sotto start1952 e
+pubblicava progresso fermo. Ora conta consegna confermata per segmento, rebase
+non guadagna unità e aggiorna lavoro residuo; clock vecchi/preparazione esclusi.
+Rollback riallinea l'anchor precedente. Log completed/total/tempo da ultimo
+progresso a cadenza snapshot e prima di expiry. Nessun heartbeat fittizio,
+nessun rinnovo automatico dopo expiry, posizione originale50 preservata.
+
+Test previsti: regressioni tempi reali e16SSA, vero backend iOS/probe/estrazione,
+SDK e buildiPhone. App/estensione51. Da acquisire risultati prima della consegna;
+nessuna IPA51 ancora dichiarata. Il file privato non è stato acquisito e un test
+sintetico non certifica quel caso, né la causa precisa della scadenza di iOS.
+Nessuna finestra VTT parziale servita come documento completo. Receiver gratuito,
+OpenSubtitles e decoder invariati. SyncStremio non modificata: login separato
+dal toggle, come documentato nella issue1. Nessun account reale usato.
+
+---
+
 # IPA50 pronta — CB025/026, 2026-11-05
 
 Sorgente prodotto750ad1d06c8c6e708a21c571e96797931170dc3e; branch fix/seek-burst-20261105, PR8 draft.

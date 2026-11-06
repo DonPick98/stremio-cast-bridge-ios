@@ -19,7 +19,7 @@ import Foundation
     private let flushDelayNanoseconds:UInt64
     private(set) var persistenceWrites=0
     private var changes:[String:String] = [:]
-    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","raw","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build","domain","request","action","confirmed","battery","thermal","lowPower","power","rate","upstreamWait","downstreamWait","session","previousSession","channels","requestGeneration","frames","mediaSeconds","wallSeconds","speed","duplicate","dropped","writes"]
+    private static let allowed:Set<String> = ["phase","kind","mode","codec","audio","subtitle","width","height","fps","position","reported","raw","duration","paused","local","connected","generation","code","status","attempt","bytes","seconds","result","burn","copyAudio","offset","target","foreground","tracks","idle","owned","pending","version","build","domain","request","action","confirmed","battery","thermal","lowPower","power","rate","upstreamWait","downstreamWait","session","previousSession","channels","requestGeneration","frames","mediaSeconds","wallSeconds","speed","duplicate","dropped","writes","completed","total"]
 
     init(retention:TimeInterval = 120,limit:Int = 400,file:URL? = nil,flushDelayNanoseconds:UInt64=2_000_000_000,clock:@escaping () -> Date = Date.init) {
         self.retention = retention; self.limit = limit; self.file = file; self.clock = clock

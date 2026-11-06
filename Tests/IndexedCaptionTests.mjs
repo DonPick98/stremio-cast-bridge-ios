@@ -1,0 +1,31 @@
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';import path from 'node:path';
+const concat=(...parts)=>Buffer.concat(parts),uint=n=>{const b=Buffer.alloc(8);b.writeBigUInt64BE(BigInt(n));return b;};
+const size=n=>{for(let bytes=1;bytes<=8;bytes++){if(n<2**(7*bytes)-1){let v=BigInt(n)|(1n<<BigInt(7*bytes));const b=Buffer.alloc(bytes);for(let i=bytes-1;i>=0;i--){b[i]=Number(v&255n);v>>=8n;}return b;}}throw Error('size');};
+const id=n=>Buffer.from(n.toString(16).padStart(n.toString(16).length+(n.toString(16).length%2),'0'),'hex');
+const el=(n,b)=>concat(id(n),size(b.length),b),u=(n,v)=>el(n,uint(v)),str=(n,s)=>el(n,Buffer.from(s));
+const header='[Script Info]\nScriptType: v4.00+\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
+const tracks=el(0x1654ae6b,el(0xae,concat(u(0xd7,2),u(0x73c5,1234),u(0x83,17),str(0x86,'S_TEXT/ASS'),str(0x22b59c,'eng'),str(0x63a2,header))));
+const info=el(0x1549a966,u(0x2ad7b1,1000000));
+const tag=count=>el(0x1254c367,el(0x7373,concat(el(0x63c0,u(0x63c5,1234)),el(0x67c8,concat(str(0x45a3,'NUMBER_OF_FRAMES'),str(0x4487,String(count)))))));
+const group=(order,time,text)=>el(0xa0,concat(el(0xa1,concat(Buffer.from([0x82,time>>8,time&255,0]),Buffer.from(`${order},0,Default,,0,0,0,,${text}`))),u(0x9b,2000)));
+const first=group(0,1000,'EARLY CAPTION'),last=group(1,9000,'LATE CAPTION');
+const timestamp=u(0xe7,0),padding=el(0xec,Buffer.alloc(8*1024*1024,0x5a));
+const cluster=el(0x1f43b675,concat(timestamp,first,padding));
+const finalCluster=el(0x1f43b675,concat(timestamp,last));
+const seek=positions=>el(0x114d9b74,concat(...positions.map(([key,p])=>el(0x4dbb,concat(el(0x53ab,id(key)),u(0x53ac,p))))));
+function fixture(count=2,omit=false){let head=seek([[0x1549a966,0],[0x1654ae6b,0],[0x1254c367,0],[0x1c53bb6b,0]]);const tags=tag(count),clusterPos=head.length+info.length+tracks.length+tags.length;
+const cue=(time,rel,at=clusterPos)=>el(0xbb,concat(u(0xb3,time),el(0xb7,concat(u(0xf7,2),u(0xf1,at),u(0xf0,rel)))));
+const cues=el(0x1c53bb6b,concat(cue(1000,timestamp.length),...(omit?[]:[cue(9000,timestamp.length,clusterPos+cluster.length)])));
+head=seek([[0x1549a966,head.length],[0x1654ae6b,head.length+info.length],[0x1254c367,head.length+info.length+tracks.length],[0x1c53bb6b,clusterPos+cluster.length+finalCluster.length]]);
+return concat(Buffer.from('1a45dfa3a34286810142f7810142f2810442f381084282886d6174726f736b614287810442858102','hex'),el(0x18538067,concat(head,info,tracks,tags,cluster,finalCluster,cues)));}
+vm.runInThisContext(fs.readFileSync(new URL('../Resources/MKVSubtitleExtractor.js',import.meta.url),'utf8'));
+let bytes=0,requests=0,current=fixture();
+globalThis.fetch=async(_url,options)=>{const m=/bytes=(\d+)-(\d+)/.exec(options.headers.Range),start=Number(m[1]),end=Math.min(Number(m[2]),current.length-1),body=current.subarray(start,end+1);bytes+=body.length;requests++;return{status:206,headers:{get:()=>`bytes ${start}-${end}/${current.length}`},arrayBuffer:async()=>body.buffer.slice(body.byteOffset,body.byteOffset+body.length)}};
+const start=performance.now(),result=await CastMKV.indexedASS('native',0,'eng');
+assert.equal(result.frames,2);assert.match(result.text,/EARLY CAPTION/);assert.match(result.text,/LATE CAPTION/);assert.match(result.text,/0:00:09.00,0:00:11.00/);assert(bytes<current.length/8);
+const report={passed:true,fileBytes:current.length,readBytes:bytes,requests,milliseconds:Math.round(performance.now()-start)};
+if(process.argv[2]){fs.mkdirSync(process.argv[2],{recursive:true});fs.writeFileSync(path.join(process.argv[2],'indexed-caption.mkv'),current);}
+current=fixture(3);await assert.rejects(()=>CastMKV.indexedASS('native',0,'eng'));
+current=fixture(2,true);await assert.rejects(()=>CastMKV.indexedASS('native',0,'eng'));
+globalThis.fetch=async()=>({status:200});await assert.rejects(()=>CastMKV.indexedASS('native',0,'eng'));
+console.log(JSON.stringify(report));

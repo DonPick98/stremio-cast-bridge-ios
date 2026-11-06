@@ -1,11 +1,49 @@
 import Foundation
 @main struct CaptionModelTests{
     static func main()throws{
+        let preferences=UserDefaults(suiteName:"caption-full-"+UUID().uuidString)!
+        let choices=[RDTrack(key:"forced",language:"eng",label:"English Signs & Songs",codec:"ssa"),RDTrack(key:"full",language:"eng",label:"English Full",codec:"ssa")]
+        precondition(PlaybackPreferences.subtitle(choices,external:false,handoff:"en",defaults:preferences)=="full")
+        precondition(PlaybackPreferences.subtitleDetail(choices[0])=="English Signs & Songs")
+        precondition(PlaybackPreferences.subtitle([choices[0]],external:false,handoff:"en",defaults:preferences)=="forced")
+        // The old direct FFmpeg VTT path includes a zero-duration cue, a
+        // blank paragraph and drawing coordinates for this valid ASS script.
+        let fixture=URL(fileURLWithPath:#filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/captions-degenerate.ass")
+        let converted=try SubtitleDocument.embeddedASS(Data(contentsOf:fixture))
+        precondition(converted.events==8 && converted.skipped==3)
+        precondition(converted.text.components(separatedBy:"-->").count==6)
+        precondition(converted.text.contains("Valid\nSecond line") && converted.text.contains("Spoken text"))
+        precondition(converted.text.contains("00:00:09.990 --> 00:00:12.000"))
+        precondition(converted.text.contains("Overlap, with comma &amp; &lt;literal&gt;"))
+        precondition(!converted.text.contains("m 0 0") && !converted.text.contains("Zero") && !converted.text.contains("Hidden comment"))
+        // Higher-precision imported ASS is handled by our parser, but stays
+        // outside the native mux fixture (ASS packets use centiseconds).
+        let rounding=try SubtitleDocument.embeddedASS(Data("[Events]\nDialogue: 0,0:00:09.9999,0:00:12.00,Default,,0,0,0,,Rounding".utf8))
+        precondition(rounding.text.contains("00:00:10.000 --> 00:00:12.000"))
+        let original=try SubtitleDocument.normalize(Data(contentsOf:fixture))
+        precondition(original==converted.text)
+        let shift=try WebVTTTimeline.rebased(converted.text,offset:7,delay:0)
+        precondition(String(decoding:shift,as:UTF8.self).contains("00:00:00.000 --> 00:00:02.000"))
+        for invalid in ["[Events]\nDialogue: 0,0:00:01.00,0:00:01.00,Default,,0,0,0,,zero", "[Events]\nComment: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,hidden"] {
+            do{_=try SubtitleDocument.embeddedASS(Data(invalid.utf8));preconditionFailure("Unusable ASS accepted")}catch{}
+        }
         let data=Data(#"{"streams":[{"index":0,"codec_type":"video","codec_name":"hevc"},{"index":4,"codec_type":"subtitle","codec_name":"hdmv_pgs_subtitle","tags":{"language":"eng"}},{"index":7,"codec_type":"subtitle","codec_name":"ass","tags":{"language":"ita"}},{"index":12,"codec_type":"attachment","tags":{"filename":"../untrusted/font.ttf"}}]}"#.utf8)
         let catalog=try CaptionCatalog.parse(data)
         precondition(catalog.tracks.count==2&&catalog.fonts.first?.index==12)
         let selected=try catalog.selected(ordinal:1,vlcID:7,language:"it",codec:"ssa")
         precondition(selected.index==7)
+        let header=CaptionArguments.catalog(input:URL(fileURLWithPath:"/tmp/synthetic.mkv"),headerOnly:true)
+        precondition(header.contains("-nofind_stream_info") && header.contains("-show_format") && header.contains("-show_streams"))
+        precondition(!CaptionArguments.catalog(input:URL(fileURLWithPath:"/tmp/synthetic.mkv"),headerOnly:false).contains("-nofind_stream_info"))
+        let retry=CaptionArguments.networkInputOptions
+        precondition(!retry.contains("-reconnect_at_eof"),"Clean EOF must stay finite")
+        let statuses=retry[retry.firstIndex(of:"-reconnect_on_http_error")!+1].split(separator:",")
+        precondition(!statuses.contains("401") && !statuses.contains("403") && !statuses.contains("429"))
+        let many:[String:Any]=["streams":(0..<16).map{["index":$0,"codec_type":"subtitle","codec_name":"ass","tags":["language":$0==1 ? "ita":"eng"]] as [String:Any]}]
+        let all=try CaptionCatalog.parse(JSONSerialization.data(withJSONObject:many))
+        precondition(all.tracks.count==16 && all.tracks.allSatisfy(\.isText))
+        let exactASS=try all.selected(ordinal:1,vlcID:1,language:"ita",codec:"ssa")
+        precondition(exactASS.index==1)
         do{_=try catalog.selected(ordinal:0,vlcID:4,language:"ita",codec:"ssa");preconditionFailure("Wrong track accepted")}catch{}
         let window=CaptionWindow(position:100,duration:150)
         precondition(window.start==85&&window.end==150)
@@ -67,3 +105,4 @@ import Foundation
         print("Caption model passed: exact stream mapping, bitmap exclusion, bounded windows, original timestamps, independent coverage heartbeat and complete cue publication")
     }
 }
+

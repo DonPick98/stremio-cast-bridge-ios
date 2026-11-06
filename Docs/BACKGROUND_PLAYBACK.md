@@ -1,3 +1,14 @@
+## Aggiornamento51 — lavoro confermato dopo un seek
+
+Il caso50 da2061 a556.727 teneva il progresso bloccato sotto lo start1952.945.
+Il lavoro si conta ora per segmenti di riproduzione confermati. Una nuova
+preparazione ribasa l'anchor e il totale residuo, senza contare il salto come
+consegna. I vecchi clock e il buffering non pubblicano unità. Un rollback
+ripristina l'anchor precedente; pausa senza avanzamento non crea heartbeat.
+Il totale può aumentare se si torna indietro perché il lavoro richiesto aumenta.
+La scadenza resta rispettata e non genera rinnovi. Il rapporto fra progresso
+fermo e la scadenza osservata è un'ipotesi, non una causa OS dimostrata.
+
 # Trasmissione locale in background
 
 La prova fisica 0.8.1(41), 2026-11-04 20:31:36.807 UTC, mostra FFmpeg
