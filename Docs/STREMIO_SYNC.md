@@ -1,72 +1,29 @@
-# Sincronizzazione libreria Stremio
+# Sincronizzazione libreria Stremio — build56
 
-Implementazione indipendente del protocollo pubblicato da Stremio/stremio-core,
-revisione3417c2e7ed45cdbfd86b3226f69814c2dc4947ad. Riferimenti primari:
-- src/types/api/request.rs, response.rs e fetch_api.rs;
-- src/unit_tests/serde/auth_request.rs (type Login, email/password/facebook=false);
-- src/types/library/library_item.rs (millisecondi, video_id, _mtime, removed/temp);
-- stremio-watched-bitfield/src/{watched_bitfield,bitfield8}.rs (anchor, little-endian bits, zlib/base64).
-Base: https://github.com/Stremio/stremio-core/tree/3417c2e7ed45cdbfd86b3226f69814c2dc4947ad
+Protocollo reimplementato in Swift, senza codice Rust/React copiato e senza nuovo servizio a pagamento. Fonti primarie verificate il2026-11-06:
+- Stremio/stremio-core3417c2e7ed45cdbfd86b3226f69814c2dc4947ad: src/models/meta_details.rs (external_player_progress_update), src/models/player.rs (Seek/TimeChanged), src/constants.rs (WATCHED_THRESHOLD_COEF=0.7), tipi API/libraryItem e watched-bitfield.
+- Stremio/stremio-web55d8b33487e95ab8d67fda3030c7b86dd68f2d99: src/routes/MetaDetails/useExternalPlayerCallback.ts legge position in secondi, converte in millisecondi e invia ExternalPlayerProgressChanged. Il ritorno non è un canale universale per ogni player/piattaforma.
 
-## Comportamento
+## Comportamento56
 
-Accesso email/password, token solo nel Keychain AfterFirstUnlockThisDeviceOnly.
-Password non salvata né inviata al bridge/add-on/diagnostica. Sync disattivata fino
-ad abilitazione esplicita; riconnessione non abilita automaticamente. Si supportano
-movie IMDb e serie IMDb con episodi canonici. Non si importano l'intera libreria,
-account da altre app o credenziali da link. Per account soloSSO occorre un accesso
-email/password valido; Apple/Facebook/QR non sono implementati.
+CastBridge dispone già del clock confermato della propria sessione TV: aggiorna direttamente la libreria dell’account, senza riaprire Stremio automaticamente. IDIMDb movie/series canonici, millisecondi,video_id e bitfield sono preservati. Il player esterno di Stremio può usare posizione/durata; qui si adotta il criterio più conservativo del player interno: tempo realmente avanzato>70% della durata, oppure fine naturale confermata vicina alla fine. La sola apertura, un target seek o il tempo in pausa non marcano visto. Alla soglia l’offset continua a rappresentare il punto attuale; alla fine naturale diventa0.
 
-In uscita si usa lastConfirmedPosition della sessione TV posseduta, ogni60s e
-su pausa/background/stop/cambio sorgente. Target seek, progresso UI predetto e
-buffering non sostituiscono il clock confermato. Visto soltanto su fine naturale
-con posizione vicina alla durata; non su semplice seek o timeout. Il titolo è
-inviato solo all'API di libreria dell'account, mai alla diagnostica.
+StremioWatchTracker usa movimento del clockTV e uptime, gestisce status ripetuti senza falsa accelerazione, non accredita grandi salti/rewind e viene sospeso esplicitamente prima di seek/preparazione. Crediti cumulativi per sessione: solo la differenza non ancora riconosciuta aumenta timeWatched. Le ricevute persistenti evitano doppio conteggio dopo retry e coalescenza. Campioni ogni tick; invii al massimo ogni15s se posizione/credito cambiano, più eventi forzati su pausa/background/stop. Nessun traffico ripetuto per progressi fermi, salvo retry della coda.
 
-La lettura del punto remoto avviene alla selezione della sorgente e richiede
-video_id corrispondente, _mtime più recente e nessuna modifica locale in coda.
-Progressi locali storici senza timestamp vengono conservati: non se ne presume
-l'anzianità. Si può disattivare l'import del punto remoto separatamente. I visti
-esistenti sono conservati e aggiornati nell'account, non c'è ancora un browser
-completo della libreria o un'azione manuale visto/nonvisto in Cast Bridge.
+## Conferma e recupero
 
-## Integrità e offline
+Prima del PUT, il journal protetto salva evento, stato desiderato e baseline. Gli eventi in-flight non vengono rimossi dalla coalescenza. Dopo success:true si rilegge lo stesso item: solo uno stato coerente consente ACK e messaggio «salvati e verificati». Se risposta/readback si perdono o il processo termina, il journal riconosce lo stato già applicato senza un secondo credito. Se il server conserva la baseline, il retry usa metadata/appartenenza alla libreria freschi; se è cambiato lo stato di riproduzione, blocca per conflitto. Campi sconosciuti, visti esistenti e preferiti vengono conservati. Le voci nuove rimangono temporanee/removed, senza aggiunta automatica ai preferiti.
 
-Fetch singolo libraryItem prima di ogni Put. Campi sconosciuti, appartenenza alla
-libreria, notifiche e watched remoti sono preservati. Nuove voci removed=true e
-temp=true per Continua a guardare senza aggiunta automatica ai preferiti.
-Bitfield little-endian, zlib livello6, parsing da destra per ID con colon; anchor
-non trovato/catalogo parziale che perderebbe bit impostati blocca la modifica.
-Catalogo completo include speciali anche se nascosti nella navigazione del player.
+Outbox32eventi, ricevute128, account isolati tramiteSHA256, file≤2MiB con protezione UntilFirstUserAuthentication. Vecchie code senza nuovi campi vengono decodificate. PUT e GET limitati nel tempo/dimensione, nessun redirect del token. Retry-After429 rispettato; retrymanuale può anticipare solo il backoff locale. Contatore pending e ultima verifica visibili. La rete/account reale non sono usati nei test.
 
-Outbox fino32 eventi, coalescenza pervideo senza perdere episodi conclusi,
-protezione file UntilFirstUserAuthentication, percorso SHA256(accountID), massimo
-2MiB. Una conferma obsoleta non elimina l'evento sostituito. Le ricevute dello
-stato scritto sono persistenti: permettono di inviare più episodi offline senza
-scambiare il nostro _mtime di upload per un conflitto da altro dispositivo.
-Sono accettate solo se lo stato remoto coincide esattamente con la ricevuta.
+## Account e consenso
 
-Uno stato remoto più recente e diverso resta in conflitto: non viene sovrascritto.
-Il pulsante MantieniStremio ignora soltanto gli eventi bloccati, con conferma.
-Le altre voci continuano. Retry-After429 rispettato (secondi1–3600); altri errori
-hanno backoff60s–15min. Riavvio/nuova riproduzione permettono un nuovo tentativo,
-non c'è promessa di esecuzione persistente iOS. Nessuna sincronizzazione avviene
-dopo disabilitazione/cambio account; la generazione invalida callback precedenti.
-Una richiesta già accettata dal server non può essere annullata retroattivamente.
-La disconnessione elimina token e coda dell'account corrente suquesto iPhone,
-senza cancellare la libreria remota.
+Password mai salvata, token solo nel KeychainAfterFirstUnlockThisDeviceOnly. Il pulsante «Collega e sincronizza» rende esplicita l’attivazione dopo login; la sincronizzazione resta disattivabile. L’upgrade non attiva un account che era disabilitato: nel player compare «Attiva sincronizzazione Stremio» per gli account già collegati. Nessun import daaltre app/SSO/QR. Disconnessione elimina token+coda locale, non la libreria remota. Disabilitazione/cambio account invalidano task/callback; un PUT già accettato non è revocabile.
 
-L'API non espone un Put condizionale/CAS nel contratto esaminato. Il confronto
-_mtime è best-effort: una modifica fra Get e Put rimane una possibile corsa.
-Non dichiarare sincronizzazione atomica fra dispositivi. Non copiare valori o
-errori grezzi dell'API nei log/issue. Test usano esclusivamente identità sintetiche.
+## Ripresa e limiti
 
-## Verifica necessaria
+Resume remoto soltanto se stesso video_id, _mtime più recente e nessun evento locale pendente. Timestamp storici mancanti non sono considerati vecchi automaticamente. La lettura avviene alla scelta della sorgente; Stremio può conservare una UI locale finché non ricarica la libreria. Non c’è CAS/PUT condizionale nel contratto esaminato: la corsa fra altri dispositivi e GET/PUT rimane best-effort. Non promettere atomicità fra dispositivi o esecuzione iOS illimitata. FT-004 resta IMPLEMENTATO_DA_VERIFICARE finché manca prova su account/telefono/Chromecast reali, inclusi fine puntata, due episodi offline, risposta persa, conflitto e ripresa. CB-030 attende prova di scorrimento sul dispositivo; motore54 invariato.
 
-Testcore/URLProtocol per formato upstream, roundtrip, shift, conflitti, unità,
-coalescenza, completamenti, idempotenza, ricevute e Login/Get/Put. Testnoncredenziali
-non certificano il contratto effettivamente distribuito dal servizio. Richiesti
-build/link iPhone, test Keychain/fileprotetto, un account di test autorizzato,
-dueepisodi offline, conflitto con altro dispositivo, disabilitazione durante rete,
-ripresa film/episodio e nessuna modifica ai preferiti. FT004 resta da verificare;
-nessun account reale è stato usato nello sviluppo qui documentato.
+## Test
+
+Tests/StremioLibraryTests.swift verifica bitfield upstream, legacy queue, unità, campi sconosciuti, conflitti, soglia70%, pausa/statusripetuti/seek/sospensione, journal dopo riavvio/coalescenza, crediti una sola volta e APIReadBack verificato/rifiutato. Le risposte sono URLProtocol sintetiche. Build iPhone/SDK necessaria per UI, Keychain e worker. Nessuna credenziale o cronologia reale richiesta o inviata.
