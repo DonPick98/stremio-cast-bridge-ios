@@ -1,3 +1,21 @@
+# IPA56 — menu stabili e syncStremio verificata, 2026-11-06
+
+Branch fix/menus-stremio-sync-20261106 da50eaf14f, PR10 draft. Menu55/860348cc: build42181327977 SUCCESSO. Prodotto56 f09b7e6d1aa9b41e9bca5af7774b0ad5c940bdd1; docae31daa8; buildiPhone/regressioni42182955539 SUCCESSO. Enginevideo/audio/caption54 invariato, salvo hook di sospensione del campionamentoStremio prima di seek/preparazione.
+
+Riscontro utente: «Funzionano benissimo!!!» sulla54, CB-028 VERIFICATO perfunzionalità/attesa percepita; nessun tempo preciso misurato. CB-029 licenze completoMIT preservato. Replica nativa54 esatta42178072267 FALLITA: singolo quality-h2642997 eof=false/transportError=-1001.40codec+6captiondecode, first-load e backgroundoffscreen passati. Conservare distinta dalla suite runtime42177019979 SUCCESSO. Non attribuire il timeout a un cambiamento motore56; resta nelle voci trasporto/video esistenti.
+
+CB-030 IMPLEMENTATO_DA_VERIFICARE: snapshot immutabile creato al tap, List equatable senza osservazioneCastController nel selettore aperto; righe/audio/subtitles ferme durante tick/estrazione. Entrambi ingressi rapidi/opzioni corretti; sourceRevision invalida/dismissa scelte obsolete. Azioni secondarie dopo dismiss, apertura sempre1tap. Build55 e56 compilano; nessuna prova fisica di scroll ancora ricevuta.
+
+FT-004 IMPLEMENTATO_DA_VERIFICARE: fonti ufficiali Core3417c2e7 e Web55d8b334 confermano callbackposition→ExternalPlayerProgressChanged→libraryItem. Uso diretto del clock TV inCastBridge. Tempo guardato da movimento confermato/uptime, statusripetuti/pausa/seek esclusi, >70% oppure fine naturale; offset resta attuale alla soglia,0alla fine. Crediti cumulativi/sessione e ricevute persistenti; journal pre-PUT, readback primaACK, recupero di risposta persa/processkill e coalescenza che conserva invio attivo. Retrymetadata/appartenenza libreria freschi, conflitti conservativi; nessunCAS possibile. Modifiche al massimo ogni15s quando cambiano, pause/background/stop forzati; reteoffline pending protetta. Retrymanuale rispetta429.
+
+Login esplicito «Collega e sincronizza» attiva sync. Accountgiàcollegato con syncspenta resta spento dopo upgrade: banner nelplayer «Attiva sincronizzazione Stremio». PreferenzeStremio mostrano pending e ultima verifica. Password non salvata, tokenKeychain, niente APIaccount reale eseguita nei test. Prova necessaria: attivazione se serve, progressodopo15s/pausa/uscita, serververificato e UIStremio ricaricata, soglia/fineepisodio, offline2episodi, conflittoaltrodevice.
+
+Test56 passati: watchthreshold70%, pausa/statusripetuti/seek/suspend, bitfieldserie, legacyqueue, journalserialize/coalescenza, singolocredito, APIGet/Put/readbackcorretto e rifiuto success:true senzapersistenza; altre regressioni delbuild passate. I testAPI sono URLProtocol sintetici, non account reale. Docs/STREMIO_SYNC.md aggiornato. UIscroll e syncaccount da confermare, non considerarli già verificati.
+
+IPA0.8.1(56), app+estensione56 unsigned senza LC_CODE_SIGNATURE/profilo/firma propria; audio+processing/CC1AD845, risorsaJS e MITcompleto auditati.69499525byte; SHA2568b94f1f5bf295f00336487875e8a69d464c54cd5c5a24403dbfd7a4434b3b723. Artifact13485783396, run42182955539, ZIPdigest19a8d22ddc3fa21fd692ce80e718d82bce4776f887756dfe05e921819c929580. Scaricata/auditata perconsegna inchat.55 è intermedia non consegnata;56 include entrambipatch. Nessun merge/release/Sites; prossimo passo collaudo dispositivo/account. Storico sotto.
+
+---
+
 # IPA54 candidata disponibile — CB-028/029, 2026-11-06
 
 Pacchetto efbad5d1d6f6e1dbc1d6e5c84cc8979b439fe52b; runtime 5fb3e1cb358f25b006f697e024135dd6de4f25aa. Branch fix/captions-background-20261105, PR #9 draft. Build iPhone/regressioni finale42178072342 SUCCESSO; precedente42177019998 SUCCESSO. Lifecycle42177019965 SUCCESSO. Suite nativa runtime42177019979 SUCCESSO: beforeFirstLoad/consumedRejected/stoppedRejected/videoPreserved=true,42 varianti corrette con offset1.25 e ritardo30.5; ASS indicizzato/16SSA passati e background offscreen65.043s con pausa/ripresa/stop puliti. Replica automatica42178072267 sul solo commento licenza IN_CORSO, distinta dal test runtime passato. 53 nativa42139358480 SUCCESSO confermato.
