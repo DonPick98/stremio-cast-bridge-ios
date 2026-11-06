@@ -467,7 +467,7 @@ private func trackLabel(_ track: RDTrack, in tracks: [RDTrack]) -> String {
     let codec = track.channels.map { $0 > 2 ? " · Surround" : $0 == 1 ? " · Mono" : " · Stereo" } ?? ""
     let duplicates = tracks.filter{PlaybackPreferences.language($0.language) == PlaybackPreferences.language(track.language) && $0.channels == track.channels}
     let index = duplicates.count > 1 ? " · Traccia \((tracks.firstIndex(of:track) ?? 0)+1)" : ""
-    return trackLanguage(track) + codec + index
+    return trackLanguage(track) + codec + (PlaybackPreferences.subtitleDetail(track).map{" · "+$0} ?? "") + index
 }
 private func qualityName(_ quality: RDQuality) -> String { switch quality { case .medium: return "720p"; case .high: return "1080p"; case .original: return "Originale" } }
 private func playbackTime(_ seconds: Double) -> String {

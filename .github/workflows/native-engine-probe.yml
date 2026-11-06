@@ -17,6 +17,9 @@ jobs:
       - uses: actions/checkout@v6
       - name: Test independent caption model and receiver
         run: |
+          node Tests/IndexedCaptionTests.mjs "$RUNNER_TEMP/indexed-fixtures"
+          swiftc -parse-as-library Sources/IndexedCaptionExtraction.swift Tests/IndexedCaptionNativeTests.swift -o "$RUNNER_TEMP/indexed-native-tests"
+          "$RUNNER_TEMP/indexed-native-tests" "$RUNNER_TEMP/indexed-fixtures/indexed-caption.mkv" Resources/MKVSubtitleExtractor.js
           swiftc -parse-as-library Sources/RDNativeResolver.swift Sources/PlaybackPreferences.swift Sources/CaptionModel.swift Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Tests/CaptionModelTests.swift -o "$RUNNER_TEMP/caption-model-tests"
           "$RUNNER_TEMP/caption-model-tests"
           cd Receiver

@@ -1,3 +1,33 @@
+# Candidata53 — priorità latenza sottotitoli (CB028), 2026-11-06
+
+Utente conferma seconda traccia inglese visibile sulla52 dopo56secondi. Non più
+un fallimento generale di conversione/consegna; prima traccia ancora non identificata.
+Base28aa3b2 (checkpoint recuperato), codice52 preservato come fallback.
+
+Nuovo estrattore indicizzato MKV: upstream cryguy/mkv-subtitle-extractor MIT,
+commitdbe77e997de9d305d2b45b237352a3dec51b5bb5, sorgenti+bundler offline conservati.
+AdapterJavaScriptCore/URLSession bounded; accettaASS/SSA connumeroCues/blocks uguale
+alla statistica NUMBER_OF_FRAMES della TrackUID corretta; noContentEncodings,
+noindiceparziale come documento completo. Richieste206/ContentRange/size/validator
+verificate prima delbody, HTTPSredirectguard, max1MiB/range32MiB/2048requests/12s.
+Il demuxFFmpeg completo parte in parallelo: vince il primo documento validato,
+perdente cancellato; fallback non aspetta la scadenza del percorso rapido.
+ConversioneASS52 invariata. Nessuna modifica video/receiver/account.
+
+TestNode fixture8.389.176byte:295.148byte letti/4richieste, cue iniziale e finale,
+indiceincompleto/statisticaerrata/range200 rifiutati. Serverlocale throttled:
+1.613ms lettura intera vs103ms indicizzata; misura sintetica, non puntata privata.
+TestJSC nativoCLI+URLProtocol e MKV reale con motoreapp aggiunti; CI da acquisire.
+App/estensione53. Nome originale tracce visibile anche dopo promozione;
+preferenza automatica evita labelespliciteForced/Signs/Songs se esiste alternativa
+stessalingua; selezionemanuale e unicaForced conservate. Non dedurre forced da5cue.
+
+Nessuna IPA53 ancora dichiarata pronta. Resta necessario collaudo stessa puntata
+secondatraccia con tempo reale, seek, blocco/cambioapp. Non promettere tempi fissi.
+CB028 IN_CORSO. Nessun merge/main o releasepubblica. Checkpoint sotto storici.
+
+---
+
 # IPA52: sottotitoli ancora assenti su TV — CB028 RIAPERTO (2026-11-06)
 
 Nessuna nuova IPA o correzione hardware dichiarata. Prodotto52 resta74748b2;

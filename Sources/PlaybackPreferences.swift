@@ -48,6 +48,15 @@ enum PlaybackPreferences {
         if let saved, !["auto","none"].contains(saved) {return language(saved)}
         return language(handoff=="off" ? "en":handoff ?? "en")
     }
+    static func partialSubtitle(_ label:String)->Bool {
+        label.range(of:#"\b(forced|signs|songs)\b"#,options:[.regularExpression,.caseInsensitive]) != nil
+    }
+    static func subtitleDetail(_ track:RDTrack)->String? {
+        let text=String(track.label.trimmingCharacters(in:.whitespacesAndNewlines).prefix(160))
+        let code=language(track.language)
+        let generic=[track.language,code,"und",Locale(identifier:"en").localizedString(forLanguageCode:code) ?? "",Locale(identifier:"it").localizedString(forLanguageCode:code) ?? ""]
+        return text.isEmpty || generic.contains(where:{$0.caseInsensitiveCompare(text) == .orderedSame}) ? nil:text
+    }
     static func subtitle(_ tracks:[RDTrack],external:Bool,handoff:String?,externalLanguage:String? = nil,defaults:UserDefaults = .standard) -> String {
         let raw = defaults.string(forKey:"cast.preferred.subtitle")
         let saved = raw == "auto" ? nil : raw
@@ -58,7 +67,9 @@ enum PlaybackPreferences {
         let matchingExternal=external && wanted == language(externalLanguage ?? handoff ?? "en")
         if source != "internal",matchingExternal{return "external"}
         if source=="externalOnly"{return "none"}
-        if let track = tracks.first(where:{language($0.language) == wanted}) { return track.key }
+        let candidates=tracks.filter{language($0.language)==wanted}
+        let complete=candidates.first{!partialSubtitle($0.label)}
+        if let track=complete ?? candidates.first{return track.key}
         return matchingExternal ? "external":"none"
     }
 }
@@ -205,3 +216,4 @@ struct EpisodeAutoplayWait {
         enabled && current==sourceID && next==targetID
     }
 }
+

@@ -1272,7 +1272,10 @@ import AVFAudio
     }
     var externalSubtitleLanguage:String { selectedOnlineSubtitle?.lang ?? defaultSubtitleLanguage }
     var externalSubtitleLabel:String { SubtitleLanguage.name(externalSubtitleLanguage) }
-    var embeddedSubtitleLabel:String { SubtitleLanguage.name(extractedCaptionLanguage) + " · dal file" }
+    var embeddedSubtitleLabel:String {
+        let detail=prepared?.subtitles.first(where:{$0.key==extractedCaptionKey}).flatMap{PlaybackPreferences.subtitleDetail($0)}
+        return SubtitleLanguage.name(extractedCaptionLanguage)+(detail.map{" · "+$0} ?? "")+" · dal file"
+    }
     var hasExtractedCaption:Bool { embeddedSubtitleURL != nil || extractedCaptionText != nil }
     var selectedOnlineSubtitleID:String? { selectedOnlineSubtitle?.id }
     private var subtitleIdentity:String {

@@ -92,6 +92,31 @@ import AVFAudio
     /// A standard Cast text track must be a complete document. Never serve a
     /// ninety-second extraction window as if it covered the whole movie.
     static func fullDocument(input:URL,track:CaptionTrack,progress:((Double)->Void)?=nil) async throws -> String {
+        // Race a complete, frame-count-verified Matroska index read against
+        // the established full demux. Unsupported/sparse indexes cannot delay
+        // the fallback, and losing jobs are cancelled before returning.
+        if !input.isFileURL,track.isASS {
+            return try await withThrowingTaskGroup(of:String.self) { group in
+                group.addTask { @MainActor in
+                    let output=try await IndexedCaptionExtraction.extract(input:input,ordinal:track.ordinal,language:track.language)
+                    try Task.checkCancellation()
+                    let text=try SubtitleDocument.embeddedASS(Data(output.text.utf8)).text
+                    PlaybackDiagnostics.record(.tracks,["phase":"caption_index_ready","bytes":String(output.bytes),"tracks":String(output.frames),"request":String(output.requests)])
+                    return text
+                }
+                group.addTask { @MainActor in
+                    let result=try await fullDocuments(input:input,tracks:[track],progress:progress)
+                    guard let text=result[track.index] else{throw CaptionFailure.process};return text
+                }
+                var failure:Error=CaptionFailure.process
+                while !group.isEmpty {
+                    do {
+                        if let text=try await group.next(){group.cancelAll();return text}
+                    }catch {failure=error;try Task.checkCancellation()}
+                }
+                throw failure
+            }
+        }
         let result=try await fullDocuments(input:input,tracks:[track],progress:progress)
         guard let text=result[track.index] else{throw CaptionFailure.process};return text
     }

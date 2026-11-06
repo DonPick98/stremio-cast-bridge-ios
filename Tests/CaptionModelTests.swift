@@ -1,6 +1,11 @@
 import Foundation
 @main struct CaptionModelTests{
     static func main()throws{
+        let preferences=UserDefaults(suiteName:"caption-full-"+UUID().uuidString)!
+        let choices=[RDTrack(key:"forced",language:"eng",label:"English Signs & Songs",codec:"ssa"),RDTrack(key:"full",language:"eng",label:"English Full",codec:"ssa")]
+        precondition(PlaybackPreferences.subtitle(choices,external:false,handoff:"en",defaults:preferences)=="full")
+        precondition(PlaybackPreferences.subtitleDetail(choices[0])=="English Signs & Songs")
+        precondition(PlaybackPreferences.subtitle([choices[0]],external:false,handoff:"en",defaults:preferences)=="forced")
         // The old direct FFmpeg VTT path includes a zero-duration cue, a
         // blank paragraph and drawing coordinates for this valid ASS script.
         let fixture=URL(fileURLWithPath:#filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/captions-degenerate.ass")
