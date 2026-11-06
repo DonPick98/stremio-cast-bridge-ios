@@ -1,3 +1,15 @@
+# IPA57 — compatibilità configurazioneComet, 2026-11-06
+
+Prodotto58890dc0c3cfd18d97294b03491fc2d4ffe7cb6c, branchfix/menus-stremio-sync-20261106, PR10 draft. BuildiPhone/regressioni42196047379 SUCCESSO, job127819441095. HandoffTests: Torrentio normale/lite/stremio, Cometlegacy/moderno/base64URL/precedenza/malformed/assenzaRD/hostestraneo PASSATI. Nessun link/chiave personale acquisito, nessuna APIaccountRD usata. Utente conferma pannello nell’app e linkcopiati dagliaddon giàconfigurati inStremio.
+
+CB-031 IMPLEMENTATO_DA_VERIFICARE. ParserComet56 accettava solo debridServices; upstream supporta ancora debridService/debridApiKey.57 segueprecedenza: arraynonvuoto prioritario, altrimenti legacy; arraymalformato rifiutato, HTTPS/host/regexchiavi invariati. Erroriparsing prefissatiTorrentio/Comet e distinti da validitàaccountRD. Nessunsalvataggio prima di validare tutti gli input. Formato effettivo utente non acquisito: difettolegacy provato, causa esatta da confermare con57. Workaround: configurare soloTorrentio/campoCometvuoto e usare fontiTorrentio. Vecchi linkpersonali vanno riprovati, niente rigenerazionechiave richiesta.
+
+IPA0.8.1(57), app+estensione57 unsigned senza LC_CODE_SIGNATURE/profilo/firma propria, audio+processing/CC1AD845, risorsaJS e MITcompleto auditati.69499211byte; SHA2562eb64fed11db87a1a87ba11fc0f18db81a69cf59f67ad422839d717af3e87060. Artifact13491959244, run42196047379, ZIPdigest225b33105c37b79a4a630c015e3d5a0aa0497d73a4546e05b7f5bfc638307aca. Salvata perconsegna. Motore/menu/sync56 preservati; nessun merge/release.
+
+Nuova segnalazione durante confezionamento57: nell’elenco sorgenti Stremio compaiono soloComet, Torrentio assente. È il percorso add-on/sito, distinto dal Keychainapp. Da indagare mantenendo progettoURL/visibilità correnti. Nessuna diagnosi certa ancora; non dichiarare che57 corregga l’elencoStremio. Verificare sorgente sito e aggancio provider, errori/fallback/filtri senza esporre configurazioni personali. Storico sotto.
+
+---
+
 # IPA56 — menu stabili e syncStremio verificata, 2026-11-06
 
 Branch fix/menus-stremio-sync-20261106 da50eaf14f, PR10 draft. Menu55/860348cc: build42181327977 SUCCESSO. Prodotto56 f09b7e6d1aa9b41e9bca5af7774b0ad5c940bdd1; docae31daa8; buildiPhone/regressioni42182955539 SUCCESSO. Enginevideo/audio/caption54 invariato, salvo hook di sospensione del campionamentoStremio prima di seek/preparazione.
