@@ -189,7 +189,7 @@ enum AddonConfigError: LocalizedError {
         switch self {
         case .invalidProvider: return "Add-on non supportato."
         case .invalidManifest: return "Il collegamento dell’add-on non è valido."
-        case .missingRealDebrid: return "Il collegamento non contiene una configurazione Real-Debrid valida."
+        case .missingRealDebrid: return "Non riesco a leggere Real-Debrid da questo link. Copia il collegamento personale di installazione (manifest.json), dopo aver configurato Real-Debrid nell’add-on. Non è una verifica della validità del tuo account."
         case .keychain: return "Non riesco a salvare la configurazione nel portachiavi dell’iPhone."
         }
     }
@@ -225,10 +225,15 @@ struct AddonConfigStore {
             var base64 = encoded.replacingOccurrences(of:"-",with:"+").replacingOccurrences(of:"_",with:"/")
             base64 += String(repeating:"=", count:(4 - base64.count % 4) % 4)
             if let data = Data(base64Encoded:base64),
-               let object = try? JSONSerialization.jsonObject(with:data) as? [String:Any],
-               let services = object["debridServices"] as? [[String:Any]],
-               let service = services.first(where:{ ($0["service"] as? String)?.lowercased() == "realdebrid" }) {
-                key = service["apiKey"] as? String
+               let object = try? JSONSerialization.jsonObject(with:data) as? [String:Any] {
+                if let raw=object["debridServices"],!(raw is NSNull),!(raw is [[String:Any]]) {throw AddonConfigError.missingRealDebrid}
+                // Match Comet's normalization: a nonempty modern list takes
+                // precedence; otherwise existing single-service installs work.
+                if let services=object["debridServices"] as? [[String:Any]],!services.isEmpty {
+                    key=services.first(where:{($0["service"] as? String)?.lowercased()=="realdebrid"})?["apiKey"] as? String
+                } else if (object["debridService"] as? String)?.lowercased()=="realdebrid" {
+                    key=object["debridApiKey"] as? String
+                } else { key=nil }
             } else { key = nil }
         }
         guard let key, key.range(of:#"^[A-Za-z0-9_-]{20,150}$"#,options:.regularExpression) != nil else { throw AddonConfigError.missingRealDebrid }
@@ -261,4 +266,5 @@ struct AddonConfigStore {
         guard SecItemAdd(record as CFDictionary,nil) == errSecSuccess else { throw AddonConfigError.keychain }
     }
 }
+
 

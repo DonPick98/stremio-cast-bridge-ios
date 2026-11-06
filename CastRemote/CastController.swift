@@ -748,8 +748,13 @@ import AVFAudio
     @discardableResult func saveConfigurations(torrentio: String, comet: String, subtitleEndpoint: String = "", subtitleToken: String = "") -> Bool {
         do {
             var values: [AddonConfiguration] = []
-            if !torrentio.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty { values.append(try AddonConfigStore.parse(torrentio,provider:"torrentio")) }
-            if !comet.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty { values.append(try AddonConfigStore.parse(comet,provider:"comet")) }
+            for (provider,input) in [("torrentio",torrentio),("comet",comet)] where !input.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
+                do {values.append(try AddonConfigStore.parse(input,provider:provider))}
+                catch {
+                    setupMessage=(provider=="torrentio" ? "Torrentio: ":"Comet: ")+((error as? AddonConfigError)?.localizedDescription ?? "Collegamento non valido.")
+                    return false
+                }
+            }
             guard !values.isEmpty || !subtitleEndpoint.isEmpty else { setupMessage = "Incolla almeno un collegamento personale."; return false }
             if !subtitleEndpoint.isEmpty { try SubtitleHosting.save(endpoint:subtitleEndpoint,token:subtitleToken) }
             for value in values { try AddonConfigStore.save(value) }
@@ -2051,6 +2056,7 @@ import AVFAudio
         }
     }
 }
+
 
 
 
