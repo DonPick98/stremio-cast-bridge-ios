@@ -53,7 +53,7 @@ import JavaScriptCore
                 do {
                     let (body,total)=try await self.read(first:first,last:last)
                     guard self.active,!Task.isCancelled else{return}
-                    resolve.call(withArguments:[Array(body),total])
+                    resolve.call(withArguments:[body.base64EncodedString(),total])
                 }catch {
                     guard self.active else{return}
                     reject.call(withArguments:["range"])
@@ -77,9 +77,20 @@ import JavaScriptCore
         globalThis.fetch=(url,options)=>new Promise((resolve,reject)=>{
           const m=/^bytes=(\\d+)-(\\d+)$/.exec(options.headers.Range);
           if(!m){reject('range');return;}
-          nativeRead(Number(m[1]),Number(m[2]),(a,total)=>resolve({status:206,
-            headers:{get:()=>`bytes ${m[1]}-${Number(m[1])+a.length-1}/${total}`},
-            arrayBuffer:async()=>new Uint8Array(a).buffer}),reject);
+          nativeRead(Number(m[1]),Number(m[2]),(s,total)=>{
+            // Pass binary chunks as one string, avoiding tens of thousands of
+            // NSNumber/JSValue objects for each Range response.
+            const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+            const table=new Uint8Array(128);
+            for(let i=0;i<64;i++)table[alphabet.charCodeAt(i)]=i;
+            const length=s.length/4*3-(s.endsWith('==')?2:s.endsWith('=')?1:0);
+            const a=new Uint8Array(length);let j=0;
+            for(let i=0;i<s.length;i+=4){
+              const v=table[s.charCodeAt(i)]<<18|table[s.charCodeAt(i+1)]<<12|table[s.charCodeAt(i+2)]<<6|table[s.charCodeAt(i+3)];
+              if(j<length)a[j++]=v>>16;if(j<length)a[j++]=v>>8;if(j<length)a[j++]=v;
+            }
+            resolve({status:206,headers:{get:()=>`bytes ${m[1]}-${Number(m[1])+a.length-1}/${total}`},arrayBuffer:async()=>a.buffer});
+          },reject);
         });
         """)
         js.evaluateScript(source)

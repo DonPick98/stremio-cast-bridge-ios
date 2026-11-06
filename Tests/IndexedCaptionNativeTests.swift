@@ -22,9 +22,12 @@ private final class RangeFixture:URLProtocol {
         let output=try await IndexedCaptionExtraction.extract(input:file,ordinal:0,language:"eng",script:script)
         precondition(output.frames==2 && output.text.contains("EARLY CAPTION") && output.text.contains("LATE CAPTION"))
         precondition(output.bytes<1_048_576)
+        let localSeconds=Date().timeIntervalSince(start)
         RangeFixture.bytes=try Data(contentsOf:file)
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[RangeFixture.self]
+        let remoteStart=Date()
         let remote=try await IndexedCaptionExtraction.extract(input:URL(string:"https://range.example/ok")!,ordinal:0,language:"eng",script:script,configuration:config)
+        print("Indexed JSC timing: local=\(localSeconds) remote=\(Date().timeIntervalSince(remoteStart))")
         precondition(remote.text==output.text && remote.bytes<1_048_576)
         for path in ["bad","ignore"] {
             do{_=try await IndexedCaptionExtraction.extract(input:URL(string:"https://range.example/"+path)!,ordinal:0,language:"eng",script:script,configuration:config);preconditionFailure("Invalid range accepted")}
