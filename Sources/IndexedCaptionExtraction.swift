@@ -20,7 +20,7 @@ import JavaScriptCore
     }
     struct Output {let text:String;let bytes:Int;let requests:Int;let frames:Int}
     private let input:URL
-    private let session:URLSession
+    private let transport:IndexedRangeTransport
     private var context:JSContext?
     private var continuation:CheckedContinuation<Output,Error>?
     private var tasks:[UUID:Task<Void,Never>]=[:]
@@ -35,7 +35,7 @@ import JavaScriptCore
         config.timeoutIntervalForRequest=5;config.timeoutIntervalForResource=12
         config.httpMaximumConnectionsPerHost=4;config.urlCache=nil
         config.httpCookieStorage=nil;config.urlCredentialStorage=nil
-        session=URLSession(configuration:config,delegate:IndexedCaptionRedirect(),delegateQueue:nil)
+        transport=IndexedRangeTransport(configuration:config)
     }
     static func extract(input:URL,ordinal:Int,language:String,script:URL?=nil,configuration:URLSessionConfiguration?=nil) async throws -> Output {
         guard input.isFileURL || (input.scheme=="https" && input.user==nil && input.password==nil),ordinal>=0,ordinal<256 else{throw Failure.unavailable}
@@ -135,31 +135,22 @@ import JavaScriptCore
         var request=URLRequest(url:input);request.setValue("bytes=\(start)-\(requestedEnd)",forHTTPHeaderField:"Range")
         request.setValue("identity",forHTTPHeaderField:"Accept-Encoding")
         if let validator{request.setValue(validator,forHTTPHeaderField:"If-Range")}
-        let (stream,response)=try await session.bytes(for:request)
-        guard let http=response as? HTTPURLResponse,http.statusCode==206,
-              let value=http.value(forHTTPHeaderField:"Content-Range"),value.hasPrefix("bytes ") else{throw Failure.range}
-        let parts=value.dropFirst(6).split(whereSeparator:{$0=="-" || $0=="/"})
-        guard parts.count==3,let actualStart=Int(parts[0]),let end=Int(parts[1]),let total=Int(parts[2]),
-              actualStart==start,end==min(requestedEnd,total-1),total>start,end>=start,
-              size==nil || size==total else{throw Failure.range}
+        let (data,http)=try await transport.read(request:request,start:start,end:requestedEnd,size:size,validator:validator)
+        let value=http.value(forHTTPHeaderField:"Content-Range")!
+        let total=Int(value.split(separator:"/").last!)!
+        guard size==nil || size==total else{throw Failure.range}
         size=total
         let identity=http.value(forHTTPHeaderField:"ETag") ?? http.value(forHTTPHeaderField:"Last-Modified")
         if let validator,identity != validator{throw Failure.range}
         if validator==nil{validator=identity}
-        var data=Data();data.reserveCapacity(end-start+1)
-        for try await byte in stream {
-            try Task.checkCancellation()
-            guard active,data.count<end-start+1,bytes<33_554_432 else{throw Failure.limit}
-            data.append(byte);bytes+=1
-        }
-        guard data.count==end-start+1 else{throw Failure.range}
+        bytes+=data.count
         return(data,total)
     }
     private func finish(_ result:Result<Output,Error>) {
         guard active else{return};active=false
         timer?.cancel();timer=nil
         for task in tasks.values{task.cancel()};tasks.removeAll()
-        session.invalidateAndCancel()
+        transport.stop()
         let pending=continuation;continuation=nil
         context?.exceptionHandler=nil
         for name in ["nativeRead","nativeDone","nativeFailed"]{context?.setObject(NSNull(),forKeyedSubscript:name as NSString)}
@@ -167,8 +158,68 @@ import JavaScriptCore
         pending?.resume(with:result)
     }
 }
-private final class IndexedCaptionRedirect:NSObject,URLSessionTaskDelegate {
-    func urlSession(_ session:URLSession,task:URLSessionTask,willPerformHTTPRedirection response:HTTPURLResponse,newRequest request:URLRequest,completionHandler:@escaping(URLRequest?)->Void) {
+/// Bounded chunk transport. URLSession delegate callbacks receive Data blocks,
+/// avoiding an actor/async iterator transition for every byte of binary media.
+private final class IndexedRangeTransport:NSObject,URLSessionDataDelegate,@unchecked Sendable {
+    private final class Ticket:@unchecked Sendable {
+        let lock=NSLock();var task:URLSessionDataTask?;var cancelled=false
+        func assign(_ task:URLSessionDataTask){lock.lock();self.task=task;let cancel=cancelled;lock.unlock();if cancel{task.cancel()}}
+        func cancel(){lock.lock();cancelled=true;let task=task;lock.unlock();task?.cancel()}
+    }
+    private final class Entry {
+        let start:Int,end:Int,size:Int?,validator:String?
+        let continuation:CheckedContinuation<(Data,HTTPURLResponse),Error>
+        var response:HTTPURLResponse?,expected=0,data=Data()
+        init(start:Int,end:Int,size:Int?,validator:String?,continuation:CheckedContinuation<(Data,HTTPURLResponse),Error>){self.start=start;self.end=end;self.size=size;self.validator=validator;self.continuation=continuation}
+    }
+    private let lock=NSLock()
+    private var entries:[Int:Entry]=[:],received=0
+    private var session:URLSession!
+    init(configuration:URLSessionConfiguration){super.init();session=URLSession(configuration:configuration,delegate:self,delegateQueue:nil)}
+    func read(request:URLRequest,start:Int,end:Int,size:Int?,validator:String?)async throws->(Data,HTTPURLResponse){
+        let ticket=Ticket()
+        return try await withTaskCancellationHandler(operation:{
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation{ continuation in
+                let task=session.dataTask(with:request)
+                let entry=Entry(start:start,end:end,size:size,validator:validator,continuation:continuation)
+                lock.lock();entries[task.taskIdentifier]=entry;lock.unlock()
+                ticket.assign(task);task.resume()
+            }
+        },onCancel:{ticket.cancel()})
+    }
+    func stop(){session.invalidateAndCancel()}
+    private func fail(_ task:URLSessionTask,_ error:Error){
+        lock.lock();let entry=entries.removeValue(forKey:task.taskIdentifier);lock.unlock()
+        task.cancel();entry?.continuation.resume(throwing:error)
+    }
+    func urlSession(_ session:URLSession,dataTask:URLSessionDataTask,didReceive response:URLResponse,completionHandler:@escaping(URLSession.ResponseDisposition)->Void){
+        lock.lock();let entry=entries[dataTask.taskIdentifier];lock.unlock()
+        guard let entry,let http=response as? HTTPURLResponse,http.statusCode==206,
+              let value=http.value(forHTTPHeaderField:"Content-Range"),value.hasPrefix("bytes ") else{completionHandler(.cancel);fail(dataTask,IndexedCaptionExtraction.Failure.range);return}
+        let p=value.dropFirst(6).split(whereSeparator:{$0=="-" || $0=="/"})
+        let identity=http.value(forHTTPHeaderField:"ETag") ?? http.value(forHTTPHeaderField:"Last-Modified")
+        guard p.count==3,let start=Int(p[0]),let end=Int(p[1]),let total=Int(p[2]),
+              start==entry.start,total>start,end==min(entry.end,total-1),end>=start,
+              entry.size==nil || entry.size==total,entry.validator==nil || entry.validator==identity,
+              end-start+1<=1_048_576 else{completionHandler(.cancel);fail(dataTask,IndexedCaptionExtraction.Failure.range);return}
+        entry.response=http;entry.expected=end-start+1;entry.data.reserveCapacity(entry.expected)
+        completionHandler(.allow)
+    }
+    func urlSession(_ session:URLSession,dataTask:URLSessionDataTask,didReceive data:Data){
+        lock.lock()
+        guard let entry=entries[dataTask.taskIdentifier] else{lock.unlock();return}
+        guard entry.response != nil,entry.data.count+data.count<=entry.expected,received+data.count<=33_554_432 else{lock.unlock();fail(dataTask,IndexedCaptionExtraction.Failure.limit);return}
+        entry.data.append(data);received+=data.count;lock.unlock()
+    }
+    func urlSession(_ session:URLSession,task:URLSessionTask,didCompleteWithError error:Error?){
+        lock.lock();let entry=entries.removeValue(forKey:task.taskIdentifier);lock.unlock()
+        guard let entry else{return}
+        if let error{entry.continuation.resume(throwing:error)}
+        else if let response=entry.response,entry.data.count==entry.expected{entry.continuation.resume(returning:(entry.data,response))}
+        else{entry.continuation.resume(throwing:IndexedCaptionExtraction.Failure.range)}
+    }
+    func urlSession(_ session:URLSession,task:URLSessionTask,willPerformHTTPRedirection response:HTTPURLResponse,newRequest request:URLRequest,completionHandler:@escaping(URLRequest?)->Void){
         guard let url=request.url,url.scheme=="https",url.user==nil,url.password==nil else{completionHandler(nil);return}
         completionHandler(request)
     }
