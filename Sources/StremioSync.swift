@@ -35,6 +35,7 @@ private enum StremioAccountStore {
     @Published private(set) var busy=false
     @Published private(set) var pending=0
     @Published private(set) var conflicts=0
+    @Published private(set) var lastSynced:Date?
     @Published private(set) var message="Collega Stremio per sincronizzare visti e punto di ripresa."
     @Published private(set) var enabled=UserDefaults.standard.bool(forKey:"cast.stremio.enabled")
     private var account:StremioAccount?
@@ -46,6 +47,9 @@ private enum StremioAccountStore {
     private var lastObservation:[String:Date]=[:]
     private var nextAttempt=Date.distantPast
     private var failedAttempts=0
+    private var serverRetryRequired=false
+    private var watchTrackers:[String:StremioWatchTracker]=[:]
+    private var lastQueued:[String:(position:Double,watched:Double)]=[:]
     private init() {
         do {
             account=try StremioAccountStore.load();connected=account != nil
@@ -62,7 +66,10 @@ private enum StremioAccountStore {
         if let file,FileManager.default.fileExists(atPath:file.path) {
             guard let size=try file.resourceValues(forKeys:[.fileSizeKey]).fileSize,size<=2_097_152 else{throw StremioSyncError.limit}
             outbox=try JSONDecoder().decode(StremioOutbox.self,from:Data(contentsOf:file))
-            guard outbox.entries.count<=32,outbox.entries.allSatisfy({$0.event.valid && $0.episodes.count<=4096}),outbox.receipts.count<=128 else{throw StremioSyncError.format}
+            guard outbox.entries.count<=32,outbox.entries.allSatisfy({$0.event.valid && $0.episodes.count<=4096}),outbox.receipts.count<=128,
+                  (outbox.writes?.count ?? 0)<=32,(outbox.watchReceipts?.count ?? 0)<=128,
+                  outbox.writes?.values.allSatisfy({write in write.item.count<=262_144 && write.state.count<=65_536 && (write.baseline?.count ?? 0)<=65_536 && outbox.entries.contains(where:{$0.id==write.entryID && $0.event.itemID==write.itemID})}) ?? true,
+                  outbox.watchReceipts?.values.allSatisfy({$0.watched.isFinite && $0.watched>=0 && $0.watched<=604_800}) ?? true else{throw StremioSyncError.format}
         }
         counts()
     }
@@ -73,7 +80,7 @@ private enum StremioAccountStore {
         try data.write(to:file,options:[.atomic,.completeFileProtectionUntilFirstUserAuthentication]);counts()
     }
     private func counts(){blocked.formIntersection(Set(outbox.entries.map(\.id)));pending=outbox.entries.count;conflicts=blocked.count}
-    func connect(email:String,password:String)async->Bool {
+    func connect(email:String,password:String,synchronize:Bool=true)async->Bool {
         guard !busy else{return false}
         busy=true;defer{busy=false}
         let token=generation,transition=UUID()
@@ -82,15 +89,17 @@ private enum StremioAccountStore {
             guard token==generation else{return false}
             try StremioAccountStore.save(next)
             worker?.cancel();worker=nil;generation=transition;account=next;connected=true;nextAttempt = .distantPast;failedAttempts=0;accountLabel=next.email ?? "Stremio"
-            enabled=false;UserDefaults.standard.set(false,forKey:"cast.stremio.enabled")
-            try loadOutbox();message="Stremio collegato. Attiva la sincronizzazione per condividere visti e punto di ripresa."
+            enabled=synchronize;UserDefaults.standard.set(enabled,forKey:"cast.stremio.enabled")
+            watchTrackers=[:];lastObservation=[:];lastQueued=[:];lastSynced=nil;serverRetryRequired=false
+            try loadOutbox();message=enabled ? "Stremio collegato. Sincronizzazione attiva.":"Stremio collegato. Sincronizzazione disattivata."
+            if enabled{flush()}
             return true
         }catch{if generation==token || generation==transition{message="Accesso non riuscito. Controlla email, password e connessione."};return false}
     }
     func setEnabled(_ value:Bool) {
         enabled=value && connected;UserDefaults.standard.set(enabled,forKey:"cast.stremio.enabled")
         if enabled{message="Sincronizzazione attiva.";flush()}
-        else{generation=UUID();worker?.cancel();worker=nil;message="Sincronizzazione disattivata. I progressi sul dispositivo restano salvati."}
+        else{generation=UUID();worker?.cancel();worker=nil;watchTrackers=[:];lastObservation=[:];lastQueued=[:];message="Sincronizzazione disattivata. I progressi sul dispositivo restano salvati."}
     }
     func disconnect() {
         do{try StremioAccountStore.remove()}
@@ -98,21 +107,28 @@ private enum StremioAccountStore {
         let oldFile=file
         generation=UUID();worker?.cancel();worker=nil;account=nil;connected=false;enabled=false;accountLabel="Stremio"
         UserDefaults.standard.set(false,forKey:"cast.stremio.enabled")
-        outbox=StremioOutbox();blocked=[];lastObservation=[:];counts()
+        outbox=StremioOutbox();blocked=[];lastObservation=[:];watchTrackers=[:];lastQueued=[:];lastSynced=nil;serverRetryRequired=false;counts()
         if let oldFile{try? FileManager.default.removeItem(at:oldFile)}
         message="Stremio disconnesso. La libreria remota non è stata cancellata."
     }
-    func observe(type:String,videoID:String,title:String,position:Double,duration:Double,completed:Bool=false,force:Bool=false,episodes:[String]=[]) {
+    func suspendWatchSampling(type:String,videoID:String){watchTrackers[type+"|"+videoID]?.suspend()}
+    func observe(type:String,videoID:String,title:String,position:Double,duration:Double,completed:Bool=false,force:Bool=false,episodes:[String]=[],playing:Bool=false) {
         guard enabled,connected else{return}
         let now=Date(),key=type+"|"+videoID
+        var tracker=watchTrackers[key] ?? StremioWatchTracker()
+        let watched=tracker.observe(position:position,playing:playing,time:ProcessInfo.processInfo.systemUptime)
+        if watchTrackers.count>=64,watchTrackers[key]==nil{watchTrackers.removeAll()}
+        watchTrackers[key]=tracker
+        if !outbox.entries.isEmpty{flush()}
+        if !force,!completed,let queued=lastQueued[key],abs(queued.position-position)<0.25,abs(queued.watched-watched)<0.25{return}
         if force,!completed,let previous=lastObservation[key],now.timeIntervalSince(previous)<1{return}
-        if !force,!completed,let previous=lastObservation[key],now.timeIntervalSince(previous)<60{return}
-        let event=StremioProgressEvent(type:type,videoID:videoID,title:String(title.prefix(500)),position:position,duration:duration,observedAt:now,completed:completed)
+        if !force,!completed,let previous=lastObservation[key],now.timeIntervalSince(previous)<15{return}
+        let event=StremioProgressEvent(type:type,videoID:videoID,title:String(title.prefix(500)),position:position,duration:duration,observedAt:now,completed:completed,watched:watched,sessionID:tracker.sessionID)
         guard event.valid else{return}
         let previous=outbox
         do {
-            try outbox.enqueue(event,episodes:episodes);try save();lastObservation[key]=now
-            if lastObservation.count>64{lastObservation=[:];lastObservation[key]=now}
+            try outbox.enqueue(event,episodes:episodes);try save();lastObservation[key]=now;lastQueued[key]=(position,watched)
+            if lastObservation.count>64{lastObservation=[:];lastQueued=[:];lastObservation[key]=now;lastQueued[key]=(position,watched)}
             flush()
         }catch{outbox=previous;counts();message="Non riesco a salvare la coda Stremio. I progressi locali restano disponibili."}
     }
@@ -127,7 +143,7 @@ private enum StremioAccountStore {
         do {
             guard let item=try await api.item(id,account:account),token==generation,enabled else{return nil}
             return StremioLibraryMerge.resume(item,videoID:videoID,localUpdated:localUpdated)
-        }catch StremioSyncError.rateLimited(let delay){nextAttempt=Date().addingTimeInterval(Double(delay));return nil}
+        }catch StremioSyncError.rateLimited(let delay){serverRetryRequired=true;nextAttempt=Date().addingTimeInterval(Double(delay));return nil}
         catch{return nil}
     }
     func discardConflicts() {
@@ -136,7 +152,17 @@ private enum StremioAccountStore {
         do{try save();blocked=[];counts();message="Mantengo i dati presenti su Stremio.";flush()}
         catch{outbox=previous;counts();message="Non riesco a salvare la scelta. Riprova."}
     }
-    func flush() {
+    private func acknowledge(_ entry:StremioOutbox.Entry,remote:[String:Any])throws {
+        guard let id=entry.event.itemID,let state=try StremioLibraryMerge.stateData(remote) else{throw StremioSyncError.format}
+        let previous=outbox
+        outbox.acknowledge(entry.id,itemID:id,state:state)
+        do{try save()}catch{outbox=previous;counts();throw error}
+        failedAttempts=0;nextAttempt = .distantPast;serverRetryRequired=false
+        lastSynced=Date();message="Progressi salvati e verificati su Stremio."
+    }
+    func flush(force:Bool=false) {
+        if Date()>=nextAttempt{serverRetryRequired=false}
+        if force,!serverRetryRequired{nextAttempt = .distantPast}
         guard Date()>=nextAttempt,enabled,connected,worker==nil,let account else{return}
         let token=generation
         worker=Task { [weak self] in
@@ -150,21 +176,41 @@ private enum StremioAccountStore {
                 do {
                     let remote=try await self.api.item(id,account:account)
                     try Task.checkCancellation();guard self.generation==token,self.enabled else{return}
+                    if let remote,remote["type"] as? String != entry.event.type{throw StremioSyncError.format}
+                    // Recover an accepted PUT whose response/readback was lost,
+                    // including after process termination. Never credit twice.
+                    if let write=self.outbox.intent(for:entry),StremioLibraryMerge.matches(write.state,remote:remote),let remote {
+                        try self.acknowledge(entry,remote:remote);continue
+                    }
+                    let item:[String:Any]
+                    if let write=self.outbox.intent(for:entry) {
+                        guard StremioLibraryMerge.matches(write.baseline,remote:remote) else{throw StremioSyncError.conflict}
+                        guard let restored=try JSONSerialization.jsonObject(with:write.item) as? [String:Any],restored["_id"] as? String==id,
+                              let intendedState=restored["state"] as? [String:Any] else{throw StremioSyncError.format}
+                        // Preserve metadata/library membership changed since the
+                        // first attempt when the playback baseline is unchanged.
+                        var retry=remote ?? restored
+                        var state=remote?["state"] as? [String:Any] ?? [:]
+                        intendedState.forEach{state[$0.key]=$0.value}
+                        retry["state"]=state;retry["_mtime"]=StremioLibraryMerge.stamp(Date())
+                        item=retry
+                    } else {
                     var episodes=entry.episodes
-                    if entry.event.type=="series",entry.event.completed,episodes.isEmpty {
+                    if entry.event.type=="series",entry.event.completed || (entry.event.watched ?? 0)>0,episodes.isEmpty {
                         let found=try await BridgeClient.shared.episodes(videoID:entry.event.videoID)
                         try Task.checkCancellation();guard self.generation==token else{return}
                         episodes=SeriesNavigation.ordered(found,series:id,includeSpecials:true).map(\.id)
                     }
                     guard self.outbox.entries.contains(where:{$0.id==entry.id}) else{continue}
-                    let item=try StremioLibraryMerge.applying(entry.event,to:remote,episodes:episodes,acceptedState:self.outbox.receipts[id])
+                    item=try StremioLibraryMerge.applying(entry.event,to:remote,episodes:episodes,acceptedState:self.outbox.receipts[id],acceptedWatch:self.outbox.watchedReceipt(for:entry.event))
+                    let previous=self.outbox
+                    do{try self.outbox.prepare(entry,item:item,baseline:remote);try self.save()}
+                    catch{self.outbox=previous;self.counts();throw error}
+                    }
                     try Task.checkCancellation();guard self.generation==token,self.enabled else{return}
-                    try await self.api.put(item,account:account)
-                    guard self.generation==token else{return}
-                    let state=try JSONSerialization.data(withJSONObject:item["state"]!,options:.sortedKeys)
-                    self.outbox.acknowledge(entry.id,itemID:id,state:state);try self.save()
-                    self.failedAttempts=0;self.nextAttempt = .distantPast
-                    self.message="Progressi sincronizzati con Stremio."
+                    let confirmed=try await self.api.putAndReadBack(item,account:account)
+                    try Task.checkCancellation();guard self.generation==token,self.enabled else{return}
+                    try self.acknowledge(entry,remote:confirmed)
                 }catch is CancellationError{return}
                 catch StremioSyncError.conflict {
                     guard self.generation==token else{return}
@@ -174,7 +220,7 @@ private enum StremioAccountStore {
                     self.blocked.insert(entry.id);self.counts();self.message="Non posso aggiornare i visti senza un elenco episodi coerente. I dati Stremio sono conservati."
                 }catch StremioSyncError.rateLimited(let delay) {
                     guard self.generation==token else{return}
-                    self.nextAttempt=Date().addingTimeInterval(Double(delay));self.message="Stremio richiede una pausa. La coda resta salvata e verrà riprovata più tardi.";return
+                    self.serverRetryRequired=true;self.nextAttempt=Date().addingTimeInterval(Double(delay));self.message="Stremio richiede una pausa. La coda resta salvata e verrà riprovata più tardi.";return
                 }catch StremioSyncError.authentication {
                     guard self.generation==token else{return}
                     self.nextAttempt=Date().addingTimeInterval(300)
@@ -189,3 +235,4 @@ private enum StremioAccountStore {
     }
 }
 #endif
+

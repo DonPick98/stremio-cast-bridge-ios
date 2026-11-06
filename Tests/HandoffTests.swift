@@ -21,6 +21,35 @@ final class HandoffStub: URLProtocol {
 }
 @main struct HandoffTests {
     static func main() async throws {
+        let key=String(repeating:"A",count:32)
+        let torrentio="https://torrentio.strem.fun/language=english%7Crealdebrid=\(key)/manifest.json"
+        let parsed=try AddonConfigStore.parse(torrentio,provider:"torrentio")
+        precondition(parsed.realDebridKey==key)
+        let lite=try AddonConfigStore.parse("stremio://torrentio.strem.fun/lite/realdebrid=\(key)/manifest.json",provider:"torrentio")
+        precondition(lite.realDebridKey==key && lite.manifest.scheme=="https")
+        func comet(_ object:[String:Any],urlSafe:Bool=false)throws->String {
+            var encoded=try JSONSerialization.data(withJSONObject:object).base64EncodedString()
+            if urlSafe {encoded=encoded.replacingOccurrences(of:"+",with:"-").replacingOccurrences(of:"/",with:"_").replacingOccurrences(of:"=",with:"")}
+            return "https://comet.elfhosted.com/"+encoded+"/manifest.json"
+        }
+        let legacy:[String:Any]=["debridService":"realdebrid","debridApiKey":key]
+        let modern:[String:Any]=["debridServices":[["service":"torbox","apiKey":"other-service"],["service":"realdebrid","apiKey":key]]]
+        var empty=legacy;empty["debridServices"]=[]
+        for object in [legacy,modern,empty] {
+            for safe in [false,true] {
+                let result=try AddonConfigStore.parse(comet(object,urlSafe:safe),provider:"comet")
+                precondition(result.realDebridKey==key)
+            }
+        }
+        var overrides=legacy;overrides["debridServices"]=[["service":"torbox","apiKey":"other-service"]]
+        var malformed=legacy;malformed["debridServices"]="invalid"
+        for input in [try comet(overrides),try comet(malformed),try comet([:]),try comet(["debridService":"realdebrid","debridApiKey":"short"]),"https://comet.elfhosted.com/manifest.json"] {
+            do {_ = try AddonConfigStore.parse(input,provider:"comet");fatalError("Unconfigured or overridden RD accepted")}
+            catch AddonConfigError.missingRealDebrid {}
+        }
+        do {_ = try AddonConfigStore.parse(torrentio.replacingOccurrences(of:"torrentio.strem.fun",with:"untrusted.example"),provider:"torrentio");fatalError("Unknown host accepted")}
+        catch AddonConfigError.invalidManifest {}
+        print("Addon configuration tests passed: Torrentio/lite, Comet legacy/modern, precedence, URL-safe base64 and rejection")
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [HandoffStub.self]
         let client = BridgeClient(session:URLSession(configuration:config))
@@ -52,5 +81,6 @@ final class HandoffStub: URLProtocol {
         print("Handoff tests passed: ready, real expiry, service failures and invalid response")
     }
 }
+
 
 

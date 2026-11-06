@@ -5,7 +5,7 @@ import FoundationNetworking
 
 // Protocol implementation based on Stremio/stremio-core 3417c2e7ed45cdbfd86b3226f69814c2dc4947ad:
 // library_item.rs, request.rs and stremio-watched-bitfield. No upstream code copied.
-enum StremioSyncError:Error {case identity,format,conflict,catalog,network,authentication,limit,storage,rateLimited(Int)}
+enum StremioSyncError:Error {case identity,format,conflict,catalog,network,authentication,limit,storage,verification,rateLimited(Int)}
 struct StremioProgressEvent:Codable,Equatable {
     let type:String
     let videoID:String
@@ -14,6 +14,11 @@ struct StremioProgressEvent:Codable,Equatable {
     let duration:Double
     let observedAt:Date
     let completed:Bool
+    let watched:Double?
+    let sessionID:UUID?
+    init(type:String,videoID:String,title:String,position:Double,duration:Double,observedAt:Date,completed:Bool,watched:Double?=nil,sessionID:UUID?=nil) {
+        self.type=type;self.videoID=videoID;self.title=title;self.position=position;self.duration=duration;self.observedAt=observedAt;self.completed=completed;self.watched=watched;self.sessionID=sessionID
+    }
     var itemID:String? {
         if type=="movie",videoID.range(of:"^tt[0-9]+$",options:.regularExpression) != nil{return videoID}
         if type=="series",videoID.count<=100,videoID.range(of:"^tt[0-9]+:[0-9]+:[0-9]+$",options:.regularExpression) != nil {
@@ -21,7 +26,32 @@ struct StremioProgressEvent:Codable,Equatable {
         }
         return nil
     }
-    var valid:Bool {itemID != nil && position.isFinite && duration.isFinite && duration>0 && duration<604_800 && position>=0 && position<=duration+2 && !title.isEmpty && title.count<=500}
+    var valid:Bool {itemID != nil && position.isFinite && duration.isFinite && duration>0 && duration<604_800 && position>=0 && position<=duration+2 && !title.isEmpty && title.count<=500 && (watched == nil)==(sessionID == nil) && (watched.map{$0.isFinite && $0>=0 && $0<=604_800} ?? true)}
+}
+
+/// Count confirmed media motion, never a seek target or wall time in pause.
+/// Repeated identical receiver statuses retain their original sample time.
+struct StremioWatchTracker {
+    let sessionID=UUID()
+    private(set) var watched:Double=0
+    private var previous:(position:Double,time:Double,playing:Bool)?
+    mutating func suspend(){previous=nil}
+    mutating func observe(position:Double,playing:Bool,time:Double)->Double {
+        guard position.isFinite,position>=0,time.isFinite else{return watched}
+        if let previous {
+            if position == previous.position && playing == previous.playing {return watched}
+            let elapsed=time-previous.time,delta=position-previous.position
+            if previous.playing,elapsed>0,delta>0,delta<=elapsed*1.5+1 {
+                watched=min(604_800,watched+min(delta,elapsed))
+            }
+        }
+        previous=(position,time,playing)
+        return watched
+    }
+}
+struct StremioWatchReceipt:Codable {
+    let sessionID:UUID
+    let watched:Double
 }
 enum StremioWatchedField {
     private static let maxBytes=8192
@@ -75,13 +105,26 @@ enum StremioLibraryMerge {
               state["video_id"] as? String==videoID,let ms=(state["timeOffset"] as? NSNumber)?.doubleValue,ms.isFinite,ms>0,ms<604_800_000 else{return nil}
         return ms/1000
     }
-    static func applying(_ event:StremioProgressEvent,to remote:[String:Any]?,episodes:[String],now:Date=Date(),acceptedState:Data?=nil)throws->[String:Any] {
+    static func stateData(_ item:[String:Any]?)throws->Data? {
+        guard let item else{return nil}
+        guard let state=item["state"] as? [String:Any] else{throw StremioSyncError.format}
+        return try JSONSerialization.data(withJSONObject:state,options:.sortedKeys)
+    }
+    static func matches(_ expected:Data?,remote:[String:Any]?)->Bool {
+        guard let expected else{return remote == nil}
+        guard let a=(try? JSONSerialization.jsonObject(with:expected)) as? [String:Any],let b=remote?["state"] as? [String:Any] else{return false}
+        return a.allSatisfy { key,value in
+            if key=="lastWatched",let left=date(value),let right=date(b[key]) {return abs(left.timeIntervalSince(right))<0.002}
+            guard let other=b[key] else{return false}
+            return NSDictionary(dictionary:["value":value]).isEqual(to:["value":other])
+        }
+    }
+    static func applying(_ event:StremioProgressEvent,to remote:[String:Any]?,episodes:[String],now:Date=Date(),acceptedState:Data?=nil,acceptedWatch:StremioWatchReceipt?=nil)throws->[String:Any] {
         guard event.valid,let id=event.itemID,event.observedAt<=now.addingTimeInterval(5) else{throw StremioSyncError.identity}
         var item:[String:Any]
         if let remote {
             guard remote["_id"] as? String==id,remote["type"] as? String==event.type,let mtime=date(remote["_mtime"]),remote["state"] is [String:Any] else{throw StremioSyncError.format}
-            let currentState=try JSONSerialization.data(withJSONObject:remote["state"]!,options:.sortedKeys)
-            guard mtime<=event.observedAt || (acceptedState != nil && currentState==acceptedState) else{throw StremioSyncError.conflict}
+            guard mtime<=event.observedAt || (acceptedState != nil && matches(acceptedState,remote:remote)) else{throw StremioSyncError.conflict}
             item=remote
         } else {
             item=["_id":id,"name":event.title,"type":event.type,"posterShape":"poster","removed":true,"temp":true,"_ctime":stamp(event.observedAt),"behaviorHints":[:]]
@@ -90,11 +133,15 @@ enum StremioLibraryMerge {
         func number(_ key:String)->Int64 {max(0,min(9_000_000_000_000,(state[key] as? NSNumber)?.int64Value ?? 0))}
         let changed=(state["video_id"] as? String) != event.videoID
         let time=number("timeWatched"),overall=number("overallTimeWatched"),count=number("timesWatched")
-        state["overallTimeWatched"]=min(9_000_000_000_000,overall+(changed ? time:0))
-        state["timeWatched"]=changed ? 0:time
+        let credited=acceptedWatch?.sessionID == event.sessionID ? acceptedWatch?.watched ?? 0:0
+        let delta=Int64((max(0,(event.watched ?? 0)-credited)*1000).rounded())
+        let watched=min(9_000_000_000_000,(changed ? 0:time)+delta)
+        state["overallTimeWatched"]=min(9_000_000_000_000,overall+(changed ? time:0)+delta)
+        state["timeWatched"]=watched
         state["timesWatched"]=count
         state["flaggedWatched"]=changed ? 0:number("flaggedWatched")
-        if event.completed {
+        // Match Core's 70% actual-watch threshold, not the seekbar position.
+        if event.completed || (event.watched != nil && Double(watched)>event.duration*700) {
             var already=count>0
             if event.type=="series" {
                 let marked=try StremioWatchedField.marking(state["watched"] as? String,video:event.videoID,ids:episodes)
@@ -135,6 +182,18 @@ final class StremioLibraryAPI {
         let result=try await call("datastorePut",["authKey":account.authKey,"collection":"libraryItem","changes":[item]])
         guard let result=result as? [String:Any],result["success"] as? Bool==true else{throw StremioSyncError.format}
     }
+    func putAndReadBack(_ item:[String:Any],account:StremioAccount) async throws->[String:Any] {
+        try Task.checkCancellation()
+        guard let id=item["_id"] as? String,let expected=try StremioLibraryMerge.stateData(item) else{throw StremioSyncError.identity}
+        try await put(item,account:account)
+        try Task.checkCancellation()
+        let confirmed=try await self.item(id,account:account)
+        try Task.checkCancellation()
+        guard StremioLibraryMerge.matches(expected,remote:confirmed),let confirmed,
+              confirmed["type"] as? String==item["type"] as? String,
+              StremioLibraryMerge.date(confirmed["_mtime"]) != nil else{throw StremioSyncError.verification}
+        return confirmed
+    }
     private func call(_ path:String,_ body:[String:Any]) async throws->Any {
         guard ["login","datastoreGet","datastorePut"].contains(path) else{throw StremioSyncError.identity}
         let config=configuration.copy() as! URLSessionConfiguration
@@ -174,22 +233,50 @@ final class StremioLibraryAPI {
 
 struct StremioOutbox:Codable {
     struct Entry:Codable,Identifiable {let id:UUID;let event:StremioProgressEvent;let episodes:[String]}
+    struct WriteIntent:Codable {
+        let entryID:UUID
+        let itemID:String
+        let item:Data
+        let state:Data
+        let baseline:Data?
+    }
     private(set) var entries:[Entry]=[]
     private(set) var receipts:[String:Data]=[:]
+    private(set) var writes:[String:WriteIntent]?
+    private(set) var watchReceipts:[String:StremioWatchReceipt]?
+    func intent(for entry:Entry)->WriteIntent? {
+        guard let write=writes?[entry.event.itemID ?? ""],write.entryID==entry.id else{return nil}
+        return write
+    }
+    func watchedReceipt(for event:StremioProgressEvent)->StremioWatchReceipt? {watchReceipts?[event.type+"|"+event.videoID]}
+    mutating func prepare(_ entry:Entry,item:[String:Any],baseline:[String:Any]?)throws {
+        guard entries.contains(where:{$0.id==entry.id}),let id=entry.event.itemID,let state=try StremioLibraryMerge.stateData(item) else{throw StremioSyncError.identity}
+        let data=try JSONSerialization.data(withJSONObject:item,options:.sortedKeys)
+        guard data.count<=262_144,state.count<=65_536 else{throw StremioSyncError.limit}
+        if writes==nil{writes=[:]}
+        writes?[id]=WriteIntent(entryID:entry.id,itemID:id,item:data,state:state,baseline:try StremioLibraryMerge.stateData(baseline))
+    }
     mutating func enqueue(_ event:StremioProgressEvent,episodes:[String])throws {
         guard event.valid,episodes.count<=4096 else{throw StremioSyncError.identity}
         var updated=entries
         let same=updated.filter{$0.event.type==event.type && $0.event.videoID==event.videoID}
         if same.contains(where:{$0.event.observedAt>event.observedAt}){return}
-        updated.removeAll{$0.event.type==event.type && $0.event.videoID==event.videoID && (event.completed || !$0.event.completed)}
+        updated.removeAll{intent(for:$0)==nil && $0.event.type==event.type && $0.event.videoID==event.videoID && (event.completed || !$0.event.completed)}
         guard updated.count<32 else{throw StremioSyncError.limit}
         updated.append(Entry(id:UUID(),event:event,episodes:episodes))
         entries=updated.sorted{$0.event.observedAt<$1.event.observedAt}
     }
     mutating func acknowledge(_ id:UUID,itemID:String,state:Data) {
+        if let event=entries.first(where:{$0.id==id})?.event,let sessionID=event.sessionID,let watched=event.watched {
+            if watchReceipts==nil{watchReceipts=[:]}
+            watchReceipts?[event.type+"|"+event.videoID]=StremioWatchReceipt(sessionID:sessionID,watched:watched)
+            if let keys=watchReceipts?.keys.sorted(),keys.count>128,let old=keys.first(where:{$0 != event.type+"|"+event.videoID}){watchReceipts?[old]=nil}
+        }
+        if writes?[itemID]?.entryID==id{writes?[itemID]=nil}
         entries.removeAll{$0.id==id}
         if state.count<=65536{receipts[itemID]=state}
         if receipts.count>128,let old=receipts.keys.sorted().first(where:{$0 != itemID}){receipts[old]=nil}
     }
-    mutating func discard(_ ids:Set<UUID>){entries.removeAll{ids.contains($0.id)}}
+    mutating func discard(_ ids:Set<UUID>){entries.removeAll{ids.contains($0.id)};writes=writes?.filter{!ids.contains($0.value.entryID)}}
 }
+

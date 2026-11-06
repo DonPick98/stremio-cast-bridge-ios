@@ -1,3 +1,45 @@
+# Verifica elenco addon — CB-032, 2026-11-06
+
+IPA57 consegnata inchat; audit e build42196047379 passati, CB-031 IMPLEMENTATO_DA_VERIFICARE sul dispositivo. Nuova indagine sul soloComet inStremio: aperta sorgente del sito esistente bcc9ae0648741e55b82068d46994fcab9cc4e225, Siteappgprj_6ae4994e5e088191a83a4d06571ea4e9 versione13 pubblica, URLinvariato. Nessun edit/deploysito necessario eseguito.
+
+Fatto: config.addons è cifrato nel link personale del sito; il Keychain nell’app non cambia quel link installato inStremio. Il codice interroga tutti i provider configurati e aggiunge una voce fallback per provider fallito/vuoto. Testsource-parity6/6 PASSATI (dueprovider, URLcondivisi,190fonti,limiti,risoluzione). Prova sintetica aggiuntiva: linkentrambi conTorrentio503 produceproviders[comet,torrentiofallback]; linkcreato soloComet produce[comet]. Nessuna richiesta upstream reale, nessun link/credenzialeutente acquisito.
+
+Ipotesi piùprobabile: addoninstallato soloComet/vecchia configurazione o vista/cacheStremio; non diagnosticato con certezza senza descrizione del suo addon. Istruzione: sul sito inserire entrambi i linkpersonali, modalitàCastBridgeiPhone; prima installazione controllare «Configurato conTorrentio eComet», sostituire vecchioChromecastBridge inStremio. Entrare nell’app perconfigurareTorrentio nonmodifica l’addon giàinstallato. CB-032 IN_ANALISI fino al riscontro; non dichiarare unfixSite o cheIPA57 cambi elencoStremio.
+
+Limite verifica: tentativo suitebridge+parity 25/26, unico testminificazione noneseguibile per rolldown assente; non è evidenza di bugmotore. Suiteparity isolata6/6 e prova mirata dueconfigurazioni passate. Nessun pacchettoSite, publish, browser o modifica audience/URL eseguiti. Storico sotto.
+
+---
+
+# IPA57 — compatibilità configurazioneComet, 2026-11-06
+
+Prodotto58890dc0c3cfd18d97294b03491fc2d4ffe7cb6c, branchfix/menus-stremio-sync-20261106, PR10 draft. BuildiPhone/regressioni42196047379 SUCCESSO, job127819441095. HandoffTests: Torrentio normale/lite/stremio, Cometlegacy/moderno/base64URL/precedenza/malformed/assenzaRD/hostestraneo PASSATI. Nessun link/chiave personale acquisito, nessuna APIaccountRD usata. Utente conferma pannello nell’app e linkcopiati dagliaddon giàconfigurati inStremio.
+
+CB-031 IMPLEMENTATO_DA_VERIFICARE. ParserComet56 accettava solo debridServices; upstream supporta ancora debridService/debridApiKey.57 segueprecedenza: arraynonvuoto prioritario, altrimenti legacy; arraymalformato rifiutato, HTTPS/host/regexchiavi invariati. Erroriparsing prefissatiTorrentio/Comet e distinti da validitàaccountRD. Nessunsalvataggio prima di validare tutti gli input. Formato effettivo utente non acquisito: difettolegacy provato, causa esatta da confermare con57. Workaround: configurare soloTorrentio/campoCometvuoto e usare fontiTorrentio. Vecchi linkpersonali vanno riprovati, niente rigenerazionechiave richiesta.
+
+IPA0.8.1(57), app+estensione57 unsigned senza LC_CODE_SIGNATURE/profilo/firma propria, audio+processing/CC1AD845, risorsaJS e MITcompleto auditati.69499211byte; SHA2562eb64fed11db87a1a87ba11fc0f18db81a69cf59f67ad422839d717af3e87060. Artifact13491959244, run42196047379, ZIPdigest225b33105c37b79a4a630c015e3d5a0aa0497d73a4546e05b7f5bfc638307aca. Salvata perconsegna. Motore/menu/sync56 preservati; nessun merge/release.
+
+Nuova segnalazione durante confezionamento57: nell’elenco sorgenti Stremio compaiono soloComet, Torrentio assente. È il percorso add-on/sito, distinto dal Keychainapp. Da indagare mantenendo progettoURL/visibilità correnti. Nessuna diagnosi certa ancora; non dichiarare che57 corregga l’elencoStremio. Verificare sorgente sito e aggancio provider, errori/fallback/filtri senza esporre configurazioni personali. Storico sotto.
+
+---
+
+# IPA56 — menu stabili e syncStremio verificata, 2026-11-06
+
+Branch fix/menus-stremio-sync-20261106 da50eaf14f, PR10 draft. Menu55/860348cc: build42181327977 SUCCESSO. Prodotto56 f09b7e6d1aa9b41e9bca5af7774b0ad5c940bdd1; docae31daa8; buildiPhone/regressioni42182955539 SUCCESSO. Enginevideo/audio/caption54 invariato, salvo hook di sospensione del campionamentoStremio prima di seek/preparazione.
+
+Riscontro utente: «Funzionano benissimo!!!» sulla54, CB-028 VERIFICATO perfunzionalità/attesa percepita; nessun tempo preciso misurato. CB-029 licenze completoMIT preservato. Replica nativa54 esatta42178072267 FALLITA: singolo quality-h2642997 eof=false/transportError=-1001.40codec+6captiondecode, first-load e backgroundoffscreen passati. Conservare distinta dalla suite runtime42177019979 SUCCESSO. Non attribuire il timeout a un cambiamento motore56; resta nelle voci trasporto/video esistenti.
+
+CB-030 IMPLEMENTATO_DA_VERIFICARE: snapshot immutabile creato al tap, List equatable senza osservazioneCastController nel selettore aperto; righe/audio/subtitles ferme durante tick/estrazione. Entrambi ingressi rapidi/opzioni corretti; sourceRevision invalida/dismissa scelte obsolete. Azioni secondarie dopo dismiss, apertura sempre1tap. Build55 e56 compilano; nessuna prova fisica di scroll ancora ricevuta.
+
+FT-004 IMPLEMENTATO_DA_VERIFICARE: fonti ufficiali Core3417c2e7 e Web55d8b334 confermano callbackposition→ExternalPlayerProgressChanged→libraryItem. Uso diretto del clock TV inCastBridge. Tempo guardato da movimento confermato/uptime, statusripetuti/pausa/seek esclusi, >70% oppure fine naturale; offset resta attuale alla soglia,0alla fine. Crediti cumulativi/sessione e ricevute persistenti; journal pre-PUT, readback primaACK, recupero di risposta persa/processkill e coalescenza che conserva invio attivo. Retrymetadata/appartenenza libreria freschi, conflitti conservativi; nessunCAS possibile. Modifiche al massimo ogni15s quando cambiano, pause/background/stop forzati; reteoffline pending protetta. Retrymanuale rispetta429.
+
+Login esplicito «Collega e sincronizza» attiva sync. Accountgiàcollegato con syncspenta resta spento dopo upgrade: banner nelplayer «Attiva sincronizzazione Stremio». PreferenzeStremio mostrano pending e ultima verifica. Password non salvata, tokenKeychain, niente APIaccount reale eseguita nei test. Prova necessaria: attivazione se serve, progressodopo15s/pausa/uscita, serververificato e UIStremio ricaricata, soglia/fineepisodio, offline2episodi, conflittoaltrodevice.
+
+Test56 passati: watchthreshold70%, pausa/statusripetuti/seek/suspend, bitfieldserie, legacyqueue, journalserialize/coalescenza, singolocredito, APIGet/Put/readbackcorretto e rifiuto success:true senzapersistenza; altre regressioni delbuild passate. I testAPI sono URLProtocol sintetici, non account reale. Docs/STREMIO_SYNC.md aggiornato. UIscroll e syncaccount da confermare, non considerarli già verificati.
+
+IPA0.8.1(56), app+estensione56 unsigned senza LC_CODE_SIGNATURE/profilo/firma propria; audio+processing/CC1AD845, risorsaJS e MITcompleto auditati.69499525byte; SHA2568b94f1f5bf295f00336487875e8a69d464c54cd5c5a24403dbfd7a4434b3b723. Artifact13485783396, run42182955539, ZIPdigest19a8d22ddc3fa21fd692ce80e718d82bce4776f887756dfe05e921819c929580. Scaricata/auditata perconsegna inchat.55 è intermedia non consegnata;56 include entrambipatch. Nessun merge/release/Sites; prossimo passo collaudo dispositivo/account. Storico sotto.
+
+---
+
 # IPA54 candidata disponibile — CB-028/029, 2026-11-06
 
 Pacchetto efbad5d1d6f6e1dbc1d6e5c84cc8979b439fe52b; runtime 5fb3e1cb358f25b006f697e024135dd6de4f25aa. Branch fix/captions-background-20261105, PR #9 draft. Build iPhone/regressioni finale42178072342 SUCCESSO; precedente42177019998 SUCCESSO. Lifecycle42177019965 SUCCESSO. Suite nativa runtime42177019979 SUCCESSO: beforeFirstLoad/consumedRejected/stoppedRejected/videoPreserved=true,42 varianti corrette con offset1.25 e ritardo30.5; ASS indicizzato/16SSA passati e background offscreen65.043s con pausa/ripresa/stop puliti. Replica automatica42178072267 sul solo commento licenza IN_CORSO, distinta dal test runtime passato. 53 nativa42139358480 SUCCESSO confermato.

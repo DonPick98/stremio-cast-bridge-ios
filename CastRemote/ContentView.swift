@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var diagnosticsCopied = false
     @State private var showPreferences=false
     @State private var showEpisodes=false
+    @State private var trackPicker:TrackPickerSnapshot?
+    @State private var pendingTrackAction:TrackPickerAction?
     @ObservedObject private var updater=AppUpdater.shared
     @AppStorage("cast.controls.seekStep") private var storedSeekStep=30.0
     private var configuredSeekStep:Double {PlaybackPreferences.seekSteps.contains(storedSeekStep) ? storedSeekStep:30}
@@ -44,6 +46,7 @@ struct ContentView: View {
                         }.buttonStyle(.plain)
                     }
                     if cast.canRetryEmbeddedText { Button("Riprova sottotitoli dal file"){cast.retryEmbeddedText()} }
+                    StremioSyncPrompt()
                     if cast.isSeries { episodeControls }
                     if let source = cast.selectedSource { sourceCard(source) }
                     else if !cast.sources.isEmpty { sourcesCard }
@@ -64,7 +67,17 @@ struct ContentView: View {
             .sheet(isPresented:$showTrackOptions) { TrackOptionsView().environmentObject(cast) }
             .sheet(isPresented:$showSubtitleAppearance) { SubtitleAppearanceView().environmentObject(cast) }
             .sheet(isPresented:$showOnlineSubtitles) { SubtitleBrowserView().environmentObject(cast) }
+            .sheet(item:$trackPicker,onDismiss:finishTrackAction) { snapshot in
+                TrackSelectionSheet(snapshot:snapshot,onSelect:{ key in
+                    guard cast.sourceRevision == snapshot.sourceRevision else { return }
+                    if snapshot.audio { cast.selectAudio(key) } else { cast.selectSubtitle(key) }
+                },onAction:{ action in
+                    guard cast.sourceRevision == snapshot.sourceRevision else { return }
+                    pendingTrackAction=action
+                }).equatable()
+            }
             .onChange(of:cast.sourceRevision) { _ in
+                pendingTrackAction=nil;trackPicker=nil
                 showTrackOptions = false; showSubtitleAppearance = false; showOnlineSubtitles = false
             }
             .alert("Diagnostica copiata",isPresented:$diagnosticsCopied) {
@@ -200,22 +213,13 @@ struct ContentView: View {
     private func optionsCard(_ media: RDPreparedMedia) -> some View {
         VStack(spacing:0) {
             HStack(spacing:16) {
-                Menu {
-                    Picker("Audio",selection:Binding(get:{cast.selectedAudio},set:{cast.selectAudio($0)})) {
-                        ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) }
-                    }
-                } label: { quickTrackLabel("Audio",selection:audioSummary(media),icon:"waveform") }
+                Button { trackPicker=TrackPickerSnapshot(cast:cast,media:media,audio:true) }
+                    label: { quickTrackLabel("Audio",selection:audioSummary(media),icon:"waveform") }
+                    .buttonStyle(.plain)
                 Divider().frame(height:40)
-                Menu {
-                    Picker("Sottotitoli",selection:Binding(get:{cast.selectedSubtitle},set:{cast.selectSubtitle($0)})) {
-                        Text("Disattivati").tag("none")
-                        if cast.externalSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · esterni").tag("external") }
-                        if cast.hasExtractedCaption { Text(cast.embeddedSubtitleLabel).tag("embedded") }
-                        ForEach(media.subtitles) { Text(trackLabel($0,in:media.subtitles) + " · nel file").tag($0.key) }
-                    }
-                    Button { showOnlineSubtitles = true } label: { Label("Stremio e OpenSubtitles",systemImage:"magnifyingglass") }
-                    Button { showTrackOptions = true } label: { Label("Sincronizza sottotitoli",systemImage:"clock") }
-                } label: { quickTrackLabel("Sottotitoli",selection:subtitleSummary(media),icon:"captions.bubble") }
+                Button { trackPicker=TrackPickerSnapshot(cast:cast,media:media,audio:false,actions:[.online,.sync]) }
+                    label: { quickTrackLabel("Sottotitoli",selection:subtitleSummary(media),icon:"captions.bubble") }
+                    .buttonStyle(.plain)
             }.padding(.vertical,18).id(cast.sourceRevision)
             Button { showTrackOptions = true } label: { optionRow(icon:"slider.horizontal.3",title:"Opzioni tracce",detail:"Sincronizzazione e dettagli") }.buttonStyle(.plain)
             Divider().padding(.leading,38)
@@ -226,6 +230,11 @@ struct ContentView: View {
                 Label(cast.processingDetail,systemImage:cast.localProcessing ? "iphone" : "play.tv")
             }.font(.footnote).foregroundStyle(.secondary).padding(.vertical,14).frame(maxWidth:.infinity,alignment:.leading)
         }.padding(.horizontal,20).background(CastPalette.surface,in:RoundedRectangle(cornerRadius:24))
+    }
+    private func finishTrackAction() {
+        let action=pendingTrackAction;pendingTrackAction=nil
+        if action == .online { showOnlineSubtitles=true }
+        else if action == .sync { showTrackOptions=true }
     }
     private var playButton: some View {
         Button { cast.load(preservePosition:cast.hasLoaded) } label: {
@@ -280,24 +289,95 @@ struct ContentView: View {
     }
 }
 
+private enum TrackPickerAction:String,Identifiable {
+    case online,sync
+    var id:String { rawValue }
+    var title:String { self == .online ? "Stremio e OpenSubtitles":"Sincronizza sottotitoli" }
+    var icon:String { self == .online ? "magnifyingglass":"clock" }
+}
+
+/// Capture only on an explicit tap. Playback ticks and completed extraction
+/// cannot mutate/reorder the rows of an already presented selector.
+private struct TrackPickerSnapshot:Identifiable {
+    struct Choice:Identifiable { let id:String;let title:String }
+    let id=UUID()
+    let sourceRevision:UUID
+    let audio:Bool
+    let selected:String
+    let choices:[Choice]
+    let actions:[TrackPickerAction]
+    @MainActor init(cast:CastController,media:RDPreparedMedia,audio:Bool,actions:[TrackPickerAction]=[]) {
+        self.sourceRevision=cast.sourceRevision;self.audio=audio
+        self.selected=audio ? cast.selectedAudio:cast.selectedSubtitle
+        self.actions=actions
+        if audio { choices=media.audio.map{Choice(id:$0.key,title:trackLabel($0,in:media.audio))} }
+        else {
+            var rows=[Choice(id:"none",title:"Disattivati")]
+            if cast.externalSubtitleURL != nil { rows.append(Choice(id:"external",title:cast.externalSubtitleLabel+" · esterni")) }
+            if cast.hasExtractedCaption { rows.append(Choice(id:"embedded",title:cast.embeddedSubtitleLabel)) }
+            rows += media.subtitles.map{Choice(id:$0.key,title:trackLabel($0,in:media.subtitles)+" · nel file")}
+            choices=rows
+        }
+    }
+}
+
+/// No CastController observation here: the open List has one immutable
+/// identity and stable row keys until selection, dismissal or source change.
+private struct TrackSelectionSheet:View,Equatable {
+    let snapshot:TrackPickerSnapshot
+    let onSelect:(String)->Void
+    var onAction:(TrackPickerAction)->Void = {_ in}
+    @Environment(\.dismiss) private var dismiss
+    static func ==(lhs:Self,rhs:Self)->Bool { lhs.snapshot.id == rhs.snapshot.id }
+    var body:some View {
+        NavigationStack {
+            List {
+                if !snapshot.actions.isEmpty {
+                    Section {
+                        ForEach(snapshot.actions) { action in
+                            Button { onAction(action);dismiss() } label: { Label(action.title,systemImage:action.icon) }
+                        }
+                    }
+                }
+                Section(snapshot.audio ? "Tracce audio":"Tracce sottotitoli") {
+                    ForEach(snapshot.choices) { choice in
+                        Button { onSelect(choice.id);dismiss() } label: {
+                            HStack(spacing:12) {
+                                Text(choice.title).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                                Spacer(minLength:8)
+                                if choice.id == snapshot.selected { Image(systemName:"checkmark").foregroundStyle(CastPalette.accent) }
+                            }.padding(.vertical,6).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                            .accessibilityIdentifier("track-choice-"+choice.id)
+                            .accessibilityAddTraits(choice.id == snapshot.selected ? .isSelected:[])
+                    }
+                }
+            }.listStyle(.insetGrouped)
+                .navigationTitle(snapshot.audio ? "Audio":"Sottotitoli")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Chiudi") { dismiss() } } }
+        }.preferredColorScheme(.dark).tint(CastPalette.accent)
+    }
+}
+
 private struct TrackOptionsView: View {
     @EnvironmentObject private var cast: CastController
     @Environment(\.dismiss) private var dismiss
     @State private var showAppearance = false
     @State private var showOnline = false
+    @State private var trackPicker:TrackPickerSnapshot?
     var body: some View {
         NavigationStack {
             Form {
                 if let media = cast.prepared {
                     Section {
-                        Picker("Audio",selection:Binding(get:{cast.selectedAudio},set:{cast.selectAudio($0)})) { ForEach(media.audio) { Text(trackLabel($0,in:media.audio)).tag($0.key) } }
+                        Button { trackPicker=TrackPickerSnapshot(cast:cast,media:media,audio:true) } label: {
+                            Label("Scegli traccia audio",systemImage:"waveform")
+                        }
                     } header: { Text("Audio") }
                     Section("Sottotitoli") {
-                        Picker("Traccia",selection:Binding(get:{cast.selectedSubtitle},set:{cast.selectSubtitle($0)})) {
-                            Text("Disattivati").tag("none")
-                            if cast.externalSubtitleURL != nil { Text(cast.externalSubtitleLabel + " · esterni").tag("external") }
-                            if cast.hasExtractedCaption { Text(cast.embeddedSubtitleLabel).tag("embedded") }
-                            ForEach(media.subtitles) { Text(trackLabel($0,in:media.subtitles) + " · nel file").tag($0.key) }
+                        Button { trackPicker=TrackPickerSnapshot(cast:cast,media:media,audio:false) } label: {
+                            Label("Scegli traccia sottotitoli",systemImage:"captions.bubble")
                         }
                         Button { showAppearance = true } label: { Label("Aspetto e anteprima",systemImage:"textformat.size") }
                         Button { showOnline = true } label: { Label("Scegli da Stremio e OpenSubtitles",systemImage:"captions.bubble") }
@@ -346,7 +426,13 @@ private struct TrackOptionsView: View {
         }.preferredColorScheme(.dark).tint(CastPalette.accent)
             .sheet(isPresented:$showAppearance) { SubtitleAppearanceView().environmentObject(cast) }
             .sheet(isPresented:$showOnline) { SubtitleBrowserView().environmentObject(cast) }
-            .onChange(of:cast.sourceRevision) { _ in showAppearance = false; showOnline = false; dismiss() }
+            .sheet(item:$trackPicker) { snapshot in
+                TrackSelectionSheet(snapshot:snapshot,onSelect:{ key in
+                    guard cast.sourceRevision == snapshot.sourceRevision else { return }
+                    if snapshot.audio { cast.selectAudio(key) } else { cast.selectSubtitle(key) }
+                }).equatable()
+            }
+            .onChange(of:cast.sourceRevision) { _ in trackPicker=nil;showAppearance = false; showOnline = false; dismiss() }
     }
 }
 
@@ -615,6 +701,18 @@ private struct AppPreferencesView:View {
 }
 
 
+private struct StremioSyncPrompt:View {
+    @ObservedObject private var sync=StremioSync.shared
+    var body:some View {
+        if sync.connected && !sync.enabled {
+            Button {sync.setEnabled(true)} label: {
+                Label("Attiva sincronizzazione Stremio",systemImage:"arrow.triangle.2.circlepath")
+                    .font(.subheadline).frame(maxWidth:.infinity,alignment:.leading)
+            }.buttonStyle(.plain).foregroundStyle(CastPalette.accent)
+        }
+    }
+}
+
 private struct StremioSettingsView:View {
     @ObservedObject private var sync=StremioSync.shared
     @State private var email=""
@@ -641,18 +739,19 @@ private struct StremioSettingsView:View {
                     Button {
                         let address=email,secret=password;password=""
                         Task{if await sync.connect(email:address,password:secret){showLogin=false}}
-                    } label:{HStack{Text("Collega Stremio");if sync.busy{Spacer();ProgressView()}}}
+                    } label:{HStack{Text("Collega e sincronizza");if sync.busy{Spacer();ProgressView()}}}
                         .disabled(sync.busy || email.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || password.isEmpty)
-                } header:{Text("Accesso Stremio")} footer:{Text("Usa email e password di Stremio. La password non viene salvata. L’accesso viene conservato nel portachiavi di questo iPhone; la sincronizzazione si attiva separatamente.")}
+                } header:{Text("Accesso Stremio")} footer:{Text("Usa email e password di Stremio. La password non viene salvata. Confermando l’accesso attivi la sincronizzazione di visti e punto di ripresa; puoi disattivarla qui in qualsiasi momento.")}
             }
             Section {
                 Text(sync.message)
+                if let last=sync.lastSynced {LabeledContent("Ultima verifica",value:last.formatted(date:.omitted,time:.shortened))}
                 if sync.pending>0 {LabeledContent("Aggiornamenti in attesa",value:String(sync.pending))}
-                if sync.enabled {Button("Sincronizza ora"){sync.flush()}}
+                if sync.enabled {Button("Sincronizza ora"){sync.flush(force:true)}}
                 if sync.conflicts>0 {
                     Button("Mantieni i dati Stremio in conflitto"){confirmRemote=true}
                 }
-            } header:{Text("Stato")} footer:{Text("Per i contenuti IMDb, condivide il punto confermato dalla TV e segna visto alla fine della riproduzione. Le modifiche senza rete restano in coda. I dati remoti più recenti sono conservati. La lettura del punto remoto avviene alla prossima scelta di una sorgente.")}
+            } header:{Text("Stato")} footer:{Text("Per i contenuti IMDb, salva il punto confermato dalla TV e segna visto dopo il 70% di visione effettiva o alla fine. Salti e pause non contano come tempo guardato. Gli invii vengono riletti da Stremio prima della conferma; senza rete restano in coda. I dati remoti più recenti sono conservati. La lettura del punto remoto avviene alla prossima scelta di una sorgente.")}
         }.navigationTitle("Stremio")
         .onDisappear{password=""}
         .confirmationDialog("Disconnettere Stremio?",isPresented:$confirmDisconnect,titleVisibility:.visible){
@@ -720,4 +819,5 @@ private struct EpisodePickerView:View {
         }.preferredColorScheme(.dark).tint(CastPalette.accent)
     }
 }
+
 
