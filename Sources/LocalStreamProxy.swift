@@ -425,7 +425,7 @@ final class LocalStreamProxy: @unchecked Sendable {
             return !forbidden.contains(line[..<colon].trimmingCharacters(in:.whitespaces).lowercased())
         }
         guard ["video/mp4","video/webm"].contains(contentType) else { throw LocalStreamError.upstream }
-        let head = "HTTP/1.1 200 OK\r\n" + lines.map{$0+"\r\n"}.joined() + cors + "Content-Type: \(contentType)\r\nCache-Control: no-store\r\nAccept-Ranges: none\r\nConnection: close\r\n\r\n"
+        let head = "HTTP/1.1 200 OK\r\n" + lines.map{$0+"\r\n"}.joined() + CastWire.localMediaCORS + "Content-Type: \(contentType)\r\nCache-Control: no-store\r\nAccept-Ranges: none\r\nConnection: close\r\n\r\n"
         return (Data(head.utf8),Data(data[range.upperBound...]))
     }
     private func connectProducer(_ id: UUID, method: String) {
