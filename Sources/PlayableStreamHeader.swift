@@ -31,11 +31,11 @@ enum PlayableStreamHeader {
         for type in path { guard let next = try boxes(current.payload).first(where:{$0.type == type}) else { return nil }; current = next }
         return current
     }
-    static func check(_ data: Data, contentType: String) throws -> Bool {
+    static func check(_ data: Data, contentType: String, expectsHEVC:Bool = false) throws -> Bool {
         guard data.count <= 1_048_576 else { throw StreamHeaderError.tooLarge }
-        return try contentType == "video/webm" ? webm(data) : mp4(data)
+        return try contentType == "video/webm" ? webm(data) : mp4(data,expectsHEVC:expectsHEVC)
     }
-    private static func mp4(_ data: Data) throws -> Bool {
+    private static func mp4(_ data: Data, expectsHEVC:Bool) throws -> Bool {
         var p = 0
         while data.count-p >= 8 {
             var size = number(data,p,4), header = 8
@@ -57,9 +57,15 @@ enum PlayableStreamHeader {
                         guard channels > 0 && channels <= 2 else { throw StreamHeaderError.rejected(.audioChannels) }
                         audio = true
                     } else if kind == "vide" {
-                        guard ["avc1","avc3"].contains(entry.type), entry.payload.count >= 78,
-                              let avc = try boxes(Data(entry.payload.dropFirst(78))).first(where:{$0.type == "avcC"}), avc.payload.count >= 4 else { throw StreamHeaderError.rejected(.videoCodec) }
-                        guard [66,77,88,100].contains(Int(avc.payload[1])), avc.payload[3] <= 42 else { throw StreamHeaderError.rejected(.videoProfile) }
+                        guard entry.payload.count >= 78 else { throw StreamHeaderError.rejected(.videoCodec) }
+                        let configuration = try boxes(Data(entry.payload.dropFirst(78)))
+                        if expectsHEVC {
+                            guard entry.type == "hvc1", let hevc = configuration.first(where:{$0.type == "hvcC"}) else { throw StreamHeaderError.rejected(.videoCodec) }
+                            try validateHEVC(hevc.payload)
+                        } else {
+                            guard ["avc1","avc3"].contains(entry.type), let avc = configuration.first(where:{$0.type == "avcC"}), avc.payload.count >= 4 else { throw StreamHeaderError.rejected(.videoCodec) }
+                            guard [66,77,88,100].contains(Int(avc.payload[1])), avc.payload[3] <= 42 else { throw StreamHeaderError.rejected(.videoProfile) }
+                        }
                         video = true
                     }
                 }
@@ -72,6 +78,37 @@ enum PlayableStreamHeader {
         }
         return false
     }
+    private static func validateHEVC(_ data:Data) throws {
+        guard data.count >= 23, data[0] == 1 else { throw StreamHeaderError.rejected(.videoCodec) }
+        let profile = data[1] & 31
+        let depth = profile == 1 ? 0 : 2
+        guard [1,2].contains(profile), data[12] > 0, data[12] <= 153,
+              data[16] & 3 == 1, Int(data[17] & 7) <= depth, Int(data[18] & 7) <= depth else {
+            throw StreamHeaderError.rejected(.videoProfile)
+        }
+        var offset = 23
+        var parameterSets = Set<UInt8>()
+        for _ in 0..<data[22] {
+            guard data.count-offset >= 3 else { throw StreamHeaderError.invalid }
+            let type = data[offset] & 63
+            let count = Int(number(data,offset+1,2))
+            offset += 3
+            for _ in 0..<count {
+                guard data.count-offset >= 2 else { throw StreamHeaderError.invalid }
+                let length = Int(number(data,offset,2))
+                offset += 2
+                guard length >= 2, length <= data.count-offset, (data[offset] >> 1) & 63 == type else {
+                    throw StreamHeaderError.invalid
+                }
+                parameterSets.insert(type)
+                offset += length
+            }
+        }
+        guard offset == data.count, parameterSets.isSuperset(of:[32,33,34]) else {
+            throw StreamHeaderError.rejected(.videoCodec)
+        }
+    }
+
     private static func vint(_ data: Data, _ p: Int, id: Bool) throws -> (UInt64,Int)? {
         guard p < data.count else { return nil }
         let first = data[p]

@@ -43,6 +43,7 @@ struct CaptionBurnDocument {
                 "speed":PlaybackDiagnostics.number(speed),"duplicate":String(duplicate),"dropped":String(dropped)]
     }
     private var monitor: Task<Void,Never>?
+    var onFinish: ((Bool,Int64?) -> Void)?
     private(set) var url: URL?
     private(set) var failed = false
     private(set) var finished = false
@@ -65,7 +66,7 @@ struct CaptionBurnDocument {
     }
 #endif
 
-    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0,textCaption:CaptionBurnDocument? = nil,softwareVideo:Bool=false) async throws -> URL {
+    func start(input:URL,position:Double,audioIndex:Int,subtitleIndex:Int?,outputFD:Int32? = nil,copyAudio:Bool = false,transcodeVideo:VideoFormat? = nil,bitmapSubtitleIndex:Int? = nil,subtitleDelay:Double = 0,textCaption:CaptionBurnDocument? = nil,softwareVideo:Bool=false,copyHEVC:Bool=false) async throws -> URL {
         _ = Self.initialized
         diagnosticPhase=outputFD==nil ? "normalize":transcodeVideo==nil ? "remux":"encode"
         guard input.isFileURL || (input.scheme == "https" && input.user == nil && input.password == nil),
@@ -169,7 +170,10 @@ struct CaptionBurnDocument {
 #endif
             if needsScale {args += ["-vf",scale]}
             if let rate=video.conversionFrameRate {args += ["-r",String(rate)]}
-        } else {args += ["-c:v","copy"]}
+        } else {
+            args += ["-c:v","copy"]
+            if copyHEVC { args += ["-tag:v","hvc1"] }
+        }
         if softwareVideo {
             if softwareAudioEncoder=="vorbis" {args += ["-strict","-2"]}
             args += ["-c:a",softwareAudioEncoder ?? "vorbis","-b:a","192k","-ac","2"]
@@ -202,6 +206,7 @@ struct CaptionBurnDocument {
 #if CAST_ENGINE_TESTING
                     self.record(h)
 #endif
+                    self.onFinish?(self.failed,self.exitCode)
                     return
                 }
                 try? await Task.sleep(nanoseconds:100_000_000)
@@ -229,7 +234,7 @@ struct CaptionBurnDocument {
     }
     func stop() {
         let directory=renderDirectory;renderDirectory=nil
-        monitor?.cancel(); monitor = nil
+        monitor?.cancel(); monitor = nil; onFinish = nil
         if let handle {
 #if CAST_ENGINE_TESTING
             record(handle)

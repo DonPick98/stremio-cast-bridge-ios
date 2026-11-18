@@ -165,8 +165,14 @@ private final class StremioRedirectGuard:NSObject,URLSessionTaskDelegate,@unchec
     func urlSession(_ session:URLSession,task:URLSessionTask,willPerformHTTPRedirection response:HTTPURLResponse,newRequest request:URLRequest,completionHandler:@escaping(URLRequest?)->Void){completionHandler(nil)}
 }
 final class StremioLibraryAPI {
-    private let configuration:URLSessionConfiguration
-    init(configuration:URLSessionConfiguration = .ephemeral){self.configuration=configuration}
+    private let session:URLSession
+    init(configuration:URLSessionConfiguration = .ephemeral) {
+        let config=configuration.copy() as! URLSessionConfiguration
+        config.timeoutIntervalForRequest=10;config.timeoutIntervalForResource=15
+        config.httpCookieStorage=nil;config.urlCredentialStorage=nil;config.urlCache=nil
+        session=URLSession(configuration:config,delegate:StremioRedirectGuard(),delegateQueue:nil)
+    }
+    deinit { session.invalidateAndCancel() }
     func login(email:String,password:String) async throws->StremioAccount {
         guard !email.isEmpty,email.count<=320,!password.isEmpty,password.count<=1024 else{throw StremioSyncError.authentication}
         guard let result=try await call("login",["type":"Login","email":email,"password":password,"facebook":false]) as? [String:Any],
@@ -196,11 +202,6 @@ final class StremioLibraryAPI {
     }
     private func call(_ path:String,_ body:[String:Any]) async throws->Any {
         guard ["login","datastoreGet","datastorePut"].contains(path) else{throw StremioSyncError.identity}
-        let config=configuration.copy() as! URLSessionConfiguration
-        config.timeoutIntervalForRequest=10;config.timeoutIntervalForResource=15
-        config.httpCookieStorage=nil;config.urlCredentialStorage=nil;config.urlCache=nil
-        let session=URLSession(configuration:config,delegate:StremioRedirectGuard(),delegateQueue:nil)
-        defer{session.invalidateAndCancel()}
         var request=URLRequest(url:URL(string:"https://api.strem.io/api/"+path)!)
         request.httpMethod="POST";request.setValue("application/json",forHTTPHeaderField:"Content-Type")
         request.httpBody=try JSONSerialization.data(withJSONObject:body)

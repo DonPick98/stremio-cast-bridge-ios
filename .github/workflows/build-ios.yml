@@ -2,7 +2,7 @@ name: Build unsigned iOS app
 
 on:
   push:
-    branches: [main, native/embedded-media-engine, fix/playback-recovery-20261103, feature/episode-picker-20261105, fix/seek-burst-20261105, fix/captions-background-20261105, fix/menus-stremio-sync-20261106]
+    branches: [fix/cast-energy-background, main, native/embedded-media-engine, fix/playback-recovery-20261103, feature/episode-picker-20261105, fix/seek-burst-20261105, fix/captions-background-20261105, fix/menus-stremio-sync-20261106]
   workflow_dispatch:
     inputs:
       receiver_app_id:
@@ -55,6 +55,11 @@ jobs:
         run: |
           swiftc -parse-as-library Sources/AppUpdate.swift Tests/AppUpdateTests.swift -o "$RUNNER_TEMP/update-tests"
           "$RUNNER_TEMP/update-tests"
+      - name: Validate fragmented MP4 codec headers
+        run: |
+          swiftc -parse-as-library Sources/PlayableStreamHeader.swift Tests/PlayableStreamHeaderTests.swift -o "$RUNNER_TEMP/header-tests"
+          "$RUNNER_TEMP/header-tests"
+
       - name: Test complete subtitles, transport and language selection
         run: |
           swiftc -parse-as-library Sources/PlayableStreamHeader.swift Sources/WebVTTTimeline.swift Sources/SubtitleDocument.swift Sources/SubtitleCatalog.swift Tests/SubtitleCatalogTests.swift -o "$RUNNER_TEMP/subtitle-catalog-tests"

@@ -404,7 +404,14 @@ export async function readTargetedBlocks(
           elementData, el, target.entry.time * tsMultiplier,
           subtitleTrackNumbers, tsMultiplier,
         );
-        if (block) batchBlocks.push(block);
+        if (block) {
+          if (target.entry.duration !== undefined) {
+            const indexedDuration = target.entry.duration * tsMultiplier;
+            if (block.durationMs !== undefined && block.durationMs !== indexedDuration) continue;
+            block.durationMs = indexedDuration;
+          }
+          batchBlocks.push(block);
+        }
       }
       return batchBlocks;
     }

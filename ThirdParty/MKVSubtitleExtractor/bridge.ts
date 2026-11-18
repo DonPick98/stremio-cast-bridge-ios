@@ -6,9 +6,14 @@ import {parseTracks} from './src/mkv/tracks.js';
 import {parseCues} from './src/mkv/cues.js';
 import {readTargetedBlocks} from './src/mkv/clusters.js';
 import {assembleAss} from './src/subtitle/ass.js';
+import {assembleVtt} from './src/subtitle/vtt.js';
 import {parseElementHeader,iterateChildren,readUint,readUtf8} from './src/ebml/parser.js';
 
 export async function indexedASS(url:string,ordinal:number,language:string) {
+  return indexedText(url,ordinal,language,'ass');
+}
+
+export async function indexedText(url:string,ordinal:number,language:string,format:'ass'|'vtt') {
   const reader=new RangeReader(url);
   await reader.init();
   const seg=await parseSegment(reader);
@@ -22,7 +27,8 @@ export async function indexedASS(url:string,ordinal:number,language:string) {
   }
   const all=await parseTracks(reader,seg.segmentDataOffset,seek(0x1654AE6B)-seg.segmentDataOffset);
   const chosen=all[ordinal];
-  if(!chosen||!['S_TEXT/ASS','S_TEXT/SSA'].includes(chosen.codecId))throw Error('codec');
+  const codecs=format==='ass'?['S_TEXT/ASS','S_TEXT/SSA']:['S_TEXT/UTF8'];
+  if(!chosen||!codecs.includes(chosen.codecId))throw Error('codec');
   const lang=(s:string)=>({eng:'en',ita:'it'}[s.toLowerCase()]||s.toLowerCase());
   if(language!=='und'&&chosen.language&&lang(chosen.language)!==lang(language))throw Error('track');
   const {data:tracks,h:th}=await element(seek(0x1654AE6B));
@@ -33,7 +39,7 @@ export async function indexedASS(url:string,ordinal:number,language:string) {
     const children=Array.from(iterateChildren(tracks,entry.dataOffset,entry.dataSize));
     const number=children.find(x=>x.id===0xD7);
     if(!number||readUint(tracks,number.dataOffset,number.dataSize)!==chosen.trackNumber)continue;
-    if(children.some(x=>x.id===0x6D80))throw Error('encoding');
+    if(children.some(x=>x.id===0x6D80||x.id===0x23314F||x.id===0x537F||x.id===0x56AA))throw Error('encoding');
     const id=children.find(x=>x.id===0x73C5);if(id)uid=hex(tracks,id.dataOffset,id.dataSize);
   }
   if(!uid)throw Error('uid');
@@ -71,7 +77,12 @@ export async function indexedASS(url:string,ordinal:number,language:string) {
   await Promise.all(Array.from({length:Math.min(4,positions.length)},verifyHeaders));
   const blocks=await readTargetedBlocks(reader,seg.segmentDataOffset,cues,new Set([chosen.trackNumber]),seg.info.timestampScale,4,undefined,headerSizes);
   if(blocks.length!==expected||blocks.some(b=>!Number.isFinite(b.timestampMs)||b.timestampMs<0))throw Error('blocks_'+expected+'_'+blocks.length);
-  const output=assembleAss(chosen,blocks);
+  // A count match does not prove that the last cue is readable. An unknown
+  // end must fall back to FFmpeg instead of returning a partial document.
+  if(blocks.some(b=>!Number.isFinite(b.durationMs)||b.durationMs!<=0))throw Error('coverage');
+  const output=format==='ass'?assembleAss(chosen,blocks):assembleVtt(chosen,blocks);
   if(output.length>1048576)throw Error('limit');
-  return {text:new TextDecoder().decode(output),frames:expected,bytes:reader.bytesDownloaded,requests:reader.requestCount};
+  const text=new TextDecoder().decode(output);
+  if(format==='ass'&&text.split(/\r?\n/).filter(line=>line.startsWith('Dialogue:')).length!==expected)throw Error('coverage');
+  return {text,frames:expected,bytes:reader.bytesDownloaded,requests:reader.requestCount};
 }

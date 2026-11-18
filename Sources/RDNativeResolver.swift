@@ -121,6 +121,43 @@ struct VideoCadenceProbe {
     }
 }
 
+enum CastReceiverVideoProfile: String {
+    case classic, thirdGeneration, ultra, googleTV
+
+    init(modelName:String?) {
+        let name = (modelName ?? "").lowercased().trimmingCharacters(in:.whitespacesAndNewlines)
+        switch name {
+        case "chromecast ultra": self = .ultra
+        case "chromecast with google tv", "chromecast with google tv (4k)", "chromecast with google tv (hd)", "google tv streamer", "google tv streamer (4k)": self = .googleTV
+        case "chromecast (3rd gen)", "chromecast (3rd generation)", "chromecast 3rd gen", "chromecast 3rd generation": self = .thirdGeneration
+        default: self = .classic
+        }
+    }
+
+    var allowsHEVC:Bool { self == .ultra || self == .googleTV }
+
+    func canCopy(_ video:VideoFormat) -> Bool {
+        if video.isHEVC {
+            // The fMP4 header validates the actual profile when metadata is incomplete.
+            return allowsHEVC && [0,1,2].contains(video.profile) &&
+                video.isWithin(width:3840,height:2160,fps:60) &&
+                (video.level <= 51 || (120...153).contains(video.level))
+        }
+        if self == .thirdGeneration || self == .ultra {
+            return video.isH264 && video.profile <= 100 && video.level <= 42 &&
+                video.isWithin(width:1920,height:1080,fps:60)
+        }
+        return !video.requiresConversion
+    }
+
+    func canLoadDirect(_ media:RDPreparedMedia, audioKey:String) -> Bool {
+        guard media.directContentType == "video/mp4", media.audio.count == 1,
+              audioKey == media.defaultAudioKey, media.audio.first?.canCopyForCast == true,
+              let video = media.video, video.profile > 0, video.level > 0 else { return false }
+        return video.width > 0 && video.height > 0 && video.frameRate > 0 && canCopy(video)
+    }
+}
+
 struct VideoFormat: Equatable {
     let codec: String
     let width: Int
@@ -130,6 +167,13 @@ struct VideoFormat: Equatable {
     var profile: Int = 0
     var level: Int = 0
     var fixedCadence:Bool = true
+
+    var isH264:Bool { ["h264","avc","avc1"].contains(codec.lowercased()) }
+    var isHEVC:Bool { ["hevc","h265","hvc1","hev1"].contains(codec.lowercased()) }
+
+    func isWithin(width:Int,height:Int,fps:Double) -> Bool {
+        self.width <= width && self.height <= height && frameRate.isFinite && frameRate <= fps + 0.01
+    }
 
     var frameRateLabel: String {
         guard frameRate.isFinite, frameRate > 0 else { return "fps non rilevati" }
@@ -141,7 +185,7 @@ struct VideoFormat: Equatable {
     // Missing metadata is not proof that H.264 needs to be re-encoded. The
     // original is tried through the gateway before receiver-driven fallback.
     var requiresConversion: Bool {
-        guard ["h264","avc","avc1"].contains(codec.lowercased()) else { return true }
+        guard isH264 else { return true }
         let limit: Double = height > 0 && height <= 720 ? 60 : 30
         return profile > 100 || (level > 0 && level > 42) || width > 1920 || height > 1080 || (frameRate.isFinite && frameRate > limit+0.01)
     }
@@ -169,6 +213,16 @@ struct VideoFormat: Equatable {
     var conversionBitrate: Int {
         let fallback = height > 720 ? 10_000 : 6_000
         return bitrate > 0 ? min(12_000,max(fallback,bitrate/1000)) : fallback
+    }
+}
+
+extension RDTrack {
+    var canCopyForCast:Bool {
+        ["aac","mp3"].contains(codec.lowercased()) && (1...2).contains(channels ?? 0)
+    }
+
+    var isBitmapSubtitle:Bool {
+        ["bdpg","pgs","hdmv_pgs_subtitle","spu","vobsub","dvd_subtitle","dvbs","dvb_subtitle"].contains(codec.lowercased())
     }
 }
 

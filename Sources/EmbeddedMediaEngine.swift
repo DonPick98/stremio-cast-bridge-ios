@@ -52,7 +52,7 @@ enum EmbeddedMediaError: LocalizedError {
     private(set) var captionURLs: [Int:URL] = [:]
     private(set) var captionWindow = SubtitleWindow(center:0)
     func captionID(kind:Int,delay:Double) -> Int? {
-        guard let id = captionWindow.identifier(kind:kind,delay:delay), captionURLs[id] != nil else { return nil }; return id
+        guard let id = captionWindow.identifier(kind:kind,delay:delay), readyCaptions.contains(id) else { return nil }; return id
     }
     func setBurnedSubtitleDelay(_ delay:Double) {
         player?.currentVideoSubTitleDelay = Int(SubtitleWindow.normalized(delay)*1_000_000)
@@ -72,7 +72,7 @@ enum EmbeddedMediaError: LocalizedError {
     private var producerDrain: Task<Void,Never>?
     var onFailure: ((Bool) -> Void)?
 
-    static func inspect(_ url: URL) async throws -> RDPreparedMedia {
+    static func inspect(_ url: URL, filename:String? = nil) async throws -> RDPreparedMedia {
         let media = VLCMedia(url:url)
         guard media.parse(options:VLCMediaParsingOptions(rawValue:url.isFileURL ? 0 : 1),timeout:15_000) == 0 else { throw EmbeddedMediaError.metadata }
         defer { media.parseStop() }
@@ -129,7 +129,9 @@ enum EmbeddedMediaError: LocalizedError {
         let lang = Locale.preferredLanguages.first?.prefix(2).lowercased() ?? "en"
         let aliases = lang == "it" ? ["it","ita"] : lang == "en" ? ["en","eng"] : [lang]
         let selected = audio.first(where:{aliases.contains($0.language.lowercased())}) ?? audio[0]
-        let type = ["mp4","m4v","mov"].contains(url.pathExtension.lowercased()) ? "video/mp4" : "video/x-matroska"
+        let extensionHint = filename.map { ($0 as NSString).pathExtension.lowercased() } ?? ""
+        let ext = extensionHint.isEmpty ? url.pathExtension.lowercased() : extensionHint
+        let type = ["mp4","m4v","mov"].contains(ext) ? "video/mp4" : "video/x-matroska"
         let direct = type == "video/mp4" && videoSafe && profile > 0 && audioSafe
         let duration = Double(media.length.intValue)/1000
         return RDPreparedMedia.native(audio:audio,subtitles:readTracks(VLCMediaTracksInformationTypeText),defaultAudio:selected.key,url:url,contentType:type,direct:direct,videoConversion:format.requiresConversion,description:"\(codec(video).uppercased()) · \(format.label)",duration:duration,video:format)
@@ -152,7 +154,7 @@ enum EmbeddedMediaError: LocalizedError {
         let processing = conversion.isEmpty ? "" : "transcode{\(conversion)}:"
         return "#\(processing)std{access=\(access),mux=\(mux),dst=\(target)}"
     }
-    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false,audioCodec:String = "",subtitleTrack:RDTrack? = nil) async throws -> URL {
+    func start(input:URL, deviceIP:String, start:Double, videoMode:VideoMode, audioID:Int?, subtitleID:Int?, style:SubtitleAppearance, copyAudio:Bool = false, repairAudio:Bool = false, audioIndex:Int = 0, subtitleIndex:Int? = nil, captions:[Int:String] = [:], subtitleDelay:Double = 0, video:VideoFormat? = nil, selfTest:Bool = false,bitmapSubtitle:Bool = false,audioCodec:String = "",subtitleTrack:RDTrack? = nil, expectsHEVC:Bool = false) async throws -> URL {
         guard selfTest || CastWire.localIPv4(deviceIP) else { throw EmbeddedMediaError.address }
         diagnosticMode = videoMode
         offset = start.isFinite ? max(0,start) : 0
@@ -161,16 +163,14 @@ enum EmbeddedMediaError: LocalizedError {
         let port = try Self.freeLoopbackPort()
         contentType = videoMode == .softwareVP8 ? "video/webm" : "video/mp4"
         captionWindow = SubtitleWindow(center:subtitleDelay)
-        var rebased:[Int:Data] = [:]
-        for (kind,text) in captions {
-            for variant in captionWindow.variants(kind:kind) { rebased[variant.id] = try WebVTTTimeline.rebased(text,offset:offset,delay:variant.delay) }
-        }
-        let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType,captions:rebased)
+        let bridge = LocalStreamProxy(localIP:localIP,peer:selfTest ? "127.0.0.1" : deviceIP,producerPort:port,contentType:contentType,expectsHEVC:expectsHEVC)
         proxy = bridge
         let url = try await bridge.start()
         let channel = try MediaOutputChannel(); outputChannel = channel
         try await channel.start(port:port,path:bridge.path,type:contentType)
-        captionURLs = Dictionary(uniqueKeysWithValues:rebased.keys.map{($0,url.deletingLastPathComponent().appendingPathComponent("subtitle-\($0).vtt"))})
+        if !captions.isEmpty {
+            guard installCaptionDocuments(captions,window:captionWindow,url:url,reservedOnly:false) else { throw EmbeddedMediaError.output }
+        }
         try Task.checkCancellation()
         usesBitmapOverlay = (videoMode == .ffmpegH264 || videoMode == .softwareVP8) && bitmapSubtitle && subtitleID != nil
         usesTextOverlay = (videoMode == .ffmpegH264 || videoMode == .softwareVP8) && !bitmapSubtitle && subtitleID != nil
@@ -205,19 +205,14 @@ enum EmbeddedMediaError: LocalizedError {
             else {format=try await Self.inspect(input).video}
             guard videoMode == .copy || format != nil else{throw EmbeddedMediaError.metadata}
             let repair = AudioRepairPipe(); audioRepair = repair
-            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:format,bitmapSubtitleIndex:usesBitmapOverlay ? subtitleIndex:nil,subtitleDelay:subtitleDelay,textCaption:textCaption,softwareVideo:videoMode == .softwareVP8)
-            producerMonitor = Task { [weak self] in
-                while !Task.isCancelled {
-                    guard let self, self.running else { return }
-                    if repair.finished {
-                        PlaybackDiagnostics.record(.producer,["phase":"finished","result":repair.failed ? "error" : "success"])
-                        self.producerEnded = true; channel.endWriting()
-                        if repair.failed { self.failProducer(allowVideoConversion:repair.exitCode != -32) }
-                        return
-                    }
-                    try? await Task.sleep(nanoseconds:50_000_000)
-                }
+            repair.onFinish = { [weak self] failed,code in
+                guard let self, self.running else { return }
+                PlaybackDiagnostics.record(.producer,["phase":"finished","result":failed ? "error" : "success"])
+                self.producerEnded = true
+                channel.endWriting()
+                if failed { self.failProducer(allowVideoConversion:code != -32) }
             }
+            _ = try await repair.start(input:input,position:offset,audioIndex:audioIndex,subtitleIndex:nil,outputFD:channel.writer,copyAudio:copyAudio,transcodeVideo:format,bitmapSubtitleIndex:usesBitmapOverlay ? subtitleIndex:nil,subtitleDelay:subtitleDelay,textCaption:textCaption,softwareVideo:videoMode == .softwareVP8,copyHEVC:expectsHEVC)
             do { try await withTaskCancellationHandler(operation:{try await bridge.prepare()},onCancel:{bridge.stop()}) }
             catch { let failure:EmbeddedMediaError = repair.failed ? .encoder : .output; stop(); throw failure }
             try Task.checkCancellation()
@@ -334,25 +329,52 @@ enum EmbeddedMediaError: LocalizedError {
         }
         stop(); throw EmbeddedMediaError.timeout
     }
-    /// Enrich a prepared, unpublished candidate without restarting its encoder.
-    /// All engine state and the controller's promotion stay on MainActor with
-    /// no suspension between validation, installation and the first LOAD.
+    private(set) var reservedEmbeddedKey:String?
+    private var readyCaptions = Set<Int>()
+
+    func reserveEmbeddedCaption(key:String,delay:Double) {
+        guard let proxy,let url=streamURL,captionURLs.isEmpty else { return }
+        let window = SubtitleWindow(center:delay)
+        let ids = Set(window.variants(kind:2).map(\.id))
+        guard proxy.reserveCaptions(ids) else { return }
+        reservedEmbeddedKey = key
+        captionWindow = window
+        publishCaptionURLs(ids,at:url)
+    }
+
+    func completeReservedEmbeddedCaption(key:String,text:String,delay:Double) -> Bool {
+        guard reservedEmbeddedKey == key,let url=streamURL,running,!failed,
+              captionWindow.identifier(kind:2,delay:delay) != nil else { return false }
+        return installCaptionDocuments([2:text],window:captionWindow,url:url,reservedOnly:true)
+    }
+
     func attachCaptionsBeforeLoad(_ captions:[Int:String],delay:Double) throws -> Bool {
-        guard running, !failed, let proxy, let url=streamURL else { return false }
-        let window=SubtitleWindow(center:delay)
+        guard running,!failed,let url=streamURL else { return false }
+        let window = SubtitleWindow(center:delay)
         guard captionURLs.isEmpty || captionWindow.center == window.center else { return false }
-        var documents:[Int:Data]=[:]
+        guard installCaptionDocuments(captions,window:window,url:url,reservedOnly:false) else { return false }
+        captionWindow = window
+        return true
+    }
+
+    private func installCaptionDocuments(_ captions:[Int:String],window:SubtitleWindow,url:URL,reservedOnly:Bool) -> Bool {
+        let base = offset
+        var renderers:[Int:@Sendable () throws -> Data] = [:]
         for (kind,text) in captions {
             for variant in window.variants(kind:kind) {
-                documents[variant.id]=try WebVTTTimeline.rebased(text,offset:offset,delay:variant.delay)
+                let delay = variant.delay
+                renderers[variant.id] = { try WebVTTTimeline.rebased(text,offset:base,delay:delay) }
             }
         }
-        guard !documents.isEmpty, proxy.installCaptionsBeforePlayback(documents) else { return false }
-        captionWindow=window
-        for id in documents.keys {
-            captionURLs[id]=url.deletingLastPathComponent().appendingPathComponent("subtitle-\(id).vtt")
-        }
+        guard !renderers.isEmpty,proxy?.installCaptionRenderers(renderers,reservedOnly:reservedOnly) == true else { return false }
+        let ids = Set(renderers.keys)
+        readyCaptions.formUnion(ids)
+        publishCaptionURLs(ids,at:url)
         return true
+    }
+
+    private func publishCaptionURLs(_ ids:Set<Int>,at url:URL) {
+        for id in ids { captionURLs[id] = url.deletingLastPathComponent().appendingPathComponent("subtitle-\(id).vtt") }
     }
     func stop() {
         PlaybackDiagnostics.record(.producer,["phase":"stop"])

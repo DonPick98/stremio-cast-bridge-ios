@@ -28,6 +28,7 @@ import JavaScriptCore
     private var size:Int?
     private var validator:String?
     private var bytes=0,requests=0
+    private var lastProgress = ProcessInfo.processInfo.systemUptime
     private var active=true
     init(input:URL,configuration:URLSessionConfiguration?=nil) {
         self.input=input
@@ -37,18 +38,18 @@ import JavaScriptCore
         config.httpCookieStorage=nil;config.urlCredentialStorage=nil
         transport=IndexedRangeTransport(configuration:config)
     }
-    static func extract(input:URL,ordinal:Int,language:String,script:URL?=nil,configuration:URLSessionConfiguration?=nil) async throws -> Output {
-        guard input.isFileURL || (input.scheme=="https" && input.user==nil && input.password==nil),ordinal>=0,ordinal<256 else{throw Failure.unavailable}
+    static func extract(input:URL,ordinal:Int,language:String,format:String="ass",script:URL?=nil,configuration:URLSessionConfiguration?=nil) async throws -> Output {
+        guard input.isFileURL || (input.scheme=="https" && input.user==nil && input.password==nil),ordinal>=0,ordinal<256,["ass","vtt"].contains(format) else{throw Failure.unavailable}
         let job=IndexedCaptionExtraction(input:input,configuration:configuration)
         return try await withTaskCancellationHandler(operation:{
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
                 job.continuation=continuation
-                job.start(ordinal:ordinal,language:language,script:script)
+                job.start(ordinal:ordinal,language:language,format:format,script:script)
             }
         },onCancel:{Task{@MainActor in job.finish(.failure(CancellationError()))}})
     }
-    private func start(ordinal:Int,language:String,script:URL?) {
+    private func start(ordinal:Int,language:String,format:String,script:URL?) {
         guard let url=script ?? Bundle.main.url(forResource:"MKVSubtitleExtractor",withExtension:"js"),
               let data=try? Data(contentsOf:url),data.count<131072,let source=String(data:data,encoding:.utf8),let js=JSContext() else{finish(.failure(Failure.unavailable));return}
         context=js
@@ -117,8 +118,22 @@ import JavaScriptCore
         guard active else{return}
         js.setObject(ordinal,forKeyedSubscript:"captionOrdinal" as NSString)
         js.setObject(language,forKeyedSubscript:"captionLanguage" as NSString)
-        js.evaluateScript("CastMKV.indexedASS('native',captionOrdinal,captionLanguage).then(nativeDone,nativeFailed);")
-        timer=Task{[weak self] in try? await Task.sleep(nanoseconds:12_000_000_000);guard !Task.isCancelled else{return};self?.finish(.failure(Failure.limit))}
+        js.setObject(format,forKeyedSubscript:"captionFormat" as NSString)
+        js.evaluateScript("CastMKV.indexedText('native',captionOrdinal,captionLanguage,captionFormat).then(nativeDone,nativeFailed);")
+        if !input.isFileURL {
+            let began = ProcessInfo.processInfo.systemUptime
+            timer = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds:250_000_000)
+                    guard !Task.isCancelled,let self,self.active else { return }
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if now-began >= 12 || now-self.lastProgress >= 1.5 {
+                        self.finish(.failure(Failure.limit))
+                        return
+                    }
+                }
+            }
+        }
     }
     private func read(first:Double,last:Double) async throws -> (Data,Int) {
         guard active,first.isFinite,last.isFinite,first>=0,last>=first,last-first<1_048_576,
@@ -144,6 +159,7 @@ import JavaScriptCore
         if let validator,identity != validator{throw Failure.range}
         if validator==nil{validator=identity}
         bytes+=data.count
+        lastProgress = ProcessInfo.processInfo.systemUptime
         return(data,total)
     }
     private func finish(_ result:Result<Output,Error>) {

@@ -86,6 +86,63 @@ import Foundation
     }
 }
 
+/// Summary outlives the short detailed log. Timing and byte counts are sampled.
+struct PlaybackEnergySummary {
+    private var previous:(time:TimeInterval,mode:String,thermal:Int,buffering:Bool)?
+    private var routeSeconds:[String:Double] = [:]
+    private var thermalSeconds:[Int:Double] = [:]
+    private var bufferingSeconds:Double = 0
+    private var byteHighWater:[UUID:Int] = [:]
+    private var firstBattery:Float?
+    private var lastBattery:Float?
+    private var powerStates=Set<Int>()
+    private(set) var active=false
+    private(set) var loads=0
+    private(set) var videoEncoderAttempts=0
+    private(set) var recoveries=0
+
+    mutating func begin() {
+        guard !active else { return }
+        self = Self()
+        active = true
+    }
+    mutating func sample(time:TimeInterval,mode:String,thermal:Int,battery:Float,power:Int,buffering:Bool) {
+        guard active else { return }
+        if let old=previous,time>=old.time {
+            let elapsed=time-old.time
+            routeSeconds[old.mode,default:0] += elapsed
+            thermalSeconds[old.thermal,default:0] += elapsed
+            if old.buffering { bufferingSeconds += elapsed }
+        }
+        previous=(time,mode,thermal,buffering)
+        if battery>=0 { if firstBattery == nil {firstBattery=battery}; lastBattery=battery }
+        powerStates.insert(power)
+    }
+    mutating func addLoad() { if active { loads += 1 } }
+    mutating func addEncoderAttempt() { if active { videoEncoderAttempts += 1 } }
+    mutating func addRecovery() { if active { recoveries += 1 } }
+    mutating func observeBytes(_ bytes:Int,generation:UUID) {
+        guard active else { return }
+        byteHighWater[generation]=max(byteHighWater[generation] ?? 0,bytes)
+    }
+    mutating func end() { active=false;previous=nil }
+    var report:String? {
+        guard previous != nil || loads>0 || videoEncoderAttempts>0 else { return nil }
+        func seconds(_ value:Double) -> String { String(format:"%.0f",value) }
+        func battery(_ value:Float?) -> String { value.map{String(format:"%.0f%%",Double($0)*100)} ?? "n/d" }
+        let routes=routeSeconds.sorted{$0.key<$1.key}.map{"\($0.key)=\(seconds($0.value)) s"}.joined(separator:", ")
+        let thermal=thermalSeconds.sorted{$0.key<$1.key}.map{"\($0.key)=\(seconds($0.value)) s"}.joined(separator:", ")
+        let bytes=byteHighWater.isEmpty ? "n/d" : String(byteHighWater.values.reduce(0,+))
+        return """
+        Riepilogo energetico della sessione (campioni)
+        Batteria \(battery(firstBattery)) → \(battery(lastBattery)) · Alimentazione \(powerStates.sorted())
+        Percorsi \(routes) · Stati termici iOS \(thermal)
+        Caricamenti TV \(loads) · Tentativi di codifica video \(videoEncoderAttempts) · Recuperi \(recoveries)
+        Buffering \(seconds(bufferingSeconds)) s · Byte video locali osservati \(bytes)
+        """
+    }
+}
+
 @MainActor enum PlaybackDiagnostics {
     static let shared = DiagnosticRecorder(file:FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask).first?.appendingPathComponent("CastBridge/playback-diagnostics.json"))
     static func record(_ event:DiagnosticRecorder.Event,_ fields:[String:String] = [:]) { shared.record(event,fields) }

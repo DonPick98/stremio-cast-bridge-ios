@@ -70,11 +70,11 @@ class RangeReader {
 
   constructor(
     url        ,
-    options    
-                                  
-                                      
-                                       
-     
+    options
+
+
+
+
   ) {
     this.url = url;
     this.allowFullDownload = options?.allowFullDownload ?? false;
@@ -199,12 +199,12 @@ exports.RangeReader=RangeReader;
 },
 "src/ebml/vint.ts":function(require,exports){
 /** Result of reading a VINT */
-                             
-                          
-                
-                                 
-                 
- 
+
+
+
+
+
+
 
 /**
  * Read a VINT-encoded element ID from a buffer at the given offset.
@@ -326,7 +326,7 @@ exports.readTrackNumber=readTrackNumber;
 },
 "src/ebml/parser.ts":function(require,exports){
 const { readElementId, readDataSize }=require("src/ebml/vint.ts");
-                                               
+
 
 /**
  * Parse an EBML element header from a buffer at the given offset.
@@ -486,6 +486,7 @@ const BLOCK_ADDITIONAL = 0xA5;
 const CUES = 0x1C53BB6B;
 const CUE_POINT = 0xBB;
 const CUE_TIME = 0xB3;
+const CUE_DURATION = 0xB2;
 const CUE_TRACK_POSITIONS = 0xB7;
 const CUE_TRACK = 0xF7;
 const CUE_CLUSTER_POSITION = 0xF1;
@@ -540,6 +541,7 @@ exports.BLOCK_ADDITIONAL=BLOCK_ADDITIONAL;
 exports.CUES=CUES;
 exports.CUE_POINT=CUE_POINT;
 exports.CUE_TIME=CUE_TIME;
+exports.CUE_DURATION=CUE_DURATION;
 exports.CUE_TRACK_POSITIONS=CUE_TRACK_POSITIONS;
 exports.CUE_TRACK=CUE_TRACK;
 exports.CUE_CLUSTER_POSITION=CUE_CLUSTER_POSITION;
@@ -554,18 +556,18 @@ const { parseElementHeader, iterateChildren, readUint }=require("src/ebml/parser
 const { readElementId }=require("src/ebml/vint.ts");
 const IDs=require("src/ebml/ids.ts");
 const { MkvParseError }=require("src/errors.ts");
-                                                                       
 
-                                     
-                                                       
-                            
-                                      
-                          
-                                                        
-                           
-                                      
-                    
- 
+
+
+
+
+
+
+
+
+
+
+
 
 /**
  * Parse the EBML header and Segment element, extracting SeekHead entries and Info.
@@ -673,7 +675,7 @@ exports.parseSegment=parseSegment;
 const { RangeReader }=require("src/io/range-reader.ts");
 const { parseElementHeader, iterateChildren, readUint, readUtf8, readBinary }=require("src/ebml/parser.ts");
 const IDs=require("src/ebml/ids.ts");
-                                                     
+
 
 const SUBTITLE_TRACK_TYPE = 17;
 
@@ -764,16 +766,18 @@ const { parseElementHeader, iterateChildren, readUint }=require("src/ebml/parser
 const IDs=require("src/ebml/ids.ts");
 
 /** A single Cue index entry mapping a track+timestamp to a cluster position */
-                           
-                                                  
-               
-                     
-                
-                                                        
-                          
-                                                                       
-                                       
- 
+
+
+
+
+
+
+
+
+
+
+
+
 
 /**
  * Parse the Cues element and return all index entries.
@@ -815,6 +819,7 @@ async function parseCues(
       let track = 0;
       let clusterPosition = 0;
       let relativePosition                    ;
+      let duration                    ;
 
       for (const posChild of iterateChildren(cuesData, child.dataOffset, child.dataSize)) {
         switch (posChild.id) {
@@ -824,13 +829,16 @@ async function parseCues(
           case IDs.CUE_CLUSTER_POSITION:
             clusterPosition = readUint(cuesData, posChild.dataOffset, posChild.dataSize);
             break;
+          case IDs.CUE_DURATION:
+            duration = readUint(cuesData, posChild.dataOffset, posChild.dataSize);
+            break;
           case IDs.CUE_RELATIVE_POSITION:
             relativePosition = readUint(cuesData, posChild.dataOffset, posChild.dataSize);
             break;
         }
       }
 
-      entries.push({ time: cueTime, track, clusterPosition, relativePosition });
+      entries.push({ time: cueTime, track, clusterPosition, relativePosition, duration });
     }
   }
 
@@ -845,18 +853,18 @@ const { RangeReader }=require("src/io/range-reader.ts");
 const { parseElementHeader, iterateChildren, readUint }=require("src/ebml/parser.ts");
 const { readTrackNumber }=require("src/ebml/vint.ts");
 const IDs=require("src/ebml/ids.ts");
-                                                              
-                                          
+
+
 
 const HEADER_READ_SIZE = 16; // enough for element ID (up to 4 bytes) + data size (up to 8 bytes)
 const MAX_BATCH_GAP = 2 * 1024 * 1024; // 2MB — absolute cap for gap between batched blocks
 const BLOCK_SIZE_ESTIMATE = 4096; // generous estimate for a subtitle block element
 const READ_AHEAD = 32 * 1024; // matches RangeReader.READ_AHEAD_SIZE
 
-                       
-                 
-                  
- 
+
+
+
+
 
 /**
  * Scan clusters for subtitle blocks, skipping video/audio data.
@@ -920,10 +928,10 @@ async function scanClusters(
   return blocks;
 }
 
-                         
-                                 
-                     
- 
+
+
+
+
 
 async function processCluster(
   reader             ,
@@ -1247,7 +1255,14 @@ async function readTargetedBlocks(
           elementData, el, target.entry.time * tsMultiplier,
           subtitleTrackNumbers, tsMultiplier,
         );
-        if (block) batchBlocks.push(block);
+        if (block) {
+          if (target.entry.duration !== undefined) {
+            const indexedDuration = target.entry.duration * tsMultiplier;
+            if (block.durationMs !== undefined && block.durationMs !== indexedDuration) continue;
+            block.durationMs = indexedDuration;
+          }
+          batchBlocks.push(block);
+        }
       }
       return batchBlocks;
     }
@@ -1471,7 +1486,7 @@ exports.encodeUtf8=encodeUtf8;
 },
 "src/subtitle/ass.ts":function(require,exports){
 const { encodeUtf8, decodeUtf8 }=require("src/util.ts");
-                                                                    
+
 
 /**
  * Format milliseconds as ASS timestamp: H:MM:SS.cc (centiseconds)
@@ -1496,16 +1511,16 @@ function formatAssTimestamp(ms        )         {
  * Format: ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
  * Text may contain commas, so we split on the first 8 commas only.
  */
-function parseAssBlockPayload(text        )   
-                    
-                
-                
-               
-                  
-                  
-                  
-                 
-                       
+function parseAssBlockPayload(text        )
+
+
+
+
+
+
+
+
+
          {
   const parts           = [];
   let start = 0;
@@ -1548,9 +1563,9 @@ function assembleAss(track                   , blocks                 )         
   const hasEvents = header.includes('[Events]');
 
   // Parse and sort blocks by ReadOrder
-  const parsedBlocks         
-                                                                 
-                         
+  const parsedBlocks
+
+
      = [];
 
   for (const block of blocks) {
@@ -1599,6 +1614,104 @@ function assembleAss(track                   , blocks                 )         
 
 exports.assembleAss=assembleAss;
 },
+"src/subtitle/vtt.ts":function(require,exports){
+const { encodeUtf8, decodeUtf8 }=require("src/util.ts");
+
+
+/**
+ * Format milliseconds as WebVTT timestamp: HH:MM:SS.mmm
+ */
+function formatVttTimestamp(ms        )         {
+  const totalMs = Math.round(ms);
+  const hours = Math.floor(totalMs / 3600000);
+  const minutes = Math.floor((totalMs % 3600000) / 60000);
+  const seconds = Math.floor((totalMs % 60000) / 1000);
+  const millis = totalMs % 1000;
+
+  return (
+    String(hours).padStart(2, '0') + ':' +
+    String(minutes).padStart(2, '0') + ':' +
+    String(seconds).padStart(2, '0') + '.' +
+    String(millis).padStart(3, '0')
+  );
+}
+
+/**
+ * Parse BlockAdditions for WebVTT cue metadata.
+ * BlockAdditions (BlockAddID=1) contains:
+ *   - Line 1: Cue identifier (optional)
+ *   - Line 2: Cue settings (optional)
+ *   - Remaining lines: Comments preceding the cue (optional)
+ */
+function parseVttAdditions(additions                   )
+
+
+
+  {
+  if (!additions || additions.length === 0) {
+    return { cueId: '', cueSettings: '', comments: '' };
+  }
+
+  const text = decodeUtf8(additions);
+  const lines = text.split('\n');
+
+  return {
+    cueId: lines[0] || '',
+    cueSettings: lines[1] || '',
+    comments: lines.slice(2).join('\n'),
+  };
+}
+
+/**
+ * Assemble WebVTT subtitle file from CodecPrivate header + extracted blocks.
+ */
+function assembleVtt(track                   , blocks                 )             {
+  // CodecPrivate contains the WEBVTT header + optional STYLE/REGION blocks
+  const header = track.codecPrivate ? decodeUtf8(track.codecPrivate) : 'WEBVTT';
+
+  // Sort blocks by timestamp
+  const sorted = [...blocks].sort((a, b) => a.timestampMs - b.timestampMs);
+
+  const lines           = [];
+
+  // Add header
+  lines.push(header.trimEnd());
+  lines.push('');
+
+  for (const block of sorted) {
+    const { cueId, cueSettings, comments } = parseVttAdditions(block.additions);
+
+    // Add preceding comments if any
+    if (comments) {
+      lines.push(comments);
+      lines.push('');
+    }
+
+    // Cue identifier
+    if (cueId) {
+      lines.push(cueId);
+    }
+
+    // Timestamp line
+    const start = formatVttTimestamp(block.timestampMs);
+    const end = formatVttTimestamp(block.timestampMs + (block.durationMs ?? 0));
+    const timeLine = cueSettings
+      ? `${start} --> ${end} ${cueSettings}`
+      : `${start} --> ${end}`;
+    lines.push(timeLine);
+
+    // Cue text
+    const text = decodeUtf8(block.data);
+    lines.push(text);
+    lines.push('');
+  }
+
+  return encodeUtf8(lines.join('\n'));
+}
+
+
+exports.assembleVtt=assembleVtt;
+},
 "bridge.ts":function(require,exports){
 // Cast Bridge adapter for mkv-subtitle-extractor, MIT (Shy), pinned in UPSTREAM.md.
 // Only complete, frame-count-verified indexed ASS/SSA tracks are accepted.
@@ -1608,9 +1721,14 @@ const {parseTracks}=require("src/mkv/tracks.ts");
 const {parseCues}=require("src/mkv/cues.ts");
 const {readTargetedBlocks}=require("src/mkv/clusters.ts");
 const {assembleAss}=require("src/subtitle/ass.ts");
+const {assembleVtt}=require("src/subtitle/vtt.ts");
 const {parseElementHeader,iterateChildren,readUint,readUtf8}=require("src/ebml/parser.ts");
 
 async function indexedASS(url       ,ordinal       ,language       ) {
+  return indexedText(url,ordinal,language,'ass');
+}
+
+async function indexedText(url       ,ordinal       ,language       ,format            ) {
   const reader=new RangeReader(url);
   await reader.init();
   const seg=await parseSegment(reader);
@@ -1624,7 +1742,8 @@ async function indexedASS(url       ,ordinal       ,language       ) {
   }
   const all=await parseTracks(reader,seg.segmentDataOffset,seek(0x1654AE6B)-seg.segmentDataOffset);
   const chosen=all[ordinal];
-  if(!chosen||!['S_TEXT/ASS','S_TEXT/SSA'].includes(chosen.codecId))throw Error('codec');
+  const codecs=format==='ass'?['S_TEXT/ASS','S_TEXT/SSA']:['S_TEXT/UTF8'];
+  if(!chosen||!codecs.includes(chosen.codecId))throw Error('codec');
   const lang=(s       )=>({eng:'en',ita:'it'}[s.toLowerCase()]||s.toLowerCase());
   if(language!=='und'&&chosen.language&&lang(chosen.language)!==lang(language))throw Error('track');
   const {data:tracks,h:th}=await element(seek(0x1654AE6B));
@@ -1635,7 +1754,7 @@ async function indexedASS(url       ,ordinal       ,language       ) {
     const children=Array.from(iterateChildren(tracks,entry.dataOffset,entry.dataSize));
     const number=children.find(x=>x.id===0xD7);
     if(!number||readUint(tracks,number.dataOffset,number.dataSize)!==chosen.trackNumber)continue;
-    if(children.some(x=>x.id===0x6D80))throw Error('encoding');
+    if(children.some(x=>x.id===0x6D80||x.id===0x23314F||x.id===0x537F||x.id===0x56AA))throw Error('encoding');
     const id=children.find(x=>x.id===0x73C5);if(id)uid=hex(tracks,id.dataOffset,id.dataSize);
   }
   if(!uid)throw Error('uid');
@@ -1673,10 +1792,16 @@ async function indexedASS(url       ,ordinal       ,language       ) {
   await Promise.all(Array.from({length:Math.min(4,positions.length)},verifyHeaders));
   const blocks=await readTargetedBlocks(reader,seg.segmentDataOffset,cues,new Set([chosen.trackNumber]),seg.info.timestampScale,4,undefined,headerSizes);
   if(blocks.length!==expected||blocks.some(b=>!Number.isFinite(b.timestampMs)||b.timestampMs<0))throw Error('blocks_'+expected+'_'+blocks.length);
-  const output=assembleAss(chosen,blocks);
+  // A count match does not prove that the last cue is readable. An unknown
+  // end must fall back to FFmpeg instead of returning a partial document.
+  if(blocks.some(b=>!Number.isFinite(b.durationMs)||b.durationMs <=0))throw Error('coverage');
+  const output=format==='ass'?assembleAss(chosen,blocks):assembleVtt(chosen,blocks);
   if(output.length>1048576)throw Error('limit');
-  return {text:new TextDecoder().decode(output),frames:expected,bytes:reader.bytesDownloaded,requests:reader.requestCount};
+  const text=new TextDecoder().decode(output);
+  if(format==='ass'&&text.split(/\r?\n/).filter(line=>line.startsWith('Dialogue:')).length!==expected)throw Error('coverage');
+  return {text,frames:expected,bytes:reader.bytesDownloaded,requests:reader.requestCount};
 }
 
 exports.indexedASS=indexedASS;
+exports.indexedText=indexedText;
 }};const cache={};function require(id){if(cache[id])return cache[id];const e={};cache[id]=e;modules[id](require,e);return e;}global.CastMKV=require("bridge.ts");})(globalThis);

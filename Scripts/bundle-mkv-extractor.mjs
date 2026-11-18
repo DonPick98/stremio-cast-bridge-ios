@@ -2,7 +2,7 @@
 import fs from 'node:fs';import path from 'node:path';import {stripTypeScriptTypes} from 'node:module';
 const root=new URL('../ThirdParty/MKVSubtitleExtractor/',import.meta.url);
 const modules=new Map();
-function visit(id){if(modules.has(id))return;let s=fs.readFileSync(new URL(id,root),'utf8');s=stripTypeScriptTypes(s);const exported=[];
+function visit(id){if(modules.has(id))return;let s=fs.readFileSync(new URL(id,root),'utf8');s=stripTypeScriptTypes(s).replace(/[ \t]+$/gm,'');const exported=[];
 s=s.replace(/import\s+(\{[\s\S]*?\}|\* as \w+)\s+from\s+['"]([^'"]+)['"];?/g,(_,binding,relative)=>{let dep=path.posix.normalize(path.posix.join(path.posix.dirname(id),relative)).replace(/\.js$/,'.ts');visit(dep);return binding.startsWith('*')?`const ${binding.slice(5)}=require(${JSON.stringify(dep)});`:`const ${binding.replace(/\bas\b/g,':')}=require(${JSON.stringify(dep)});`;});
 s=s.replace(/export\s+(async\s+)?(function\s*\*?\s*|class\s+|const\s+|let\s+)(\w+)/g,(_,a='',kind,name)=>{exported.push(name);return a+kind+name;});
 s=s.replace(/export\s*\{([^}]+)\};?/g,(_,names)=>{exported.push(...names.split(',').map(x=>x.trim()));return '';});

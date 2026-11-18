@@ -91,7 +91,7 @@ final class CaptionHTTPServer: @unchecked Sendable {
     }
     private func reply(_ id:UUID,status:Int,type:String="text/plain",body:Data=Data(),head:Bool=false){
         guard let connection=connections[id] else{return}
-        var data=Data("HTTP/1.1 \(status) Response\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Range, Content-Type, Accept-Encoding\r\nAccess-Control-Allow-Private-Network: true\r\nConnection: close\r\n\r\n".utf8)
+        var data=Data("HTTP/1.1 \(status) Response\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\n\(CastWire.localMediaCORS)Connection: close\r\n\r\n".utf8)
         if !head{data.append(body)}
         connection.send(content:data,completion:.contentProcessed{_ in self.close(id)})
     }

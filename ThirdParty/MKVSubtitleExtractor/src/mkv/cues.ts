@@ -6,6 +6,8 @@ import * as IDs from '../ebml/ids.js';
 export interface CueEntry {
   /** Absolute timestamp in raw timestamp units */
   time: number;
+  /** Length in Segment Ticks, if explicitly present. */
+  duration?: number;
   /** Track number */
   track: number;
   /** Cluster position relative to Segment data start */
@@ -54,6 +56,7 @@ export async function parseCues(
       let track = 0;
       let clusterPosition = 0;
       let relativePosition: number | undefined;
+      let duration: number | undefined;
 
       for (const posChild of iterateChildren(cuesData, child.dataOffset, child.dataSize)) {
         switch (posChild.id) {
@@ -63,13 +66,16 @@ export async function parseCues(
           case IDs.CUE_CLUSTER_POSITION:
             clusterPosition = readUint(cuesData, posChild.dataOffset, posChild.dataSize);
             break;
+          case IDs.CUE_DURATION:
+            duration = readUint(cuesData, posChild.dataOffset, posChild.dataSize);
+            break;
           case IDs.CUE_RELATIVE_POSITION:
             relativePosition = readUint(cuesData, posChild.dataOffset, posChild.dataSize);
             break;
         }
       }
 
-      entries.push({ time: cueTime, track, clusterPosition, relativePosition });
+      entries.push({ time: cueTime, track, clusterPosition, relativePosition, duration });
     }
   }
 

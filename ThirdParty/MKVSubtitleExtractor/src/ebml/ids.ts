@@ -50,6 +50,7 @@ export const BLOCK_ADDITIONAL = 0xA5;
 export const CUES = 0x1C53BB6B;
 export const CUE_POINT = 0xBB;
 export const CUE_TIME = 0xB3;
+export const CUE_DURATION = 0xB2;
 export const CUE_TRACK_POSITIONS = 0xB7;
 export const CUE_TRACK = 0xF7;
 export const CUE_CLUSTER_POSITION = 0xF1;

@@ -4,6 +4,8 @@ import CryptoKit
 enum CastDirectError: Error { case unavailable, invalid, timeout, certificate, differentMedia }
 
 enum CastWire {
+    static let localMediaCORS = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Range, Content-Type, Accept, Accept-Encoding\r\nAccess-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges\r\nAccess-Control-Allow-Private-Network: true\r\n"
+
     static let connection = "urn:x-cast:com.google.cast.tp.connection"
     static let heartbeat = "urn:x-cast:com.google.cast.tp.heartbeat"
     static let receiver = "urn:x-cast:com.google.cast.receiver"

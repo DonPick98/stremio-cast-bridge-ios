@@ -2,6 +2,17 @@ import Foundation
 
 @main struct PlaybackRegressions {
     static func main() {
+        let legacy = CastReceiverVideoProfile(modelName:"Living Room")
+        let modern = CastReceiverVideoProfile(modelName:"Chromecast Ultra")
+        let third = CastReceiverVideoProfile(modelName:"Chromecast (3rd gen)")
+        let hevc = VideoFormat(codec:"hevc",width:1920,height:1080,frameRate:24000.0/1001,profile:1,level:120)
+        let sixty = VideoFormat(codec:"h264",width:1920,height:1080,frameRate:60,profile:100,level:42)
+        precondition(!legacy.canCopy(hevc) && modern.canCopy(hevc) && !third.canCopy(hevc))
+        precondition(!legacy.canCopy(sixty) && third.canCopy(sixty))
+        let surround = RDTrack(key:"aac",language:"eng",label:"5.1",codec:"aac",channels:6)
+        let movie = RDPreparedMedia.native(audio:[surround],subtitles:[],defaultAudio:surround.key,url:URL(string:"https://example.test/movie")!,contentType:"video/mp4",direct:false,videoConversion:true,description:"HEVC",duration:1200,video:hevc)
+        precondition(modern.canCopy(hevc) && !modern.canLoadDirect(movie,audioKey:surround.key))
+
         // Four real tap timings from build49: the old 150ms leading timer
         // launched at +60s. A trailing debounce must dispatch only +120s.
         var burst=PlaybackSeekIntent(),seekTimeline=PlaybackTimeline()

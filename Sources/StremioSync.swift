@@ -122,7 +122,7 @@ private enum StremioAccountStore {
         if !outbox.entries.isEmpty{flush()}
         if !force,!completed,let queued=lastQueued[key],abs(queued.position-position)<0.25,abs(queued.watched-watched)<0.25{return}
         if force,!completed,let previous=lastObservation[key],now.timeIntervalSince(previous)<1{return}
-        if !force,!completed,let previous=lastObservation[key],now.timeIntervalSince(previous)<15{return}
+        if !force,!completed,let previous=lastObservation[key],now.timeIntervalSince(previous)<60{return}
         let event=StremioProgressEvent(type:type,videoID:videoID,title:String(title.prefix(500)),position:position,duration:duration,observedAt:now,completed:completed,watched:watched,sessionID:tracker.sessionID)
         guard event.valid else{return}
         let previous=outbox

@@ -154,8 +154,21 @@ final class BridgeClient {
         guard !sources.isEmpty else { throw BridgeError.noSources }
         return Self.orderedSources(Array(sources.prefix(150)))
     }
-    static func orderedSources(_ sources:[AddonStream])->[AddonStream] {
-        SourcePreferences.ordered(sources){source in
+    static func orderedSources(_ sources:[AddonStream],receiver:CastReceiverVideoProfile?=nil)->[AddonStream] {
+        let compatibility:((AddonStream)->Int)?
+        if let receiver,!receiver.allowsHEVC {
+            let avc = try? NSRegularExpression(pattern:#"(?i)(?<![a-z0-9])(?:h[ .]?264|x264|avc)(?![a-z0-9])"#)
+            let hevc = try? NSRegularExpression(pattern:#"(?i)(?<![a-z0-9])(?:h[ .]?265|x265|hevc)(?![a-z0-9])"#)
+            compatibility = { source in
+                let text = source.filename ?? source.descriptionText
+                let range = NSRange(text.startIndex...,in:text)
+                let h264 = avc?.firstMatch(in:text,range:range) != nil
+                let h265 = hevc?.firstMatch(in:text,range:range) != nil
+                if h264 == h265 { return 1 }
+                return h264 ? 0 : 2
+            }
+        } else { compatibility = nil }
+        return SourcePreferences.ordered(sources,compatibility:compatibility){source in
             (SourcePreferences.resolution(source.filename ?? source.descriptionText),source.behaviorHints?.videoSize)
         }
     }

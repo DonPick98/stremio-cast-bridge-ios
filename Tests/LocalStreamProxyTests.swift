@@ -28,6 +28,19 @@ import Foundation
         let (served,response)=try await URLSession.shared.data(from:caption)
         precondition(served==document && (response as? HTTPURLResponse)?.statusCode==200)
         precondition((response as? HTTPURLResponse)?.value(forHTTPHeaderField:"Access-Control-Allow-Origin")=="*")
+        for url in [stream,caption] {
+            var preflight=URLRequest(url:url)
+            preflight.httpMethod="OPTIONS"
+            preflight.setValue("Range, Content-Type, Accept-Encoding",forHTTPHeaderField:"Access-Control-Request-Headers")
+            let (_,raw)=try await URLSession.shared.data(for:preflight)
+            let response=raw as? HTTPURLResponse
+            precondition(response?.statusCode == 204)
+            precondition(response?.value(forHTTPHeaderField:"Access-Control-Allow-Headers")?.contains("Accept-Encoding") == true)
+        }
+        precondition(proxy.reserveCaptions([7]))
+        let reserved=stream.deletingLastPathComponent().appendingPathComponent("subtitle-7.vtt")
+        let (_,pending)=try await URLSession.shared.data(from:reserved)
+        precondition((pending as? HTTPURLResponse)?.statusCode == 503)
         var request=URLRequest(url:stream);request.httpMethod="HEAD"
         _ = try await URLSession.shared.data(for:request)
         precondition(proxy.installCaptionsBeforePlayback([3:document]),"HEAD must not consume the producer")
@@ -36,6 +49,10 @@ import Foundation
         request.httpMethod="GET";request.timeoutInterval=2
         _ = try? await URLSession.shared.data(for:request)
         precondition(!proxy.installCaptionsBeforePlayback([4:document]))
+        precondition(!proxy.installCaptionRenderers([8:{ document }],reservedOnly:true))
+        precondition(proxy.installCaptionRenderers([7:{ document }],reservedOnly:true))
+        let (late,lateResponse)=try await URLSession.shared.data(from:reserved)
+        precondition(late==document && (lateResponse as? HTTPURLResponse)?.statusCode==200)
         proxy.stop()
         precondition(!proxy.installCaptionsBeforePlayback([5:document]))
         print("Local stream tests passed: exact routing, CORS, prepared captions, HEAD, consumed/stopped manifest rejection")

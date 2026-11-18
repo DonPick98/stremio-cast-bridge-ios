@@ -92,37 +92,22 @@ import AVFAudio
     /// A standard Cast text track must be a complete document. Never serve a
     /// ninety-second extraction window as if it covered the whole movie.
     static func fullDocument(input:URL,track:CaptionTrack,progress:((Double)->Void)?=nil) async throws -> String {
-        // Race a complete, frame-count-verified Matroska index read against
-        // the established full demux. Unsupported/sparse indexes cannot delay
-        // the fallback, and losing jobs are cancelled before returning.
-        if !input.isFileURL,track.isASS {
-            return try await withThrowingTaskGroup(of:String.self) { group in
-                group.addTask { @MainActor in
-                    let started=Date()
-                    PlaybackDiagnostics.record(.tracks,["phase":"caption_index_attempt","kind":"ass"])
-                    do {
-                        let output=try await IndexedCaptionExtraction.extract(input:input,ordinal:track.ordinal,language:track.language)
-                        try Task.checkCancellation()
-                        let text=try SubtitleDocument.embeddedASS(Data(output.text.utf8)).text
-                        PlaybackDiagnostics.record(.tracks,["phase":"caption_index_ready","bytes":String(output.bytes),"tracks":String(output.frames),"request":String(output.requests),"seconds":PlaybackDiagnostics.number(Date().timeIntervalSince(started))])
-                        return text
-                    }catch {
-                        try Task.checkCancellation()
-                        PlaybackDiagnostics.record(.tracks,["phase":"caption_index_fallback","code":IndexedCaptionExtraction.failureCode(error),"seconds":PlaybackDiagnostics.number(Date().timeIntervalSince(started))])
-                        throw error
-                    }
-                }
-                group.addTask { @MainActor in
-                    let result=try await fullDocuments(input:input,tracks:[track],progress:progress)
-                    guard let text=result[track.index] else{throw CaptionFailure.process};return text
-                }
-                var failure:Error=CaptionFailure.process
-                while !group.isEmpty {
-                    do {
-                        if let text=try await group.next(){group.cancelAll();return text}
-                    }catch {failure=error;try Task.checkCancellation()}
-                }
-                throw failure
+        if !input.isFileURL, track.isASS || track.codec == "subrip" {
+            let started = Date()
+            do {
+                let output = try await IndexedCaptionExtraction.extract(input:input,ordinal:track.ordinal,language:track.language,format:track.isASS ? "ass" : "vtt")
+                try Task.checkCancellation()
+                let data = Data(output.text.utf8)
+                let text = try await Task.detached(priority:.utility) {
+                    if track.isASS { return try SubtitleDocument.embeddedASS(data).text }
+                    return try SubtitleDocument.normalize(data)
+                }.value
+                try Task.checkCancellation()
+                PlaybackDiagnostics.record(.tracks,["phase":"caption_index_ready","bytes":String(output.bytes),"tracks":String(output.frames),"request":String(output.requests),"seconds":PlaybackDiagnostics.number(Date().timeIntervalSince(started))])
+                return text
+            } catch {
+                try Task.checkCancellation()
+                PlaybackDiagnostics.record(.tracks,["phase":"caption_index_fallback","code":IndexedCaptionExtraction.failureCode(error),"seconds":PlaybackDiagnostics.number(Date().timeIntervalSince(started))])
             }
         }
         let result=try await fullDocuments(input:input,tracks:[track],progress:progress)
@@ -172,7 +157,7 @@ import AVFAudio
                     let converted=try SubtitleDocument.embeddedASS(data)
                     results[track.index]=converted.text
                     PlaybackDiagnostics.record(.tracks,["phase":"caption_converted","kind":"ass","bytes":String(data.count),"tracks":String(converted.events),"dropped":String(converted.skipped)])
-                } else {results[track.index]=try SubtitleDocument.normalize(data+Data([10]))}
+                } else {results[track.index]=try SubtitleDocument.extractedWebVTT(data)}
             }catch {
                 // No raw stderr, paths, subtitle text or stream URLs in logs.
                 PlaybackDiagnostics.record(.tracks,["phase":data.isEmpty ? "caption_empty":"caption_document_invalid","kind":track.isASS ? "ass":"vtt","bytes":String(data.count)])

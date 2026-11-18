@@ -12,7 +12,7 @@ enum SubtitleFetchError:LocalizedError {
 }
 
 enum WebVTTTimeline {
-    static func rebased(_ text:String, offset:Double, delay:Double = 0) throws -> Data {
+    static func rebased(_ text:String, offset:Double, delay:Double = 0, droppingEmptyCues:Bool = false) throws -> Data {
         let source = text.hasPrefix("\u{feff}") ? String(text.dropFirst()) : text
         guard source.utf8.count <= 1_048_576, source.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix("WEBVTT"), offset.isFinite, offset >= 0, delay.isFinite, abs(delay) <= 300 else { throw StreamHeaderError.invalid }
         let origin = offset-delay
@@ -29,7 +29,9 @@ enum WebVTTTimeline {
             guard let i = lines.firstIndex(where:{$0.contains("-->")}) else { if !lines.joined(separator:"\n").isEmpty { output.append(lines.joined(separator:"\n")) }; continue }
             let line = lines[i] as NSString
             guard let match = regex.firstMatch(in:lines[i],range:NSRange(location:0,length:line.length)),
-                  let start = seconds(line.substring(with:match.range(at:1))), let end = seconds(line.substring(with:match.range(at:2))), end > start else { throw StreamHeaderError.invalid }
+                  let start = seconds(line.substring(with:match.range(at:1))), let end = seconds(line.substring(with:match.range(at:2))) else { throw StreamHeaderError.invalid }
+            if droppingEmptyCues && end == start && i <= 1 && !lines.dropFirst(i+1).contains(where:{$0.contains("-->")}) { continue }
+            guard end > start else { throw StreamHeaderError.invalid }
             if end <= origin { continue }
             lines[i] = time(max(0,start-origin)) + " --> " + time(end-origin) + line.substring(with:match.range(at:3))
             if i+1 < lines.count {

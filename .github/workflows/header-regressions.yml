@@ -1,7 +1,7 @@
 name: Validate stream header rejection reasons
 on:
   push:
-    branches: [test/stream-header-20261104, fix/playback-recovery-20261103]
+    branches: [fix/cast-energy-background, test/stream-header-20261104, fix/playback-recovery-20261103]
     paths:
       - Sources/PlayableStreamHeader.swift
       - Tests/PlayableStreamHeaderTests.swift

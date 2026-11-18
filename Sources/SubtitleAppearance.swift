@@ -58,12 +58,12 @@ enum SourcePreferences {
         let heights=Set(regex.matches(in:text,range:NSRange(location:0,length:ns.length)).compactMap{Int(ns.substring(with:$0.range(at:1)))})
         return heights.count==1 ? heights.first:nil
     }
-    static func ordered<T>(_ values:[T],defaults:UserDefaults = .standard,metadata:(T)->(resolution:Int?,bytes:Int64?))->[T] {
+    static func ordered<T>(_ values:[T],defaults:UserDefaults = .standard,compatibility:((T)->Int)? = nil,metadata:(T)->(resolution:Int?,bytes:Int64?))->[T] {
         let raw=defaults.integer(forKey:"cast.sources.resolution")
         let preferred=[720,1080,2160].contains(raw) ? raw:0
         let rawOrder=defaults.string(forKey:"cast.sources.order") ?? "addon"
         let order=["small","large"].contains(rawOrder) ? rawOrder:"addon"
-        if preferred==0 && order=="addon"{return values}
+        if preferred==0 && order=="addon" && compatibility==nil{return values}
         let ranked=values.enumerated().map{index,value in
             let item=metadata(value),height=item.resolution
             let tier=preferred==0 ? 0:height.map{$0<=preferred ? 0:2} ?? 1
@@ -71,7 +71,7 @@ enum SourcePreferences {
             let bytes=item.bytes.flatMap{$0>0 ? $0:nil}
             let missing=order=="addon" ? 0:bytes==nil ? 1:0
             let sizeKey:Int64=order=="addon" ? 0:order=="large" ? -(bytes ?? 0):bytes ?? 0
-            return (value:value,key:(tier,heightKey,missing,sizeKey,index))
+            return (value:value,key:(tier,heightKey,missing,sizeKey,compatibility?(value) ?? 0,index))
         }
         return ranked.sorted{$0.key<$1.key}.map(\.value)
     }

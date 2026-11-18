@@ -14,7 +14,7 @@ final class CaptionDocumentCache {
         prune()
     }
     static func key(input:URL,track:String)->String{
-        SHA256.hash(data:Data((input.absoluteString+"\n"+track).utf8)).map{String(format:"%02x",$0)}.joined()
+        SHA256.hash(data:Data(("v2\n"+input.absoluteString+"\n"+track).utf8)).map{String(format:"%02x",$0)}.joined()
     }
     private func file(_ key:String)->URL?{
         guard key.count==64,key.allSatisfy({$0.isHexDigit}) else{return nil}

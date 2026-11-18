@@ -199,11 +199,11 @@ import AVFAudio
                     self.fallbackEpisode=target;self.episodeIssue="Nessuna sorgente equivalente scelta automaticamente. Continua da Stremio o scegli l’episodio manualmente.";self.returnToStremioAutomatically();return
                 }
                 self.capturePosition();self.resetPlayback();self.clearSubtitleChoices()
-                self.sourceResume=nil;self.handoff=next;self.sources=found;self.selectedSource=nil;self.prepared=nil
+                self.sourceResume=nil;self.handoff=next;self.sources=self.rankedSources(found);self.selectedSource=nil;self.prepared=nil
                 self.sourceRevision=UUID();self.position=0;self.duration=0;self.hasLoaded=false;self.busy=false
                 if useMatch,let matching {
                     if automatic {
-                        let candidates=found.filter{$0.behaviorHints?.bingeGroup==family}
+                        let candidates=self.sources.filter{$0.behaviorHints?.bingeGroup==family}
                         let ids=candidates.map{self.contentDigest($0.url+"|"+($0.torrentHash ?? "")+"|"+$0.identity)}
                         let lookup=Dictionary(zip(ids,candidates),uniquingKeysWith:{first,_ in first})
                         self.episodeAutoplay=EpisodeAutoplay(content:target.id,target:target,sources:lookup,plan:AutoplayRetryPlan(ids,limit:PlaybackPreferences.sourceAttempts()))
@@ -417,7 +417,16 @@ import AVFAudio
         let title=handoff.type=="series" ? displayTitle.components(separatedBy:" · S").first ?? displayTitle:displayTitle
         StremioSync.shared.observe(type:handoff.type,videoID:handoff.id,title:title,position:ended ? duration:confirmed,duration:duration,completed:ended,force:force,episodes:ids,playing:playing && !loadPending && !checkingStream && !loading && timeline.target==nil && timeline.queuedTarget==nil)
     }
+    private var playbackEnergy = PlaybackEnergySummary()
+    private func samplePlaybackEnergy() {
+        let device=UIDevice.current
+        let mode = nativeEngine.map { String(describing:$0.diagnosticMode) } ?? (checkingStream ? "preparazione" : "diretto")
+        playbackEnergy.sample(time:ProcessInfo.processInfo.systemUptime,mode:mode,thermal:ProcessInfo.processInfo.thermalState.rawValue,
+                              battery:device.batteryLevel,power:device.batteryState.rawValue,buffering:bufferingSince != nil)
+    }
+
     private func recordEnergySnapshot() {
+        samplePlaybackEnergy()
         backgroundProcessing.recordSnapshot()
         if let prepared {
             let video=prepared.video
@@ -453,12 +462,15 @@ import AVFAudio
                     PlaybackDiagnostics.record(.producer,["phase":"transfer","bytes":String(metrics.bytes),"seconds":PlaybackDiagnostics.number(seconds),"rate":PlaybackDiagnostics.number(Double(max(0,metrics.bytes-old.metrics.bytes))*8/seconds),"upstreamWait":PlaybackDiagnostics.number(max(0,metrics.upstreamWait-old.metrics.upstreamWait)),"downstreamWait":PlaybackDiagnostics.number(max(0,metrics.downstreamWait-old.metrics.downstreamWait)),"paused":String(!self.playWhenReady),"mode":String(describing:engine.diagnosticMode),"generation":String((self.nativeEngineGeneration ?? self.streamRequests.generation).uuidString.prefix(8))])
                 }
             }
+            if let generation=self.nativeEngineGeneration { self.playbackEnergy.observeBytes(metrics.bytes,generation:generation) }
             self.transferCheckpoint=(identity,now,metrics)
         }
     }
     func copyDiagnostics() {
         PlaybackDiagnostics.record(.snapshot,["phase":"copy","connected":String(connected),"local":String(localProcessing),"position":PlaybackDiagnostics.number(position),"duration":PlaybackDiagnostics.number(duration),"pending":String(loading || loadPending || checkingStream)])
-        UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic:PlaybackDiagnostics.shared.report()]],options:[.localOnly:true,.expirationDate:Date().addingTimeInterval(3600)])
+        samplePlaybackEnergy()
+        let report = [playbackEnergy.report,PlaybackDiagnostics.shared.report()].compactMap{$0}.joined(separator:"\n\n")
+        UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic:report]],options:[.localOnly:true,.expirationDate:Date().addingTimeInterval(3600)])
     }
     func refreshConnection() {
         // A handoff/permission alert can start preparation while inactive.
@@ -610,10 +622,6 @@ import AVFAudio
             } else if status.playerState == .buffering {
                 if bufferingSince == nil { bufferingSince = Date() }
                 let stalled = Date().timeIntervalSince(bufferingSince!) >= 45
-                if localProcessing && nativeSelection?.subtitle.hasPrefix("vlc_") == true && Date().timeIntervalSince(bufferingSince!) >= 15 {
-                    if advanceAutoplaySource(){return}
-                    disableSubtitlesAndResume(automatic:true); return
-                }
                 if stalled && localProcessing {
                     if recoverPlayback(allowVideoConversion:false) { return }
                     playbackIssue = "Il flusso è fermo. La posizione è conservata: puoi riprovare o cambiare sorgente."
@@ -625,7 +633,7 @@ import AVFAudio
                 loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil
                 hasLoaded=false
                 if advanceAutoplaySource(){return}
-                if recoverPlayback() { return }
+                if recoverPlayback(allowVideoConversion:false) { return }
                 message = "La riproduzione si è interrotta. Riprova: la posizione è conservata."
                 updateActivity(status: "Errore: apri l’app per riprovare")
             } else if status.playerState == .idle && currentLoad && status.idleReason == .finished {
@@ -654,6 +662,8 @@ import AVFAudio
     }
     private func finishOwnedPlayback() {
         guard wantsPlayback || hasLoaded else{return}
+        samplePlaybackEnergy()
+        playbackEnergy.end()
         PlaybackDiagnostics.record(.load,["phase":"finished","position":PlaybackDiagnostics.number(lastConfirmedPosition ?? lastGoodPosition)])
         syncStremioProgress(completed:true,force:true)
         backgroundProcessing.finish(success:true)
@@ -728,7 +738,7 @@ import AVFAudio
                 do {
                     let found = try await BridgeClient.shared.sources(data,manifest:saved.manifest)
                     try validateSource(sourceToken)
-                    sources = found; busy = false; work = nil
+                    sources = rankedSources(found); busy = false; work = nil
                     if let wanted = data.selection, let selected = found.first(where: { $0.identity == wanted }) {
                         choose(selected)
                     } else {
@@ -769,7 +779,11 @@ import AVFAudio
             return false
         }
     }
-    func reorderSources(){sources=BridgeClient.orderedSources(sources)}
+    private func rankedSources(_ sources:[AddonStream]) -> [AddonStream] {
+        let receiver = castSession.map { CastReceiverVideoProfile(modelName:$0.device.modelName) }
+        return BridgeClient.orderedSources(sources,receiver:receiver)
+    }
+    func reorderSources(){sources=rankedSources(sources)}
     func changeSource() {
         clearSubtitleChoices()
         PlaybackDiagnostics.record(.source,["phase":"chooser","position":PlaybackDiagnostics.number(position)])
@@ -829,7 +843,7 @@ import AVFAudio
                         let file = try await resolver.originalFile(directLink:direct)
                         try validateSource(sourceToken)
                         originalURL = file.download
-                        result = try await EmbeddedMediaEngine.inspect(file.download)
+                        result = try await EmbeddedMediaEngine.inspect(file.download,filename:file.filename)
                     } else if let hash = source.torrentHash, let filename = source.filename {
                         let link = try await resolver.resolveTorrentLink(torrentHash:hash, filename:filename, videoSize:source.behaviorHints?.videoSize,onProgress:{ [weak self] state,progress in
                             guard let self else { return }
@@ -838,7 +852,7 @@ import AVFAudio
                         let file = try await resolver.originalFile(directLink:link)
                         try validateSource(sourceToken)
                         originalURL = file.download
-                        result = try await EmbeddedMediaEngine.inspect(file.download)
+                        result = try await EmbeddedMediaEngine.inspect(file.download,filename:file.filename)
                     } else { throw BridgeError.cannotResolve }
                     if preparedCache.count >= 8, let oldest = preparedCache.min(by:{$0.value.1 < $1.value.1})?.key { preparedCache[oldest] = nil }
                     preparedCache[cacheKey] = (result,Date())
@@ -951,7 +965,13 @@ import AVFAudio
         let separateCaption=captionIsIndependent
         let burnedSubtitle = !separateCaption && !selectedEmbeddedText && subtitle.hasPrefix("vlc_") ? subtitle : "none"
         let textSelected = !separateCaption && ["external","embedded"].contains(subtitle)
-        let needsLocal = DirectCaptionPolicy.needsMediaProxy(force:forceLocalPlayback,compatible:prepared.directCompatible,audioChanged:audio != prepared.defaultAudioKey,burn:burnedSubtitle != "none",textSelected:textSelected,corsAllowed:mediaCORS[prepared.directURL])
+        playbackEnergy.begin()
+        let receiverProfile = CastReceiverVideoProfile(modelName:castSession?.device.modelName)
+        let direct = receiverProfile.canLoadDirect(prepared,audioKey:audio) || prepared.directCompatible
+        PlaybackDiagnostics.record(.prepare,["phase":"route_plan","kind":receiverProfile.rawValue,
+                                            "copyAudio":String(prepared.audio.first(where:{$0.key==audio})?.canCopyForCast == true),
+                                            "codec":prepared.video?.codec ?? "unknown"])
+        let needsLocal = DirectCaptionPolicy.needsMediaProxy(force:forceLocalPlayback,compatible:direct,audioChanged:audio != prepared.defaultAudioKey,burn:burnedSubtitle != "none",textSelected:textSelected,corsAllowed:mediaCORS[prepared.directURL])
         if !needsLocal {
             if textSelected { prepareDirectCaption() }
             // Preparing text must not reload an already playing direct movie.
@@ -959,7 +979,7 @@ import AVFAudio
                textSelected,!directCaptionReady{return}
             let target = requested ?? timeline.target ?? lastGoodPosition
             timeline.begin(at:target); position = target; lastGoodPosition = target
-            stopLocalProcessing(); compatibilityMode = false; processingDetail = "Video originale · \(prepared.video?.label ?? prepared.videoDescription)"
+            stopLocalProcessing(); compatibilityMode = false; processingDetail = "Diretto sulla TV · \(prepared.video?.label ?? prepared.videoDescription)"
             sendLoad(preservePosition:true,autoplay:playWhenReady)
             return
         }
@@ -968,7 +988,7 @@ import AVFAudio
             if embeddedCaptionTask==nil{subtitleDownloadBusy=false}
         }
         let appearance = burnedSubtitle == "none" ? SubtitleAppearance() : SubtitleAppearance.load()
-        let bitmapSubtitle=prepared.subtitles.first(where:{$0.key==burnedSubtitle})?.codec.lowercased()=="bdpg"
+        let bitmapSubtitle = prepared.subtitles.first(where:{$0.key==burnedSubtitle})?.isBitmapSubtitle == true
         let selection = NativeSelection(input:prepared.directURL,audio:audio,subtitle:burnedSubtitle,appearance:appearance,external:separateCaption ? nil:externalSubtitleURL,extracted:separateCaption ? nil:embeddedSubtitleURL,captionIdentity:separateCaption ? "receiver":subtitleIdentity,overlayDelay:burnedSubtitle != "none" ? subtitleDelay:0)
         // Burning a subtitle is not a permanent reason to re-encode the movie.
         // Re-evaluate the original-video route when the selected tracks change.
@@ -1027,7 +1047,8 @@ import AVFAudio
                     self.startPlayback(requestedPosition:start,autoplay:autoplay)
                     return
                 }
-                let convertVideo = prepared.requiresVideoConversion || burnedSubtitle != "none"
+                let copyVideo = prepared.video.map(receiverProfile.canCopy) ?? !prepared.requiresVideoConversion
+                let convertVideo = !copyVideo || burnedSubtitle != "none"
                 let modes = EmbeddedMediaEngine.modes(requiresVideo:convertVideo,fallbackLevel:self.localFallbackLevel,video:prepared.video,burn:burnedSubtitle != "none",bitmap:bitmapSubtitle)
                 var lastError: Error = EmbeddedMediaError.encoder
                 for mode in modes {
@@ -1035,15 +1056,17 @@ import AVFAudio
                     try self.validateStream(source:sourceToken,stream:streamToken)
                     self.message = mode == .copy ? "Adatto l’audio sull’iPhone, mantenendo il video originale…" : "Adatto il video sull’iPhone per il Chromecast…"
                     let engine = EmbeddedMediaEngine()
+                    if mode != .copy { self.playbackEnergy.addEncoderAttempt() }
                     do {
                         let audioID = prepared.audio.count > 1 && audio.hasPrefix("vlc_") ? Int(audio.dropFirst(4)) : nil
                         let audioTrack = prepared.audio.first(where:{$0.key == audio})
-                        let copyAudio = ["aac","mp3"].contains(audioTrack?.codec.lowercased() ?? "") && (audioTrack?.channels ?? 0) > 0 && (audioTrack?.channels ?? 0) <= 2
+                        let copyAudio = audioTrack?.canCopyForCast == true
+                        let expectsHEVC = mode == .copy && prepared.video?.isHEVC == true && receiverProfile.allowsHEVC
                         let subtitleID = burnedSubtitle.hasPrefix("vlc_") ? Int(burnedSubtitle.dropFirst(4)) : nil
                         let repairAudio = AudioRepairPipe.required(audioTrack?.codec ?? "")
                         let audioIndex = prepared.audio.firstIndex(where:{$0.key == audio}) ?? 0
                         let subtitleIndex = prepared.subtitles.firstIndex(where:{$0.key == burnedSubtitle})
-                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video,bitmapSubtitle:bitmapSubtitle,audioCodec:audioTrack?.codec ?? "",subtitleTrack:prepared.subtitles.first(where:{$0.key==burnedSubtitle}))
+                        let url = try await engine.start(input:prepared.directURL,deviceIP:host,start:start,videoMode:mode,audioID:audioID,subtitleID:subtitleID,style:appearance,copyAudio:copyAudio,repairAudio:repairAudio,audioIndex:audioIndex,subtitleIndex:subtitleIndex,captions:captions,subtitleDelay:delay,video:prepared.video,bitmapSubtitle:bitmapSubtitle,audioCodec:audioTrack?.codec ?? "",subtitleTrack:prepared.subtitles.first(where:{$0.key==burnedSubtitle}),expectsHEVC:expectsHEVC)
                         try self.validateStream(source:sourceToken,stream:streamToken)
                         guard self.prepared?.directURL == prepared.directURL, self.selectedAudio == audio, separateCaption ? self.captionIsIndependent:self.selectedSubtitle == subtitle,
                               separateCaption || (self.externalSubtitleURL == selection.external && self.subtitleIdentity == selection.captionIdentity),
@@ -1082,6 +1105,10 @@ import AVFAudio
                                 self.selectedSubtitle=subtitle;self.subtitleDelay=previousDelay
                                 PlaybackDiagnostics.record(.tracks,["phase":"caption_first_load_fallback"])
                             }
+                        }
+                        if !separateCaption,self.selectedEmbeddedText {
+                            engine.reserveEmbeddedCaption(key:subtitle,delay:self.subtitleDelay)
+                            self.extractedCaptionLanguage = prepared.subtitles.first(where:{$0.key==subtitle})?.language ?? "und"
                         }
                         self.nativeEngine?.stop()
                         self.nativeEngine = engine;self.nativeEngineGeneration=streamToken; self.nativeSelection = publishedSelection
@@ -1229,6 +1256,8 @@ import AVFAudio
             UserDefaults.standard.set(contentDigest(url.absoluteString), forKey: "cast.session.content")
             UserDefaults.standard.set(prepared.duration, forKey:"cast.session.duration")
             if let positionKey { UserDefaults.standard.set(positionKey, forKey: "cast.session.positionKey") }
+            samplePlaybackEnergy()
+            playbackEnergy.addLoad()
             let request = client.loadMedia(with:load.build())
             loadRequest = request; request.delegate = self
             message = "Invio il video al Chromecast…"
@@ -1239,7 +1268,6 @@ import AVFAudio
                 guard !Task.isCancelled, let self, self.loadPending else { return }
                 self.loadPending = false; self.loading = false; self.loadRequest = nil
                 if self.advanceAutoplaySource(){return}
-                if self.nativeSelection?.subtitle.hasPrefix("vlc_") == true { self.disableSubtitlesAndResume(automatic:true); return }
                 if self.recoverPlayback(allowVideoConversion:false) { return }
                 self.message = "La TV non ha avviato il video dopo l’adattamento automatico. La posizione è conservata."
                 self.playbackIssue = "La TV non ha avviato il flusso dopo l’adattamento automatico. La posizione è conservata."
@@ -1426,7 +1454,7 @@ import AVFAudio
         if captionIsIndependent{syncIndependentCaptions();return}
         if selectedEmbeddedText{
             guard hasLoaded,!loading,!checkingStream,embeddedCaptionTask == nil,extractedCaptionKey == selectedSubtitle,extractedCaptionText != nil else{return}
-            promoteReadyEmbeddedText();load(preservePosition:true);return
+            applyReadyEmbeddedCaption();return
         }
         guard selectedSubtitle != "none", hasLoaded, !loading, !checkingStream, trackApplyTask == nil, embeddedCaptionTask == nil, timeline.target == nil, timeline.queuedTarget == nil else { return }
         if !localProcessing,["external","embedded"].contains(selectedSubtitle){
@@ -1666,9 +1694,25 @@ import AVFAudio
             guard !Task.isCancelled,sourceRequests.accepts(source),subtitleChoices.accepts(choice) else{return}
             embeddedCaptionTask=nil
             if hasLoaded,!loading,!loadPending,!checkingStream,extractedCaptionKey==selectedSubtitle,extractedCaptionText != nil{
-                promoteReadyEmbeddedText();load(preservePosition:true)
+                applyReadyEmbeddedCaption()
             }
         }
+    }
+    private func applyReadyEmbeddedCaption() {
+        guard let text=extractedCaptionText, extractedCaptionKey==selectedSubtitle,
+              hasLoaded,!loadPending,!checkingStream,ownsCurrentMedia,
+              timeline.target == nil,timeline.queuedTarget == nil,subtitleRequest == nil else { return }
+        let key = selectedSubtitle
+        promoteReadyEmbeddedText()
+        if let engine=nativeEngine, let selection=nativeSelection, selection.audio==selectedAudio,
+           engine.completeReservedEmbeddedCaption(key:key,text:text,delay:subtitleDelay) {
+            nativeSelection=NativeSelection(input:selection.input,audio:selection.audio,subtitle:selection.subtitle,appearance:selection.appearance,external:selection.external,extracted:embeddedSubtitleURL,captionIdentity:subtitleIdentity,overlayDelay:selection.overlayDelay)
+            if applyLoadedSubtitleTrack() {
+                PlaybackDiagnostics.record(.tracks,["phase":"caption_activated","kind":"reserved"])
+                return
+            }
+        }
+        load(preservePosition:true)
     }
     private func extractSelectedTextTrack() async {
         guard let prepared,let ordinal=prepared.subtitles.firstIndex(where:{$0.key==selectedSubtitle}) else{return}
@@ -1792,6 +1836,9 @@ import AVFAudio
         resetPlayback(); sourceResume = nil; hasLoaded = false; playing = false; message = "Riproduzione interrotta."
     }
     private func backgroundProcessingExpired() {
+        guard localProcessing || checkingStream else { return }
+        samplePlaybackEnergy()
+        playbackEnergy.end()
         clearUpcomingEpisode()
         // User cancellation or system expiration must not spawn another job.
         backgroundServiceStopped=true
@@ -1843,6 +1890,7 @@ import AVFAudio
     @discardableResult private func resumePendingRecovery() -> Bool {
         guard wantsPlayback,prepared != nil,client != nil,
               recovery.begin(connected:connected,blocked:checkingStream || loading || loadPending || subtitleRequest != nil) else { return false }
+        playbackEnergy.addRecovery()
         transportRetries=recovery.attempts
         PlaybackDiagnostics.record(.recovery,["phase":"restart","attempt":String(recovery.attempts),"kind":timeline.target == nil && timeline.queuedTarget == nil ? "confirmed":"requested"])
         loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; hasLoaded = false
@@ -1882,7 +1930,7 @@ import AVFAudio
         if request == intentCorrectionRequest { intentCorrectionRequest=nil;intentCorrection=nil;playbackIntent.reset();return }
         if request == subtitleRequest { subtitleRequest = nil; pendingSubtitle = nil; pendingSubtitleDelay = nil; subtitleIssue = "La TV non ha applicato il cambio. Puoi riprovare."; flushQueuedSeek(); return }
         if request == commandRequest { finishCommand(false); return }
-        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; if advanceAutoplaySource(){return};if recoverPlayback() { return }; message = "Errore Cast \(error.code): il formato non è stato riprodotto dopo l’adattamento automatico."; playbackIssue = message; updateActivity(status: "Apri l’app per riprovare") }
+        if request == loadRequest { loadPending = false; loading = false; loadTimeout?.cancel(); loadRequest = nil; if advanceAutoplaySource(){return};if recoverPlayback(allowVideoConversion:false) { return }; message = "Errore Cast \(error.code): il formato non è stato riprodotto dopo l’adattamento automatico."; playbackIssue = message; updateActivity(status: "Apri l’app per riprovare") }
     }
     func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) {
         var fields=requestFields(request,phase:"cast_abort");fields["code"]=String(abortReason.rawValue)
@@ -2011,6 +2059,8 @@ import AVFAudio
         flushQueuedSeek()
     }
     private func resetPlayback(preserveAutoplay:Bool=false) {
+        samplePlaybackEnergy()
+        playbackEnergy.end()
         clearUpcomingEpisode()
         backgroundServiceStopped=false
         syncStremioProgress(force:true)

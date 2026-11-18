@@ -35,6 +35,11 @@ SOFTWARE.
 import Foundation
 
 enum SubtitleDocument {
+    static func extractedWebVTT(_ data:Data) throws -> String {
+        guard let text = String(data:data,encoding:.utf8) else { throw StreamHeaderError.invalid }
+        return try normalize(WebVTTTimeline.rebased(text,offset:0,droppingEmptyCues:true))
+    }
+
     static func normalize(_ data:Data) throws -> String {
         guard !data.isEmpty, data.count <= 1_048_576 else { throw StreamHeaderError.tooLarge }
         guard var text=decode(data) else{throw StreamHeaderError.invalid}

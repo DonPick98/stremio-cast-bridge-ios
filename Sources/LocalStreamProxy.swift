@@ -139,7 +139,10 @@ final class LocalStreamProxy: @unchecked Sendable {
     private let peer: String
     private let producerPort: UInt16
     private let contentType: String
+    private let expectsHEVC:Bool
     private var captions: [Int:Data]
+    private var captionRenderers: [Int:@Sendable () throws -> Data] = [:]
+    private var reservedCaptions = Set<Int>()
     private var mediaRequested = false
     private var listener: NWListener?
     private var opening: CheckedContinuation<URL,Error>?
@@ -174,8 +177,8 @@ final class LocalStreamProxy: @unchecked Sendable {
         var lastData = Date()
         init(_ client: NWConnection) { self.client = client }
     }
-    init(localIP:String, peer:String, producerPort:UInt16, contentType:String = "video/mp4", captions:[Int:Data] = [:]) {
-        self.localIP = localIP; self.peer = peer; self.producerPort = producerPort; self.contentType = contentType; self.captions = captions
+    init(localIP:String, peer:String, producerPort:UInt16, contentType:String = "video/mp4", captions:[Int:Data] = [:], expectsHEVC:Bool = false) {
+        self.localIP = localIP; self.peer = peer; self.producerPort = producerPort; self.contentType = contentType; self.captions = captions; self.expectsHEVC = expectsHEVC
     }
     var path: String { "/\(token)/stream.mp4" }
     func start() async throws -> URL {
@@ -210,6 +213,27 @@ final class LocalStreamProxy: @unchecked Sendable {
         queue.sync {
             guard !stopped, !mediaRequested, listener != nil else { return false }
             captions.merge(documents) { _,new in new }
+            return true
+        }
+    }
+    func reserveCaptions(_ ids:Set<Int>) -> Bool {
+        queue.sync {
+            guard !stopped, !mediaRequested, listener != nil else { return false }
+            reservedCaptions.formUnion(ids)
+            return true
+        }
+    }
+    func installCaptionRenderers(_ renderers:[Int:@Sendable () throws -> Data], reservedOnly:Bool) -> Bool {
+        queue.sync {
+            guard !stopped,listener != nil else { return false }
+            let ids = Set(renderers.keys)
+            if reservedOnly {
+                guard ids.isSubset(of:reservedCaptions), ids.isDisjoint(with:captionRenderers.keys),
+                      ids.isDisjoint(with:captions.keys) else { return false }
+            } else {
+                guard !mediaRequested else { return false }
+            }
+            captionRenderers.merge(renderers) { _,new in new }
             return true
         }
     }
@@ -279,7 +303,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     }
     private func validateWarm(_ stream:Warm) {
         do {
-            if try PlayableStreamHeader.check(stream.body,contentType:contentType) {
+            if try PlayableStreamHeader.check(stream.body,contentType:contentType,expectsHEVC:expectsHEVC) {
                 stream.ready = true
                 let c = preparing; preparing = nil; c?.resume(); return
             }
@@ -349,20 +373,28 @@ final class LocalStreamProxy: @unchecked Sendable {
             guard let self, let pair = self.pairs[id] else { return }
             var received = buffer; if let data { received.append(data) }
             do {
-                let captionPaths = self.captions.keys.map { "/\(self.token)/subtitle-\($0).vtt" }
+                let captionKeys = self.reservedCaptions.union(self.captions.keys).union(self.captionRenderers.keys)
+                let captionPaths = captionKeys.map { "/\(self.token)/subtitle-\($0).vtt" }
                 if let method = try Self.method(received,path:self.path,additionalPaths:captionPaths) {
                     self.trace("request \(method), warm=\(self.warm?.ready == true)")
                     if method == "OPTIONS" {
-                        let reply = "HTTP/1.1 204 No Content\r\n\(Self.cors)Content-Length: 0\r\nConnection: close\r\n\r\n"
+                        let reply = "HTTP/1.1 204 No Content\r\n\(CastWire.localMediaCORS)Content-Length: 0\r\nConnection: close\r\n\r\n"
                         pair.client.send(content:Data(reply.utf8),completion:.contentProcessed { _ in self.close(id) })
                     } else {
                         let firstLine = String(data:received,encoding:.utf8)?.components(separatedBy:"\r\n").first ?? ""
                         let parts = firstLine.split(separator:" ")
                         let requested = parts.count > 1 ? String(parts[1]) : ""
-                        if let key = self.captions.keys.first(where:{requested == "/\(self.token)/subtitle-\($0).vtt"}), let caption = self.captions[key] {
-                            let head = "HTTP/1.1 200 OK\r\n\(Self.cors)Content-Type: text/vtt; charset=utf-8\r\nContent-Length: \(caption.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-                            let content = Data(head.utf8) + (method == "HEAD" ? Data() : caption)
-                            pair.client.send(content:content,isComplete:true,completion:.contentProcessed { _ in self.close(id) })
+                        if let key = captionKeys.first(where:{requested == "/\(self.token)/subtitle-\($0).vtt"}) {
+                            if let caption = self.captions[key] {
+                                self.sendCaption(caption,head:method == "HEAD",id:id)
+                            } else if let render = self.captionRenderers[key] {
+                                DispatchQueue.global(qos:.utility).async {
+                                    let caption = try? render()
+                                    self.queue.async { self.sendCaption(caption,head:method == "HEAD",id:id) }
+                                }
+                            } else {
+                                self.sendCaption(nil,head:method == "HEAD",id:id)
+                            }
                         } else { self.connectProducer(id,method:method) }
                     }
                 } else if complete || error != nil { self.close(id) }
@@ -370,7 +402,13 @@ final class LocalStreamProxy: @unchecked Sendable {
             } catch { self.close(id) }
         }
     }
-    private static let cors = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Range, Content-Type, Accept\r\nAccess-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges\r\n"
+    private func sendCaption(_ caption:Data?,head:Bool,id:UUID) {
+        guard let pair = pairs[id] else { return }
+        let status = caption == nil ? "503 Service Unavailable" : "200 OK"
+        let header = "HTTP/1.1 \(status)\r\n\(CastWire.localMediaCORS)Content-Type: text/vtt; charset=utf-8\r\nContent-Length: \(caption?.count ?? 0)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+        let body = head ? Data() : (caption ?? Data())
+        pair.client.send(content:Data(header.utf8)+body,isComplete:true,completion:.contentProcessed { _ in self.close(id) })
+    }
     static func responseHeader(_ data: Data, contentType: String = "video/mp4") throws -> (Data,Data)? {
         guard data.count <= 81_920 else { throw LocalStreamError.upstream }
         guard let range = data.range(of:Data("\r\n\r\n".utf8)) else {
@@ -393,7 +431,7 @@ final class LocalStreamProxy: @unchecked Sendable {
     private func connectProducer(_ id: UUID, method: String) {
         guard let pair = pairs[id], let port = NWEndpoint.Port(rawValue:producerPort) else { close(id); return }
         if method == "HEAD" {
-            let header = Data("HTTP/1.1 200 OK\r\n\(Self.cors)Content-Type: \(contentType)\r\nAccept-Ranges: none\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8)
+            let header = Data("HTTP/1.1 200 OK\r\n\(CastWire.localMediaCORS)Content-Type: \(contentType)\r\nAccept-Ranges: none\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8)
             pair.client.send(content:header,contentContext:.finalMessage,isComplete:true,completion:.contentProcessed { [weak self] _ in self?.close(id) })
             return
         }

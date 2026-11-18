@@ -1,6 +1,10 @@
 import Foundation
 @main struct WebVTTTimelineTests {
     static func main() throws {
+        let extracted = Data("WEBVTT\n\n00:00.100 --> 00:00.800\nFirst\n\n00:01.000 --> 00:01.000\nDiscard\n\n00:02.000 --> 00:03.000\nLast\n".utf8)
+        let repaired = try SubtitleDocument.extractedWebVTT(extracted)
+        precondition(repaired.contains("First") && repaired.contains("Last") && !repaired.contains("Discard"))
+
         let input = "WEBVTT\n\n1\n00:00:10.000 --> 00:00:12.000\nOld\n\n2\n00:00:58.500 --> 00:01:04.250 align:start\nCiao\nHello\n\n3\n00:02:00.000 --> 00:02:02.000\nLater\n"
         let result = String(data:try WebVTTTimeline.rebased(input,offset:60),encoding:.utf8)!
         precondition(!result.contains("Old") && result.contains("00:00:00.000 --> 00:00:04.250 align:start"))
